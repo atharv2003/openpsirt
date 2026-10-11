@@ -4,9 +4,11 @@
 package database_test
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nexthop-ai/openpsirt/internal/database"
 	"github.com/nexthop-ai/openpsirt/internal/dbtest"
@@ -330,4 +332,122 @@ func TestOpeningRefusesACleartextTransportWhenEncryptionIsRequired(t *testing.T)
 			t.Errorf("%s: opened, or refused for another reason: %v", raw, err)
 		}
 	}
+}
+
+// A statement leaves nothing prepared on the server behind the connection that
+// ran it. The query builder writes every value into the statement text, so a
+// statement kept prepared is one nothing runs again, held by the server for as
+// long as the connection lives.
+func TestAStatementLeavesNothingPreparedOnTheServer(t *testing.T) {
+	dbtest.Each(t, func(t *testing.T, db *database.DB) {
+		ctx := t.Context()
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = conn.Close() }()
+		// PostgreSQL lists what a connection holds prepared. MySQL and
+		// MariaDB count every statement a session has prepared, which grows
+		// by the same amount.
+		var count func() int
+		switch db.Server.Engine {
+		case database.Postgres:
+			count = func() int {
+				t.Helper()
+				var n int
+				if err := conn.QueryRowContext(ctx,
+					"SELECT COUNT(*) FROM pg_prepared_statements").Scan(&n); err != nil {
+					t.Fatal(err)
+				}
+				return n
+			}
+		case database.MySQL, database.MariaDB:
+			count = func() int {
+				t.Helper()
+				var name string
+				var n int
+				if err := conn.QueryRowContext(ctx,
+					"SHOW SESSION STATUS LIKE 'Com_stmt_prepare'").Scan(&name, &n); err != nil {
+					t.Fatal(err)
+				}
+				return n
+			}
+		default:
+			t.Skipf("%s has no server to hold a statement", db.Server.Engine)
+		}
+		before := count()
+		for i := range 3 {
+			var rows []string
+			if err := conn.NewSelect().ColumnExpr("?", fmt.Sprint("statement-", i)).
+				Scan(ctx, &rows); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := conn.NewInsert().Model(&[]keptRow{{
+				Name: fmt.Sprint("prepared-", i), Value: "v", UpdatedAt: time.Now().UTC(),
+			}}).Exec(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if after := count(); after != before {
+			t.Errorf("the server holds %d statements prepared for the connection, want %d",
+				after, before)
+		}
+	})
+}
+
+// A stored moment reads back as the same instant, in this process's own zone,
+// whatever zone and date style the server's session is set to. A result read
+// as text carries the session's zone in its offset and its date style in its
+// shape; read in the server's own encoding it carries neither.
+func TestAMomentReadsBackTheSameWhateverTheSessionZone(t *testing.T) {
+	dbtest.Each(t, func(t *testing.T, db *database.DB) {
+		ctx := t.Context()
+		// Late in the evening by UTC, and the next day thirteen hours east.
+		stored := time.Date(2026, 10, 10, 23, 30, 0, 123456000, time.UTC)
+		if _, err := db.NewInsert().Model(&keptRow{
+			Name: "moment", Value: "v", UpdatedAt: stored,
+		}).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+		sessions := map[string][]string{}
+		switch db.Server.Engine {
+		case database.Postgres:
+			sessions["fourteen hours east"] = []string{"SET TimeZone = 'Pacific/Kiritimati'"}
+			sessions["a date style naming the month first"] = []string{
+				"SET TimeZone = 'Pacific/Kiritimati'", "SET DateStyle = 'SQL, MDY'"}
+		case database.MySQL, database.MariaDB:
+			// The furthest east MariaDB accepts.
+			sessions["thirteen hours east"] = []string{"SET time_zone = '+13:00'"}
+		default:
+			sessions["as opened"] = nil
+		}
+		for name, settings := range sessions {
+			t.Run(name, func(t *testing.T) {
+				conn, err := db.Conn(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() { _ = conn.Close() }()
+				for _, set := range settings {
+					if _, err := conn.ExecContext(ctx, set); err != nil {
+						t.Fatal(err)
+					}
+				}
+				read := new(keptRow)
+				if err := conn.NewSelect().Model(read).Where(`"name" = ?`, "moment").
+					Scan(ctx); err != nil {
+					t.Fatalf("reading the moment back: %v", err)
+				}
+				if !read.UpdatedAt.Equal(stored) {
+					t.Errorf("read back %s, stored %s", read.UpdatedAt, stored)
+				}
+				_, offset := read.UpdatedAt.Zone()
+				_, local := read.UpdatedAt.In(time.Local).Zone()
+				if offset != local {
+					t.Errorf("read back in a zone %d s from UTC, where this process's zone is %d s: "+
+						"its date reads %s", offset, local, read.UpdatedAt.Format(time.DateOnly))
+				}
+			})
+		}
+	})
 }

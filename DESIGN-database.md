@@ -23,6 +23,8 @@ Satisfies REQ-03, REQ-06, REQ-71, REQ-72, REQ-73.
 - [Retryable transactions](#retryable-transactions)
 - [Reads a write depends on](#reads-a-write-depends-on)
 - [Connection pool](#connection-pool)
+- [Statement preparation](#statement-preparation)
+- [Bulk inserts](#bulk-inserts)
 - [SQLite settings](#sqlite-settings)
 - [Indexes](#indexes)
 - [Columns no query reads](#columns-no-query-reads)
@@ -83,7 +85,7 @@ Engine-specific code is confined to these places:
 |---|---|
 | Schema migrations | Data-definition language differs |
 | The migration lock | Every engine spells advisory locking differently |
-| Connection setup | Driver-specific settings |
+| Connection setup | Driver-specific settings, how PostgreSQL's statements are sent among them (§ Statement preparation) |
 | Recognizing what an engine is telling us | All three drivers carry an error type of their own, SQLite included. Three questions, three functions: whether a failure is a lost race worth retrying (REQ-71), whether it is a unique constraint refusing a duplicate, and whether it came from the engine at all rather than from the caller asking for something impossible. Each is a different code in a different error type per engine, and each is asked somewhere a wrong answer is silent — a retry that never happens, a constraint message shown to a person, a broken database answered as a mistyped request |
 | Subtracting two moments | No portable expression yields seconds from two timestamps: one returns an interval, one a number of days, the rest something else |
 | Inserting a row another writer may already have written | Two of them want `ON CONFLICT DO NOTHING` and the other two `ON DUPLICATE KEY UPDATE` setting the key to itself. Not `INSERT IGNORE`, which on those two also turns a value too wide for its column, a dangling reference and a missing value into warnings, and writes the row cut to fit or skips it while reporting success. For a table whose rows are facts rather than somebody's state, where two writers describing the same thing are agreeing |
@@ -91,6 +93,8 @@ Engine-specific code is confined to these places:
 | Typing a composed expression as a moment | A `CASE` over bound values is untyped, and PostgreSQL refuses to write it into a timestamp column. The cast target differs: PostgreSQL takes a zoned timestamp, MySQL and MariaDB a six-digit datetime, and SQLite stores text and takes none |
 | The test harness | It names every engine to choose a connection and to say which one ran, rather than to write a query — and the check that each engine ran is what keeps that naming honest |
 | Leasing the harness's slots | A test binary holds a lock the server keeps for its connection, and the two families spell it differently: a named lock on MySQL and MariaDB, an advisory lock on PostgreSQL, whose key is a number |
+| Writing a batch whose identifiers nobody reads | PostgreSQL takes one array a column and unpacks it into rows. The other three have no array type and take a list of rows. § Bulk inserts has the measurement |
+| Counting the statements a server holds prepared | A test of connection setup asks it. PostgreSQL lists them in a catalog of its own, and MySQL and MariaDB count them in session status, kept in two different schemas |
 | Listing the harness's own databases | PostgreSQL keeps databases in a catalog of its own, where the standard information schema describes only the one connected to, and there is no portable third spelling |
 | Listing the tables of the harness's SQLite schema | SQLite keeps its schema in a catalog of its own. The servers are asked the same question through the information schema |
 | Commit durability on the harness servers | A global setting on the two MySQL-protocol servers, relaxed so the suite runs faster. PostgreSQL asks per session in the connection string, so it has nothing to branch on |
@@ -941,6 +945,64 @@ The defense is to ensure a connection is never idle long enough to be killed.
 
 Go's cleaner never runs more than once a second, however short the idle timeout
 is set. A value below a second reaps no faster.
+
+## Statement preparation
+
+| Rule | |
+|---|---|
+| A PostgreSQL statement is parsed as the unnamed statement, described, and run | Nothing of it is kept on either side, and the description is what lets results come back in the server's binary encoding |
+| Results come back binary | A moment read as text carries the session's time zone in its offset and its date style in its shape. A session fourteen hours east dates a late-evening moment a day late, and a date style naming the month first is not read at all |
+| MySQL and MariaDB are sent the text alone | Their driver prepares only a statement carrying parameters, and the builder sends none |
+
+The query builder writes every value into the statement text, so no two
+statements share a text and a cache of statements never answers from itself.
+Each mode the PostgreSQL driver offers, measured on PostgreSQL 16 with one
+processor over a 1 ms, 100 Mbit link, on the bench planning an upgrade over a
+kernel at 291,500 places:
+
+| Mode | Results | Kept per connection after the plan | The plan | Trend | Findings list | Home, all at once |
+|---|---|---|---|---|---|---|
+| Prepare and keep the last 512 | Binary | 2,957 MB in the server | — | — | — | — |
+| Prepare and keep the last 16 | Binary | 88 MB in the server | 17.1 to 21.9 s | 0.14 s | 0.16 s | 0.99 s |
+| Keep the last 512 descriptions | Binary | 87 MB in the driver | 20.3 to 23.4 s | 0.14 s | 0.11 s | 1.05 s |
+| Describe, then run | Binary | 3 MB in the server | 20.4 to 22.1 s | 0.15 s | 0.13 s | 1.05 s |
+| Run without a description | Text | 3 MB in the server | 20.2 to 21.6 s | 0.16 s | 0.11 s | 1.02 s |
+
+Describing costs one round trip a statement, which is the findings list's
+extra 20 ms. Planning over the kernel of the measurement fixture takes 9.8 s
+run without a description and 10.0 s described first.
+
+A test asks each server how many statements it holds prepared for one
+connection, before and after a query and an insert on it. Another stores a
+moment and reads it back on sessions set fourteen hours east and to a date
+style naming the month first.
+
+## Bulk inserts
+
+| Rule | |
+|---|---|
+| Rows are written 500 to a statement | Two of the four engines cap a statement's size in server configuration, and the lowest default in circulation is sixteen megabytes |
+| A writer that needs no identifier reads none back | Reading them back returns a row for every row written, carrying the identifier and each column left to its default |
+| On PostgreSQL, such a batch is one array a column | The server parses a list of rows a value at a time and an array whole, and unpacks the arrays into rows |
+| A row type with a column that names its own default keeps the list of rows | A column with a default, or one storing a zero value as null, is left to its default one row at a time, which an array cannot say |
+
+Writing the 291,500 decisions of one upgrade plan, measured on PostgreSQL 16
+with one processor over a 1 ms, 100 Mbit link:
+
+| Statements | A row |
+|---|---|
+| A list of rows, prepared and kept, identifiers read back | 93 µs |
+| A list of rows, described, identifiers read back | 66 to 82 µs |
+| A list of rows, described, nothing read back | 55 µs |
+| Arrays, nothing read back | 42 to 43 µs |
+| Arrays, on the table without its four foreign keys | 17 to 20 µs |
+
+PostgreSQL checks each foreign key with a query per row written, and those
+checks are the rest of the cost. MySQL and MariaDB check a foreign key inside
+the storage engine.
+
+A test writes the same rows through both kinds of statement, every column kind
+and text that looks like syntax among them, and compares what is stored.
 
 ## SQLite settings
 

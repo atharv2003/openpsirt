@@ -21,8 +21,9 @@ import (
 	"github.com/uptrace/bun/schema"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL and MariaDB
-	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL
-	_ "modernc.org/sqlite"             // SQLite, pure Go so the binary stays static
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib" // PostgreSQL
+	_ "modernc.org/sqlite"           // SQLite, pure Go so the binary stays static
 )
 
 // minimum is the oldest release of each engine we will run against.
@@ -133,7 +134,7 @@ func Open(ctx context.Context, target Target) (*DB, error) {
 		return nil, err
 	}
 
-	sqldb, err := sql.Open(driver, dsn)
+	sqldb, err := openPool(target.Engine, driver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", target.Engine, scrub(err, target))
 	}
@@ -339,6 +340,29 @@ func Query(sqldb *sql.DB, e Engine) (*bun.DB, error) {
 		return nil, err
 	}
 	return bun.NewDB(sqldb, dialect()), nil
+}
+
+// openPool opens the pool every connection is drawn from.
+//
+// A PostgreSQL statement is parsed as the unnamed statement, described, and
+// run, and nothing of it is kept on either side. The query builder writes
+// every value into the statement text, so no two statements share a text and
+// a cache of statements never answers from itself: kept by the server, the
+// driver's last 512 on one connection held 2,957 MB after one upgrade plan,
+// and kept by the driver, its last 512 descriptions held 87 MB of statement
+// text. Describing first is what lets results come back in the server's
+// binary encoding, which carries neither the session's time zone nor its date
+// style; a statement run without a description reads every result as text.
+func openPool(e Engine, driver, dsn string) (*sql.DB, error) {
+	if e != Postgres {
+		return sql.Open(driver, dsn)
+	}
+	config, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	config.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+	return stdlib.OpenDB(*config), nil
 }
 
 func driverFor(e Engine) (driver string, dialect func() schema.Dialect, err error) {
