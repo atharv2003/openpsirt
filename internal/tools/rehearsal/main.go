@@ -23,7 +23,8 @@
 //  1. The row count of every table, with the release stopped.
 //  2. The migrations, applied on their own, and the version they reach.
 //  3. The counts again: a table the release held keeps its count, and a
-//     table the upgrade adds starts empty.
+//     table the upgrade adds starts empty, except where an upgrade merges
+//     rows or fills a table from rows the release held.
 //  4. The server started on it, the open findings of every build against
 //     what the release showed, and every GET its API document lists asked
 //     once, none of which may answer 5xx.
@@ -174,7 +175,8 @@ func (r *run) rehearse(ctx context.Context) ([]string, error) {
 		}
 	}
 	// Read to refuse a release with no record, which has no schema to compare.
-	if _, err := released.Read(releases, r.from); err != nil {
+	record, err := released.Read(releases, r.from)
+	if err != nil {
 		return nil, fmt.Errorf("the release record for %s: %w", r.from, err)
 	}
 	current, err := schema.Expected()
@@ -248,6 +250,11 @@ func (r *run) rehearse(ctx context.Context) ([]string, error) {
 			r.from, strings.Join(empty, ", "))
 	}
 
+	images, err := r.images(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	r.step("migrated to %d by this tree", current)
 	if err := r.migrate(ctx, "up"); err != nil {
 		return nil, err
@@ -262,7 +269,7 @@ func (r *run) rehearse(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	faults = append(faults, prefix("upgrade", Compare(held, upgraded))...)
+	faults = append(faults, prefix("upgrade", Compare(held, upgraded, Moved(record.Last, images)))...)
 
 	r.step("served by this tree")
 	if err := r.serve(ctx); err != nil {
@@ -480,6 +487,34 @@ func (r *run) count(ctx context.Context, tables []string) (Counts, error) {
 		counts[table] = n
 	}
 	return counts, nil
+}
+
+// images counts the rows the release held for container images: components
+// whose package identifier is of type oci or docker, their nodes, and the
+// edges at those nodes. Matched on the identifier's prefix in its lowest
+// spelling, which is the one every recorded producer writes.
+func (r *run) images(ctx context.Context) (Images, error) {
+	db, err := connect(ctx, r.hostURL)
+	if err != nil {
+		return Images{}, err
+	}
+	defer func() { _ = db.Close() }()
+	const image = `SELECT "id" FROM "component" WHERE "purl" LIKE 'pkg:oci/%' OR "purl" LIKE 'pkg:docker/%'`
+	const nodes = `SELECT "id" FROM "graph_node" WHERE "component_id" IN (` + image + `)`
+	var out Images
+	for _, each := range []struct {
+		query string
+		into  *int64
+	}{
+		{`SELECT COUNT(*) FROM (` + image + `) AS "i"`, &out.Components},
+		{`SELECT COUNT(*) FROM (` + nodes + `) AS "n"`, &out.Nodes},
+		{`SELECT COUNT(*) FROM "graph_edge" WHERE "parent_id" IN (` + nodes + `) OR "child_id" IN (` + nodes + `)`, &out.Edges},
+	} {
+		if err := db.QueryRowContext(ctx, each.query).Scan(each.into); err != nil {
+			return Images{}, fmt.Errorf("count the release's images: %w", err)
+		}
+	}
+	return out, nil
 }
 
 // container is what every run of this tree's image shares: the release's
