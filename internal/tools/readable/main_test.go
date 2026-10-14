@@ -58,11 +58,22 @@ func TestWhichFilesAreReadAsText(t *testing.T) {
 		{"go.sum", true},
 		{"Makefile", true},
 		{"Dockerfile", true},
+		{"Makefile.demo", true},
+		{"deploy/helm/openpsirt/templates/_helpers.tpl", true},
+		{"docs/hooks/release.py", true},
+		{"docs/requirements.in", true},
+		{"assets/logo.svg", true},
+		{".gitignore", true},
+		{"web/.prettierignore", true},
+		{".dockerignore", true},
+		{"Makefiles", false},
 		{"internal/access/STORE.GO", true},
 		{"web/public/logo.png", false},
 		{"dist/openpsirt", false},
 		{"assets/font.woff2", false},
-		{"LICENSE", false},
+		{"LICENSE", true},
+		{"NOTICE", true},
+		{"LICENSES", false},
 	} {
 		if got := text(c.path); got != c.want {
 			t.Errorf("%s read as text = %v, want %v", c.path, got, c.want)

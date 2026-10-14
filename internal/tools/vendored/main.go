@@ -67,14 +67,15 @@ var marks = []*regexp.Regexp{
 
 // ownLicense is the identifier naming this tree's own license and nothing
 // else.
-var ownLicense = regexp.MustCompile(`SPDX-License-Identifier:\s*Apache-2\.0\s*(?:\*/)?\s*$`)
+var ownLicense = regexp.MustCompile(`SPDX-License-Identifier:\s*` +
+	regexp.QuoteMeta(provenance.OwnLicense) + `\s*(?:\*/)?\s*$`)
 
 // itself is where this program and the list it reads live, both of which
 // spell every mark it looks for.
 var itself = map[string]bool{"internal/tools/vendored": true, "internal/tools/provenance": true}
 
 // Our own name, which a copyright line naming is not somebody else's.
-const owner = "Nexthop Systems Inc."
+const owner = provenance.Owner
 
 // A path NOTICE names: a file under one of the tree's top-level directories.
 // Taken from where the path begins, so a directory named partway along one is
@@ -138,6 +139,7 @@ func check(tracked []string, read func(string) ([]byte, error), held []entry,
 	}
 
 	found := 0
+	needs := map[string]bool{}
 	for _, each := range tracked {
 		why, err := needed(each, read)
 		if err != nil {
@@ -148,6 +150,7 @@ func check(tracked []string, read func(string) ([]byte, error), held []entry,
 			continue
 		}
 		found++
+		needs[each] = true
 		if _, ok := holds[each]; !ok {
 			faults = append(faults, fmt.Sprintf(
 				"%s %s, and nothing says where it came from or what it may be kept under: "+
@@ -161,6 +164,10 @@ func check(tracked []string, read func(string) ([]byte, error), held []entry,
 	for _, each := range held {
 		if !in[each.Path] {
 			faults = append(faults, fmt.Sprintf("%s is held and is not in the tree", each.Path))
+		} else if !needs[each.Path] && !inNotice[each.Path] {
+			// A line nothing needs is one a change left behind, and it would
+			// hold whatever is copied into that path next without a look.
+			faults = append(faults, fmt.Sprintf("%s is held and nothing in it needs accounting for", each.Path))
 		}
 		if !keepable(each.License, permitted) {
 			faults = append(faults, fmt.Sprintf("%s is under %s, which is not a license this tree may carry",
@@ -254,20 +261,82 @@ func noticed(notice string) []string {
 }
 
 // keepable says whether a license expression is one this tree may carry: any
-// one of the alternatives an OR offers, or every term an AND joins.
+// one of the alternatives an OR offers, or every term an AND joins, with AND
+// binding tighter than OR and parentheses grouping as SPDX reads them. A
+// license with an exception is permitted under its whole name, "X WITH Y". An
+// expression that does not parse is not one this tree may carry.
 func keepable(expression string, permitted map[string]bool) bool {
-	for _, alternative := range strings.Split(expression, " OR ") {
-		all := true
-		for _, term := range strings.Split(alternative, " AND ") {
-			if !permitted[strings.Trim(strings.TrimSpace(term), "()")] {
-				all = false
-			}
-		}
-		if all {
-			return true
-		}
+	tokens := strings.Fields(strings.NewReplacer("(", " ( ", ")", " ) ").Replace(expression))
+	p := spdxParser{tokens: tokens, permitted: permitted}
+	ok, parsed := p.or()
+	return parsed && p.at == len(tokens) && ok
+}
+
+// spdxParser reads an SPDX license expression by recursive descent:
+//
+//	or   = and { "OR" and }
+//	and  = atom { "AND" atom }
+//	atom = "(" or ")" | ID [ "WITH" ID ]
+type spdxParser struct {
+	tokens    []string
+	at        int
+	permitted map[string]bool
+}
+
+func (p *spdxParser) next() string {
+	if p.at < len(p.tokens) {
+		return p.tokens[p.at]
 	}
-	return false
+	return ""
+}
+
+func (p *spdxParser) or() (ok, parsed bool) {
+	ok, parsed = p.and()
+	for parsed && p.next() == "OR" {
+		p.at++
+		var right bool
+		right, parsed = p.and()
+		ok = ok || right
+	}
+	return ok, parsed
+}
+
+func (p *spdxParser) and() (ok, parsed bool) {
+	ok, parsed = p.atom()
+	for parsed && p.next() == "AND" {
+		p.at++
+		var right bool
+		right, parsed = p.atom()
+		ok = ok && right
+	}
+	return ok, parsed
+}
+
+func (p *spdxParser) atom() (ok, parsed bool) {
+	switch token := p.next(); token {
+	case "(":
+		p.at++
+		ok, parsed = p.or()
+		if !parsed || p.next() != ")" {
+			return false, false
+		}
+		p.at++
+		return ok, true
+	case "", ")", "AND", "OR", "WITH":
+		return false, false
+	default:
+		p.at++
+		if p.next() == "WITH" {
+			p.at++
+			exception := p.next()
+			if exception == "" || exception == "(" || exception == ")" {
+				return false, false
+			}
+			p.at++
+			token += " WITH " + exception
+		}
+		return p.permitted[token], true
+	}
 }
 
 // asksNothing says whether a license asks nothing of a recipient.

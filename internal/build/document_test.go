@@ -17,9 +17,15 @@ import (
 // A make target the build document names, and a target name the gate program
 // prints.
 var (
-	documented = regexp.MustCompile("`make ([a-z][a-z-]*)`")
-	printed    = regexp.MustCompile(`"([a-z][a-z-]*)"`)
-	named      = regexp.MustCompile("`internal/([a-z][a-z0-9/]*)/`")
+	documented = regexp.MustCompile("`make ([a-z][a-z0-9-]*)(?:\\s[^`\n]*)?`")
+	// A make command on a line of its own inside a code block, after a shell
+	// prompt, and after variables set for the one run on either side of make.
+	codeCommand = regexp.MustCompile(`^[ \t]*(?:\$[ \t]+)?(?:[A-Z_][A-Z0-9_]*=\S*[ \t]+)*make[ \t]+` +
+		`(?:[A-Z_][A-Z0-9_]*=\S*[ \t]+)*([a-z][a-z0-9-]*)`)
+	// The fence that opens or closes a code block.
+	fence   = regexp.MustCompile("^[ \t]*(```|~~~)")
+	printed = regexp.MustCompile(`"([a-z][a-z-]*)"`)
+	named   = regexp.MustCompile("`internal/([a-z][a-z0-9/]*)/`")
 )
 
 // buildDocument returns DESIGN-build.md, which is the one document that
@@ -191,6 +197,126 @@ func TestTheGateTheMakefileAndTheDocumentNameTheSameTargets(t *testing.T) {
 	}
 }
 
+// Every make command any document names is a target one of the makefiles
+// defines, written bare or with its arguments.
+//
+// The build document is joined to the gate above. The rest of the documents
+// name commands a reader types — the README, the operator pages, this
+// repository's own instructions — and a renamed target leaves each of them
+// sending a reader to "No rule to make target".
+func TestEveryMakeCommandADocumentNamesIsATarget(t *testing.T) {
+	defined := map[string]bool{}
+	for _, name := range []string{"Makefile", "Makefile.demo"} {
+		body, err := os.ReadFile(filepath.Join("..", "..", name)) //nolint:gosec // this repository's own makefiles
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, targets := declarations(string(body))
+		for target := range targets {
+			defined[target] = true
+		}
+	}
+	if len(defined) == 0 {
+		t.Fatal("the makefiles define no targets, so this checked nothing")
+	}
+	root := filepath.Join("..", "..")
+	described := 0
+	err := filepath.WalkDir(root, func(at string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", ".claude", "node_modules", "bin", "dist", "site", "testdata":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(at, ".md") {
+			return nil
+		}
+		body, err := os.ReadFile(at) //nolint:gosec // a document of this repository
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, at)
+		for _, name := range unknownCommands(string(body), defined, &described) {
+			t.Errorf("%s names `make %s`, which no makefile defines", filepath.ToSlash(rel), name)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if described == 0 {
+		t.Fatal("no document names a make command, so this checked nothing")
+	}
+}
+
+// unknownCommands is each target a document's make commands name that is not
+// defined, counting every command it read into described.
+//
+// A command is read inline, in backticks, or on a line of its own inside a
+// fenced code block, which is the form a reader copies. Prose outside a block
+// is not read line by line, because "make the claim" opens a line as readily
+// as a command does.
+func unknownCommands(document string, defined map[string]bool, described *int) []string {
+	var out []string
+	read := func(target string) {
+		*described++
+		if !defined[target] {
+			out = append(out, target)
+		}
+	}
+	for _, found := range documented.FindAllStringSubmatch(document, -1) {
+		read(found[1])
+	}
+	open := ""
+	for _, line := range strings.Split(document, "\n") {
+		if m := fence.FindStringSubmatch(line); m != nil {
+			switch open {
+			case "":
+				open = m[1]
+			case m[1]:
+				open = ""
+			}
+			continue
+		}
+		if open == "" {
+			continue
+		}
+		if m := codeCommand.FindStringSubmatch(line); m != nil {
+			read(m[1])
+		}
+	}
+	return out
+}
+
+// A command with arguments is read as its target, and an unknown one is
+// reported.
+func TestAMakeCommandWithArgumentsIsReadAsItsTarget(t *testing.T) {
+	defined := map[string]bool{"release-check": true, "gate": true}
+	described := 0
+	got := unknownCommands("`make release-check VERSION=v1.0.0`, `make gate full` and `make typo ARG=1`",
+		defined, &described)
+	if strings.Join(got, ",") != "typo" || described != 3 {
+		t.Errorf("unknown: %v of %d, want [typo] of 3", got, described)
+	}
+}
+
+// A command on its own line in a code block is read, after a prompt or
+// variables, and a line of prose outside one is not.
+func TestAMakeCommandInACodeBlockIsReadAsItsTarget(t *testing.T) {
+	defined := map[string]bool{"gate": true, "upgrade-rehearsal": true}
+	described := 0
+	document := "Run make the claim first.\n\n```sh\nmake gate\n$ make upgrade-rehearsal FROM=v0.7.0\n" +
+		"OPENPSIRT_X=1 make scanner-dbx\nmake ARG=1 gone\n```\n\nmake prose here\n"
+	got := unknownCommands(document, defined, &described)
+	if strings.Join(got, ",") != "scanner-dbx,gone" || described != 4 {
+		t.Errorf("unknown: %v of %d, want [scanner-dbx gone] of 4", got, described)
+	}
+}
+
 // targetJoin is what the join of the gate, the makefile and the document found.
 type targetJoin struct {
 	unknown, undescribed, invented []string
@@ -228,15 +354,15 @@ func targetGaps(order, document string, defined map[string]bool) targetJoin {
 func TestATargetGapIsReportedInEveryDirection(t *testing.T) {
 	defined := map[string]bool{"lint": true, "test": true}
 	gaps := targetGaps(`"lint", "test", "ghost", "quiet"`,
-		"`make lint` and `test`, and `make typo`", defined)
+		"`make lint` and `test`, and `make typo`, and `make typo2 ARG=1`", defined)
 	if strings.Join(gaps.unknown, ",") != "ghost,quiet" {
 		t.Errorf("unknown: %v, want the two the makefile does not define", gaps.unknown)
 	}
 	if strings.Join(gaps.undescribed, ",") != "ghost,quiet" {
 		t.Errorf("undescribed: %v, want the two the document does not name", gaps.undescribed)
 	}
-	if strings.Join(gaps.invented, ",") != "typo" {
-		t.Errorf("invented: %v, want the one the makefile does not define", gaps.invented)
+	if strings.Join(gaps.invented, ",") != "typo,typo2" {
+		t.Errorf("invented: %v, want the two the makefile does not define", gaps.invented)
 	}
 	clean := targetGaps(`"lint"`, "`make lint`", defined)
 	if len(clean.unknown)+len(clean.undescribed)+len(clean.invented) != 0 {

@@ -42,15 +42,18 @@ ENGINES_MISSING := $(strip \
 # every tool below is, and to the versions CI runs: an engine that has drifted
 # from CI's turns "it passed locally" into a different claim from "it passes".
 # Two pinned lists in two files drift silently, so "engines-check" asserts they
-# still agree rather than trusting that whoever moved one moved the other.
+# still agree rather than trusting that whoever moved one moved the other. Each
+# is named by digest as well as tag, because a tag is moved by a rebuild
+# upstream, and "pins-check" refuses one named by tag alone. Dependabot reads
+# no workflow service, so these move by hand, the two lists together.
 DOCKER               ?= docker
 PYTHON               ?= python3
-ENGINE_PG_IMAGE      ?= postgres:16-alpine
-ENGINE_MYSQL_IMAGE   ?= mysql:8.4
-ENGINE_MARIADB_IMAGE ?= mariadb:11.4
+ENGINE_PG_IMAGE      ?= postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+ENGINE_MYSQL_IMAGE   ?= mysql:8.4@sha256:24989179f58856db763f418010c1169fecc944e3ec1ea7e921572d83eb070f70
+ENGINE_MARIADB_IMAGE ?= mariadb:11.4@sha256:1292844148b311e4ed4300022a996d39083f415a963e970cf47cad1b3b18e3a6
 # Deliberately below the supported floor, so the refusal to run against an old
 # server is exercised rather than skipped.
-ENGINE_FLOOR_IMAGE   ?= postgres:13-alpine
+ENGINE_FLOOR_IMAGE   ?= postgres:13-alpine@sha256:fb9065b6e3e213bdc07edd372a5b2a26245840b7fb65d1fd8b6700106d51805c
 ENGINE_PG_PORT       ?= 5432
 ENGINE_MYSQL_PORT    ?= 3306
 ENGINE_MARIADB_PORT  ?= 3307
@@ -296,10 +299,14 @@ full:
 	esac
 
 # What a change to documents alone can break: a link pointing at a heading that
-# has been renamed, and the style the design documents are written in. Seconds.
-# The other half of that tier is "unclaimed", which is a check of its own.
+# has been renamed, the style the design documents are written in, and every
+# Go test that reads a document — the build document's tables and the
+# configuration reference are held to the code by tests in those packages, and
+# a test in internal/build holds this list to them. Seconds. The other half of
+# that tier is "unclaimed", which is a check of its own.
+DOCS_PACKAGES := ./internal/docs/ ./internal/build/ ./internal/config/
 docs-check:
-	$(GO) test ./internal/docs/
+	$(GO) test $(DOCS_PACKAGES)
 
 # The linter is also the vet. Its govet runs every analyzer go vet does, over
 # test files and over the file behind the "measure" tag, so a separate go vet
@@ -316,6 +323,14 @@ lint:
 # unlinted under a comment saying it was not.
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION) config verify
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION) run
+
+# The files a build constraint keeps off Linux, type-checked. Every runner and
+# every other target builds for Linux, so a file marked !linux is compiled by
+# nothing else here, and a signature it shares with its Linux twin can change
+# under it with every check green. Vet type-checks without linking.
+.PHONY: vet-other-os
+vet-other-os:
+	GOOS=darwin $(GO) vet $(PACKAGES)
 
 fmt:
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION) fmt
@@ -341,6 +356,10 @@ licenses:
 		$(foreach m,$(LICENSE_EXCEPTIONS),--ignore=$(m))
 	@command -v $(NPM) >/dev/null 2>&1 \
 	  || { echo "npm not found, so the interface's licenses are unchecked here"; exit 1; }
+	@# The npm half parses the interface's source with the TypeScript compiler
+	@# to find what it imports, so it needs an install. One already there is
+	@# used: the licenses are read from the lockfile, and the compiler only reads.
+	@[ -d web/node_modules/typescript ] || $(MAKE) --no-print-directory web-deps
 	@ALLOWED_LICENSES=$(ALLOWED_LICENSES) LICENSE_EXCEPTIONS=$(WEB_LICENSE_EXCEPTIONS) \
 	  $(NPM) --prefix web run --silent licenses
 
@@ -522,6 +541,11 @@ dist-sums: dist-version
 # silent pass would say the assets agree when three of the four checks never
 # ran — which is the shape of green this repository refuses elsewhere.
 #
+# Every architecture's binary is asked its version. One built for another
+# architecture runs only where an emulator is registered, and is named as not
+# checked where none is: a stripped binary built with -trimpath records no
+# linker flags to read the stamp from without running it.
+#
 # The checksum file and anything beside it carrying the same stem are exempt
 # from the name check: a signature is written after the assets are built and
 # named for what it signs, not for the release.
@@ -537,17 +561,25 @@ dist-verify: dist-version
 	      *) echo "$$file does not carry $(DIST_VERSION) in its name"; fail=1 ;; \
 	    esac; \
 	  done; \
-	  archive=$(DIST_DIR)/openpsirt_$(DIST_VERSION)_linux_$(DIST_IMAGE_ARCH).tar.gz; \
-	  if [ -f "$$archive" ]; then \
-	    work=$$(mktemp -d); trap 'rm -rf "$$work"' EXIT; \
+	  work=$$(mktemp -d); trap 'rm -rf "$$work"' EXIT; \
+	  for arch in $(DIST_ARCHES); do \
+	    archive=$(DIST_DIR)/openpsirt_$(DIST_VERSION)_linux_$$arch.tar.gz; \
+	    if [ ! -f "$$archive" ]; then \
+	      skipped="$$skipped the $$arch binary (no archive)"; continue; \
+	    fi; \
 	    tar -C "$$work" -xzf "$$archive"; \
-	    binary="$$work"/openpsirt_$(DIST_VERSION)_linux_$(DIST_IMAGE_ARCH)/openpsirt; \
-	    said=$$("$$binary" -version | awk '{print $$2}'); \
+	    binary="$$work"/openpsirt_$(DIST_VERSION)_linux_$$arch/openpsirt; \
+	    if ! said=$$("$$binary" -version 2>/dev/null | awk '{print $$2}') || [ -z "$$said" ]; then \
+	      [ "$$arch" != "$(DIST_IMAGE_ARCH)" ] \
+	        || { echo "the $$arch binary does not run on the machine it was built for"; fail=1; continue; }; \
+	      skipped="$$skipped the $$arch binary (cannot run here)"; continue; \
+	    fi; \
 	    [ "$$said" = "$(DIST_VERSION)" ] \
-	      || { echo "the binary reports $$said and its archive says $(DIST_VERSION)"; fail=1; }; \
-	    $(MAKE) --no-print-directory dist-serves BINARY="$$binary" \
+	      || { echo "the $$arch binary reports $$said and its archive says $(DIST_VERSION)"; fail=1; }; \
+	    [ "$$arch" != "$(DIST_IMAGE_ARCH)" ] \
+	      || $(MAKE) --no-print-directory dist-serves BINARY="$$binary" \
 	      || fail=1; \
-	  else skipped="$$skipped the binary (no archive for $(DIST_IMAGE_ARCH))"; fi; \
+	  done; \
 	  chart=$(DIST_DIR)/openpsirt-$(DIST_VERSION).tgz; \
 	  if [ ! -f "$$chart" ]; then skipped="$$skipped the chart (not packaged)"; \
 	  elif ! command -v helm >/dev/null 2>&1; then skipped="$$skipped the chart (no helm)"; \
@@ -622,7 +654,7 @@ openapi:
 
 # Everything CI runs, reachable from one command, except the container and the
 # chart: those need docker and helm, and check-packaging holds them.
-check: build lint unreachable unclaimed vendored spdx reserved confined granted narrowed attached readable negatives pins-check test-all sbom-shape govulncheck licenses secrets openapi-current sbom web-check
+check: build lint vet-other-os unreachable unclaimed vendored spdx reserved confined granted narrowed attached readable negatives pins-check test-all sbom-shape govulncheck licenses secrets openapi-current sbom web-check
 ifneq ($(ENGINES_MISSING),)
 	@echo
 	@echo "NOT TESTED ON: $(ENGINES_MISSING). Those engines were not configured,"
@@ -838,6 +870,7 @@ tag-as-given = $(if $(filter command line,$(origin VERSION)),$(value VERSION),$(
 # be shell text.
 release-freeze: export RELEASE_TAG = $(tag-as-given)
 release-freeze:
+	$(GO) run ./internal/tools/release guard "$$RELEASE_TAG"
 	OPENPSIRT_TEST_ENGINES=sqlite,postgres,mysql,mariadb OPENPSIRT_RELEASE_FREEZE="$$RELEASE_TAG" \
 	  $(GO) test -count=1 -run '^TestWriteTheSchemaAReleaseTags$$' ./internal/database/migrate/migrations/
 	$(GO) run ./internal/tools/release freeze "$$RELEASE_TAG"
@@ -1114,6 +1147,13 @@ engines-check:
 docs-site:
 	$(PYTHON) -m mkdocs build --strict
 
+# The Go release the image builds with. It is written once, in the image's
+# build stage, and every workflow installs the release this prints, so the
+# tarball and the image are built by one toolchain.
+.PHONY: go-version
+go-version:
+	@sed -n 's/^FROM golang:\([0-9.]*\)-.*/\1/p' Dockerfile
+
 # The other pinned pairs, checked the same way and for the same reason.
 #
 # A version written in two files is one somebody moves in one of them. The
@@ -1130,6 +1170,11 @@ docs-site:
 # an earlier stage, scratch, or a build argument, whose default is read from its
 # ARG line instead. A name with no tag is still a base, since alpine is
 # alpine:latest, and every base is named by digest.
+#
+# go.mod's go line is the oldest Go release the module accepts, and is held at
+# or below the image's: the image moves first, through its own pull request,
+# and a dependency raising the go line past it fails here until it has.
+#
 # The tidy run rewrites the tree, so what it found there is put back on every
 # exit path — including an interrupt, which used to leave the tree as tidy had
 # made it and the copies behind under a name every checkout on the machine
@@ -1147,10 +1192,13 @@ pins-check:
 	  echo "README.md and docs/index.md describe what this does in different words."; \
 	  echo "They are the same list maintained twice; make them the same words."; fail=1; }; \
 	declared=$$(awk '/^go /{print $$2}' go.mod); \
-	image=$$(sed -n 's/^FROM golang:\([0-9.]*\)-.*/\1/p' Dockerfile); \
-	[ "$$declared" = "$$image" ] || { \
-	  echo "go.mod declares Go $$declared and the image builds with $$image."; \
-	  echo "The patch counts: the release ships a binary built by each."; fail=1; }; \
+	image=$$($(MAKE) -s --no-print-directory go-version); \
+	[ -n "$$declared" ] && [ -n "$$image" ] || { \
+	  echo "go.mod's go line or the image's Go release was not found, so they were not compared."; fail=1; }; \
+	[ -z "$$declared" ] || [ -z "$$image" ] || \
+	  [ "$$(printf '%s\n%s\n' "$$declared" "$$image" | sort -V | head -n 1)" = "$$declared" ] || { \
+	  echo "go.mod declares Go $$declared and the image builds with $$image, which is older."; \
+	  echo "Move the image's golang tag first: it is the one pin of the toolchain."; fail=1; }; \
 	here=$$(awk -F'= ' '/^CDXGOMOD_VERSION/{print $$2}' Makefile | tr -d ' \t'); \
 	there=$$(awk -F= '/^ARG CDXGOMOD_VERSION/{print $$2}' Dockerfile); \
 	[ "$$here" = "$$there" ] || { \
@@ -1179,6 +1227,15 @@ pins-check:
 	    *@sha256:*) ;; \
 	    *) echo "the base $$base is named by a tag alone, which its owner can move under a rebuild."; \
 	       echo "Name it by digest as well: $$base@sha256:..."; fail=1 ;; \
+	  esac; \
+	done; \
+	services=$$(awk '/^[[:space:]]+image:/ { print $$2 }' .github/workflows/*.yml); \
+	[ -n "$$services" ] || { echo "no workflow names a service image, so no pin was compared."; fail=1; }; \
+	for service in $$services; do \
+	  case "$$service" in \
+	    *@sha256:*) ;; \
+	    *) echo "the service image $$service is named by a tag alone, which its owner can move under a rebuild."; \
+	       echo "Name it by digest as well: $$service@sha256:..."; fail=1 ;; \
 	  esac; \
 	done; \
 	quota=$$(sed -n 's/^const DefaultQuota = \([0-9]*\) << \([0-9]*\)$$/\1 \2/p' internal/patchbranch/copies.go); \

@@ -116,6 +116,7 @@ computed rather than written out so a new directory of ours needs no edit.
 | `make test-engines` | The three server engines, without the detector |
 | `make docs-check` | What a change to documents alone can break |
 | `make lint` | Static analysis, pinned version |
+| `make vet-other-os` | Type-checks the build for macOS, which compiles the files a build constraint keeps off Linux |
 | `make govulncheck` | Known vulnerabilities in Go modules and the toolchain, failing only what the change introduced |
 | `make licenses` | Shipped dependency licenses against the allowlist, Go and npm |
 | `make web-audit` | Known vulnerabilities in what the interface installs, failing only what the change introduced |
@@ -126,7 +127,7 @@ computed rather than written out so a new directory of ours needs no edit.
 | `make web-check` | Interface: locked install, type check, Prettier, ESLint, Stylelint, tests with coverage, class-name checks, and the generated client diffed against the API document. Refuses without npm rather than skipping |
 | `make unreachable` | Exported code nothing reaches |
 | `make negatives` | A 404 built from an error's own text, or given an error as a detail: it asserts a name reaches nothing, and publishes whatever the error carried. Read as parsed Go, so a call spread over lines and an error under any name are one shape. The text counts however it arrives: read with its method, formatted from a value named like an error, or bound to a name earlier in the same declaration |
-| `make granted` | Every function that reaches one grant table reaches the other, by the table's name, by the model bound to it, or through a package-level name whose value does. Each package-level name is judged by its own value as well. The functions that legitimately ask one — writing or listing that table's own rows — are named in the gate with a reason each, and a name nothing matches fails it |
+| `make granted` | Every function that reaches one grant table reaches the other, by the table's name, by a model whose struct tag binds it under whatever name the model and its package carry, by a type built from such a model as an alias or an embedding, or through a package-level name whose value does. Each package-level name is judged by its own value as well. The functions that legitimately ask one — writing or listing that table's own rows — are named in the gate with a reason each, and a name nothing matches fails it |
 | `make narrowed` | A build resolved for somebody brought into one case is read with a subject, or refused before anything is read. A resolution bound by an assignment or by `var` is followed; one used inline without a binding is not |
 | `make attached` | A doc comment describing something other than the declaration it sits on |
 | `make confined` | Engine-specific code outside the two places allowed to hold it |
@@ -135,6 +136,7 @@ computed rather than written out so a new directory of ours needs no edit.
 | `make vendored` | Every file somebody else wrote is accounted for, under a license this tree may carry, and named in `NOTICE` where its license asks. See below |
 | `make spdx` | Every source file opens with this project's copyright and an SPDX license identifier. `make spdx-fix` writes it where missing. See below |
 | `make pins-check` | Every version pinned in two files still agrees |
+| `make go-version` | The Go release the image builds with, which every workflow installs |
 | `make check` | Everything above. Needs npm, because the interface tier refuses rather than skipping |
 | `make check-engines` | That all four engines ran, that each was the engine it claimed, and that the reserved-word list still matches what they reserve |
 | `make reserved-words` | Rewrites the asked half of the reserved-word list from the running engines |
@@ -163,12 +165,14 @@ query runs both.
 
 | Touched | Adds |
 |---|---|
-| `*.md` alone | the document tests, and `unclaimed` |
-| `web/**` alone | `web-check`, `spdx` |
+| `*.md` alone | `docs-check`, `unclaimed`, `pins-check`, `readable`, `secrets` |
+| `web/**` alone | `web-check`, `spdx`, `readable`, `secrets` |
+| the interface's manifest, lockfile or source | `licenses` as well as the interface's tier |
 | the interface's route table | the Go tier as well as the interface's, because a Go test holds the server's links to it |
-| Go reaching no SQL | `build`, `lint`, `unreachable`, `readable`, `negatives`, `confined`, `granted`, `narrowed`, `attached`, `vendored`, `spdx`, `test` |
+| Go reaching no SQL | `build`, `lint`, `vet-other-os`, `unreachable`, `readable`, `negatives`, `confined`, `granted`, `narrowed`, `attached`, `vendored`, `spdx`, `pins-check`, `sbom-shape`, `secrets`, `test` |
 | a query, the schema, a migration, or the harness the tests share | `reserved`, `test-all`, `check-engines` |
 | Go the API document is generated from: any file of the package that registers the operations, and any declaring a field with a description | `openapi-current`, `web-api` |
+| `go.mod` or `go.sum` | `govulncheck`, `licenses`, `sbom`, and the engines tier |
 | anything else, or nothing | the whole gate |
 
 | Rule | |
@@ -176,6 +180,10 @@ query runs both.
 | **The choice is a program's, not a person's** | A table is read optimistically at six in the evening; a program reads the same change every time |
 | **A path nobody classified takes the whole gate** | The makefile, the container, the chart, an asset, a fixture. Being generous about a handful of paths costs less than a tier that quietly omits one |
 | **A Go file is classified by what the whole file holds** | Not by what the edited lines hold. A change anywhere in a file of queries can move what a query returns |
+| **A file takes every tier it lands in** | A route file holding a query is the API document's input and portability work at once |
+| **Every tier a change reaches alone scans for secrets** | Any file can carry a credential, and one pushed is in the remote's history before CI reads it. The other tiers come with one that runs it |
+| **Every target `check` runs is chosen by some narrow tier** | A test holds the join, so a target added to `check` and to no tier fails it |
+| **`docs-check` tests every package whose tests read a document** | A test holds the list to the tests that climb out of their package to a `.md` file |
 | **A clean tree takes the whole gate** | Nothing there to choose from, and a clean tree before a push is carrying work that is already committed |
 | **`test-all` replaces `test`** | The same tests, against four engines rather than one |
 | **Local and CI run the identical command** | The moment they differ, "it passed locally" stops meaning anything |
@@ -405,6 +413,7 @@ nothing failed, which is also what running almost nothing looks like.
 | `local.mk` is never overwritten | It is machine-local, and may point at an operator's own servers |
 | Starting is idempotent | A running engine is left alone; a stopped container is started rather than replaced |
 | Images are pinned and compared against CI's, in both directions, with CI running the check | A local four-engine pass means what CI's means only if they are the same servers |
+| Each image is named by tag and digest, here and in CI, and `pins-check` refuses a workflow service named by tag alone | A tag is moved by an upstream rebuild, which would change both servers with no change here. Dependabot reads no workflow service, so the two lists move by hand, together |
 | One of the four is below the supported version floor | The refusal to run against an old server is exercised rather than skipped |
 
 The URLs are read when make starts, so the run that writes `local.mk` is not the
@@ -751,7 +760,7 @@ separates a harness that stopped asking from a server nobody may configure.
 ## Pinned pairs
 
 A version written in two files is a version somebody moves in one of them: the Go
-toolchain the container builds with against the one the module declares, the Node
+toolchain the container builds with against the one the module accepts, the Node
 the image uses against the one every workflow runs, the SBOM generator in the
 image against the one the SBOM target invokes, and the Python the documentation
 closure was resolved on against the one the workflows build it with.
@@ -761,16 +770,21 @@ tests run against, this answers what the release is built from. An image
 carrying two defaults for the version passed in is what it catches — a build
 with none then reports `dev` in the binary and `0.0.0` in its own inventory.
 
-The Go patch counts. A floating base image and a comparison truncated to the
-minor cannot tell one patch apart, so a tarball and an image built from the same
-commit are a release built twice by two toolchains with the gate green. The
-image names the patch `go.mod` declares and the check compares the whole
-version.
+The Go patch counts. A floating base image cannot tell one patch apart, so a
+tarball and an image built from the same commit would be a release built twice
+by two toolchains with the gate green.
+
+| Rule | Why |
+|---|---|
+| The image's `golang` tag is the one pin of the Go patch release | One number to move, in the file Dependabot's image update edits |
+| Every workflow installs the release `make go-version` reads from that tag | The tarball, the image and the tests are built by one toolchain |
+| `go.mod`'s `go` line is held at or below the image's release, compared as versions | It is the oldest release the module accepts. Held equal, an image bump would fail until somebody edited `go.mod` by hand on the same pull request |
+| A `go` line above the image's release fails | A module needing a newer Go lands after the image moves, never before |
 
 | What that costs | What answers it |
 |---|---|
-| The image no longer picks up a Go release by itself | Dependabot watches the images and a bump arrives as a pull request |
-| A pinned toolchain goes stale between bumps | `govulncheck` reports standard-library vulnerabilities, and now reports them about the toolchain both artifacts are built with rather than about one of the two |
+| The image no longer picks up a Go release by itself | Dependabot watches the images. Its pull request moving the `golang` tag moves the toolchain everywhere and passes `pins-check` on its own. The tag is grouped alone, because a `node` bump fails `pins-check` until `ci.yml` moves with it |
+| A pinned toolchain goes stale between bumps | `govulncheck` reports standard-library vulnerabilities against the toolchain both artifacts are built with, and the image update carries the fix |
 
 ## Hash pinning per ecosystem
 
@@ -839,7 +853,8 @@ it (REQ-75).
 |---|---|
 | The base is where this branch left the branch it targets | `AUDIT_BASE` names that branch, `origin/main` unless set. CI fetches the whole history so the common commit is there to find |
 | An advisory is present when the base was already affected by it, and introduced otherwise | A bump that fixes one advisory and leaves another introduces nothing, so the automated security update for it stays green |
-| A Go finding is present when the version the base's `go.mod` requires, or its declared toolchain for the standard library, falls in the advisory's affected ranges | `go.mod` names every module a build uses, and each advisory govulncheck reports carries its ranges |
+| A Go finding is present when the version the base's `go.mod` requires falls in the advisory's affected ranges | `go.mod` names every module a build uses, and each advisory govulncheck reports carries its ranges |
+| A standard-library finding is present when the Go release the base's Dockerfile builds with falls in the advisory's affected ranges | That tag is the toolchain every workflow installs. `go.mod`'s `go` line is a floor below it and stands in only where the base's Dockerfile names no release |
 | An npm advisory is present when npm's audit of the base's lockfile names the same advisory against the same package | npm's range syntax is npm's to read. A package moved to another place in the tree, or bumped to a version still affected, was affected before |
 | Anything the base does not hold is introduced | A new dependency arrives with whatever is known against it |
 | A Go finding gates when a called function reaches it | The same line govulncheck draws on its own |
@@ -847,12 +862,22 @@ it (REQ-75).
 | A package listed only because something beneath it is affected carries no advisory | npm lists every package on the path to an affected one, and counting those counts one advisory many times |
 | No common commit with the base refuses, in words | Without a base every advisory reads as introduced, or every one as not |
 | A govulncheck run that exits non-zero refuses, with what it printed to standard error | Its JSON mode exits zero whatever it finds, and it prints its configuration before it loads anything, so a failed scan can read as a clean one |
+| A govulncheck run whose inventory names no module refuses | An empty package list scans nothing and exits zero |
+| Both npm audits read the lockfile alone | npm otherwise audits the installed tree, which a checkout that has not reinstalled since a bump holds stale |
+| A file the base lacks is decided by a listing of the base's tree | git's message for a missing path changes with whether the file is on disk and with the locale |
 | An npm run refuses when its output is not a report, with npm's own message where it gave one | npm exits non-zero whenever it finds anything, and without the registry it prints a message in place of a report |
 | On the base branch itself nothing is introduced | The common commit is the commit checked, so a push to `main` reports and does not fail |
 
-An advisory already on the base reaches a fix through the repository's
-dependency alerts and the automated security updates, which open the bump as a
-pull request of its own.
+An advisory already on the base blocks neither `main` nor a release. It
+reaches a fix through Dependabot, which opens the bump as a pull request of its
+own:
+
+| Advisory against | The pull request that fixes it |
+|---|---|
+| A Go module | The weekly `gomod` update, grouped into one pull request |
+| The Go standard library | The weekly image update moving the `golang` tag, which is the toolchain every workflow installs |
+| An interface package | The weekly `npm` update of `web/`, grouped into one pull request |
+| A documentation build package | The weekly `pip` update of `docs/`, which regenerates the hashed lock |
 
 A new call into an affected function of an unchanged module is not introduced
 by this rule. The module was already affected and already reported.
@@ -901,6 +926,14 @@ halves against the same `ALLOWED_LICENSES`, passed in rather than repeated, and
 dev dependencies are unrestricted on both sides because a build tool binds
 whoever builds rather than whoever installs.
 
+A development dependency the interface's source imports is in the bundle, so
+the npm half refuses one: an import or re-export that is not type-only, a
+dynamic import, or a stylesheet `@import` naming a package the lockfile marks
+for development. Tests and the test harness are not shipped and are not read.
+A package the bundle carries is declared a dependency, where its license is
+checked. A run that reads no import from the source refuses, as one that finds
+no shipped dependency in the lockfile does.
+
 | Exception | Why |
 |---|---|
 | `@fontsource/*` under OFL-1.1 | The license fonts are published under. What it withholds is selling the fonts on their own, which is not something a shipped application does |
@@ -929,8 +962,9 @@ from and the license its source states.
 | A file is found in the tree, then looked for in the list | Every file under a `testdata` directory, and every file carrying a copyright line that is not this project's, a license identifier, a document's data license, or a comment saying `NOTICE` records it. A file copied in without a line in the list fails the gate |
 | This project's own header is not a mark | A file carrying this project's copyright is ours, and the identifier beside it naming this tree's own license says nothing more. Any other identifier in it is still somebody else's terms |
 | Found broadly, and a file written here is listed as ours | A file the search misses is one nobody is asked about. A fixture written here costs a line saying so |
+| A line is held only where its file needs it, or `NOTICE` names it | A line nothing needs is one a change left behind, and it would hold whatever is copied into that path next without a look |
 | Not searched | `NOTICE` and `LICENSE`, which are the statements; markdown, which is prose about the tree; a file that is not text; and the gate's own source and the list it reads, which spell every mark it looks for |
-| Held to a license this tree may carry | The dependency allowlist, and beside it the licenses data is published under: a dedication to the public domain, CC-BY-4.0, and the weakness catalog's own terms. An expression is evaluated as the dependency check evaluates one |
+| Held to a license this tree may carry | The dependency allowlist, and beside it the licenses data is published under: a dedication to the public domain, CC-BY-4.0, and the weakness catalog's own terms. An expression is evaluated as the dependency check evaluates one: AND binds tighter than OR, parentheses group, and an expression that does not parse is refused |
 | Named in `NOTICE` where the license asks for attribution | Every license here but a public-domain dedication asks for it. A file under one that `NOTICE` does not name fails the gate |
 | Every path `NOTICE` names is in the tree and held as somebody else's | The other direction, so a file removed or renamed leaves no attribution pointing at nothing |
 | What a file's license is, is read by a person | A data file states its license in its own words where it states one at all. The list is where somebody writes down what they read, and the gate holds them to having written it |
@@ -999,6 +1033,21 @@ Built with mkdocs-material and published to GitHub Pages, with sets versioned by
 |---|---|
 | The site's default is `latest` once a release carries it, and `main` until then | The root of the site is what a visitor reads first, and unreleased documentation there describes a version nobody can install |
 | A push to `main` sets the default to `latest` where a set carries it, and to `main` where none does | Set on every merge, so a default another run moved is put back rather than left until the next release |
+
+### Link check
+
+A test in `internal/docs` follows every link in every document and fails on one
+that reaches nothing. A test in `internal/build` holds every make command a
+document names to the makefiles.
+
+| Rule | Why |
+|---|---|
+| A fragment is checked against the anchors the renderer of its own page derives | A link is followed where its page is read |
+| A page under `docs/` is held to the site's rule: decomposed to ASCII, punctuation removed, each run of spaces and hyphens one hyphen | The site renders those pages with the table-of-contents extension's default |
+| Every other document is held to the forge's rule: punctuation other than the underscore removed, each space a hyphen | The forge renders them. A heading separated by a dash takes two hyphens there and one on the site |
+| A link to a directory or a file of another kind is checked for existence, whatever fragment, query or title follows its path | A renamed `LICENSE` or `docs/` dangles a link as surely as a renamed document |
+| A link inside a code fence or an inline code span is not read | It renders no link |
+| A make command a document names is a target one of the makefiles defines | Read inline in backticks, and on a line of its own inside a fenced code block, after a prompt or variables set for the run. A block is the form a reader copies. Prose outside one is not read by line, because "make the claim" opens a line as readily as a command |
 
 ### Release version
 
@@ -1080,7 +1129,7 @@ long precisely so the checklist holds only what a machine cannot decide.
 |---|---|
 | Every action is pinned to the commit of a release, with the version in a comment beside it | A tag moves. An action that moves is code running with this repository's token on a day nobody chose, and `v4` is a tag |
 | The repository requires it | `sha_pinning_required` refuses a workflow referencing an action by tag, so the rule is enforced rather than remembered by whoever writes the next workflow |
-| Dependabot moves the pins, weekly, as one pull request | A pin nobody moves is a version that stops receiving fixes with nothing saying so. Grouped, because these move together and separately they are noise nobody reads by the fourth one |
+| Dependabot moves the pins, weekly, as one pull request per ecosystem: actions, images, Go modules, interface packages and the documentation closure. The `golang` image is the one exception, a pull request of its own | A pin nobody moves is a version that stops receiving fixes with nothing saying so. Grouped, because these move together and separately they are noise nobody reads by the fourth one |
 | An update arrives through the queue like anything else | The commit being pinned is visible in the diff, and the gate runs against it |
 
 ## Repository settings

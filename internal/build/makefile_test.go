@@ -125,3 +125,101 @@ build:
 		t.Errorf("the variable assignment was read as a target: %v", targets)
 	}
 }
+
+// A test reading a document of this repository, by a relative path that climbs
+// out of its package: "../../docs/x.md", or the same path in pieces with any
+// directories between.
+var readsADocument = regexp.MustCompile(`(?:"\.\."\s*,\s*)+(?:"[^"\n]+"\s*,\s*)*"[^"\n]+\.md"|"(?:\.\./)+[^"\n]+\.md"`)
+
+// A test that walks out of its package and keeps the files named ".md", which
+// reads every document without naming one.
+var (
+	climbs     = regexp.MustCompile(`"\.\."\s*,|"\.\./`)
+	walksForMd = regexp.MustCompile(`"\.md"`)
+)
+
+// documentReaders is each package directory, as make names it, holding a test
+// file the patterns above match.
+func documentReaders(files map[string]string) []string {
+	seen := map[string]bool{}
+	for file, text := range files {
+		if readsADocument.MatchString(text) || (climbs.MatchString(text) && walksForMd.MatchString(text)) {
+			seen["./"+filepath.ToSlash(filepath.Dir(file))+"/"] = true
+		}
+	}
+	var out []string
+	for dir := range seen {
+		out = append(out, dir)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Every package whose tests read a document is tested by docs-check.
+//
+// That target is what a change to documents alone runs. A test elsewhere that
+// reads one fails in CI for a prose edit the local gate passed.
+func TestDocsCheckTestsEveryPackageThatReadsADocument(t *testing.T) {
+	makefile, err := os.ReadFile(filepath.Join("..", "..", "Makefile")) //nolint:gosec // this repository's own makefile
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := regexp.MustCompile(`(?m)^DOCS_PACKAGES\s*:=(.*)$`).FindStringSubmatch(string(makefile))
+	if listed == nil {
+		t.Fatal("the makefile declares no DOCS_PACKAGES, so this checked nothing")
+	}
+	tested := map[string]bool{}
+	for _, dir := range strings.Fields(listed[1]) {
+		tested[dir] = true
+	}
+
+	files := map[string]string{}
+	root := filepath.Join("..", "..")
+	for _, top := range []string{"internal", "cmd"} {
+		err := filepath.WalkDir(filepath.Join(root, top), func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() && (d.Name() == "testdata" || d.Name() == "node_modules") {
+				return filepath.SkipDir
+			}
+			if !d.IsDir() && strings.HasSuffix(path, "_test.go") {
+				body, err := os.ReadFile(path) //nolint:gosec // this repository's own source
+				if err != nil {
+					return err
+				}
+				rel, _ := filepath.Rel(root, path)
+				files[rel] = string(body)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	readers := documentReaders(files)
+	if len(readers) == 0 {
+		t.Fatal("no test reads a document, so this checked nothing")
+	}
+	for _, dir := range readers {
+		if !tested[dir] {
+			t.Errorf("a test in %s reads a document and docs-check does not run it", dir)
+		}
+	}
+}
+
+// One test that reads a document by each spelling is found, and one that names
+// a document as data, or keeps ".md" files without climbing out, is not.
+func TestATestReadingADocumentIsFound(t *testing.T) {
+	got := documentReaders(map[string]string{
+		"internal/a/a_test.go": `os.ReadFile("../../docs/x.md")`,
+		"internal/b/b_test.go": `os.ReadFile(filepath.Join("..", "..", "DESIGN-x.md"))`,
+		"internal/c/c_test.go": `archive(map[string][]byte{"README.md": nil})`,
+		"internal/d/d_test.go": `os.ReadFile(filepath.Join("..", "..", "docs", "x.md"))`,
+		"internal/e/e_test.go": "root := filepath.Join(\"..\", \"..\")\nif filepath.Ext(path) != \".md\" {",
+		"internal/f/f_test.go": `if filepath.Ext(path) != ".md" {`,
+	})
+	if strings.Join(got, ",") != "./internal/a/,./internal/b/,./internal/d/,./internal/e/" {
+		t.Errorf("readers: %v, want internal/a, b, d and e", got)
+	}
+}

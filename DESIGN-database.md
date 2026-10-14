@@ -520,7 +520,8 @@ last migration as its own.
 | Situation | What to do |
 |---|---|
 | The release's migration needs a fix after the freeze, before the tag or between release candidates | Edit the release's migration and declarations, freeze it again in the same pull request, and recreate a database a release candidate built |
-| A release is tagged | Its record is what it shipped. `make release-freeze` refuses a version whose tag exists, and a schema change is a migration numbered after its last, for the next release |
+| A release is tagged | Its record is what it shipped. `make release-freeze` refuses a version whose tag exists in the checkout, before anything is written, and refuses where git cannot say whether it does. A schema change is a migration numbered after its last, for the next release |
+| A release the tree cannot freeze | Refused before anything is written, the schema records included: a version older than one recorded, a version with a part past nine, and a tree whose last migration is behind the release before. A checkout without tags is refused there too |
 | A patch to an older line, after a newer release is recorded | Not cut. A tag is refused unless it is on `main`, and `main` holds the newer release's record and migrations, so every release is newer than the last one recorded |
 
 ### Upgrade rehearsal
@@ -535,18 +536,19 @@ in the gate.
 | Stage | What it does |
 |---|---|
 | The release's database | The release's image is built from its tag, and its own demo targets run unedited against an empty database of the rehearsal's own: products, inventories, the scans, a VEX document, judgments and an approval, an assignment, and a recorded flaw |
-| What it held | Its status report's open findings per build, and every table's row count with it stopped |
+| What it held | Its status report's open findings per build, and every table's row count with it stopped. A build whose line carries no count is not settled, and the wait ends in a refusal naming it |
 | The upgrade | This tree's image applies the migrations on their own. The version reached is this tree's last migration |
 | The rows | Each table's count: a table both sides hold keeps its count, and a table only the upgrade holds starts empty. From a release before v0.9.0, the components, nodes and edges may hold fewer, by no more than the release held for container images, and the image versions start filled, with no more rows than the release held image nodes, because its upgrade merges the first three and fills the fourth from them |
-| Served | This tree's server on the upgraded database reports the same open findings per build, and no GET its API document lists answers 5xx. A GET with a path parameter the seed has no name for is skipped |
+| Served | This tree's server on the upgraded database, started with the configuration the release's demo started its own with, reports the same open findings per build, and no GET its API document lists answers 5xx. The sweep names the build that sorts first. A GET with a path parameter the seed has no name for is skipped |
 
 | Rule | |
 |---|---|
 | The release seeds itself | A fixture written today records what this tree thinks the release wrote. The release's own targets write what a deployment of it holds |
 | Only the docker command is wrapped | The containers, network and ports are renamed so a demo already running is untouched, and the application is pointed at the rehearsal's database. Nothing in the release's targets is edited |
 | Counted with nothing running | A server runs passes that write rows. Counted between the migrations alone, a changed count is the migration's |
-| An engine `make engines-up` made is joined to the rehearsal's network | It publishes its port on this machine's loopback alone, which no container reaches. The container publishing the port the URL names joins the rehearsal's network and is addressed by its name, which holds on Docker Desktop, rootless Docker and Podman alike. An engine on another host is reached through `host.docker.internal` |
-| Everything it made is removed | Pass or fail: its containers, network and database. The release's worktree, both images, the run's directory with its logs, and the scanner's database are kept. `-keep` leaves everything in place |
+| This tree is served with the release's configuration | The environment the release's server container was started with, less its image's own and the database URL, reaches every container of this tree, by name with the values in the environment. A setting the demo turned on is then on for both sides of the comparison |
+| An engine `make engines-up` made is joined to the rehearsal's network | It publishes its port on this machine's loopback alone, which no container reaches. The container publishing the port the URL names joins the rehearsal's network and is addressed by its name, which holds on Docker Desktop, rootless Docker and Podman alike. A docker command failing on the way refuses with what docker said, and so do two containers publishing the port. An engine on another host, or a loopback port no container publishes, is reached through `host.docker.internal` |
+| Everything it made is removed | Pass, fail or interrupt: its containers, network and database. The release's worktree, both images, the run's directory with its logs, and the scanner's database are kept. `-keep` leaves everything in place. A second interrupt during the removal stops it |
 
 ## Migration locks
 
