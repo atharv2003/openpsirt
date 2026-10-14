@@ -9,13 +9,14 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/nexthop-ai/openpsirt/internal/outward"
 	"github.com/nexthop-ai/openpsirt/internal/patchbranch"
 	"github.com/nexthop-ai/openpsirt/internal/queue"
+	"github.com/nexthop-ai/openpsirt/internal/redact"
 	"github.com/nexthop-ai/openpsirt/internal/scanner"
 )
 
@@ -325,14 +327,6 @@ type Store struct {
 // the opposite of what it says — worse than refusing to start, because the
 // operator has no reason to look.
 func Load() (Config, error) {
-	// The name this list had when it covered repositories alone. Refused
-	// rather than ignored: ignored, a deployment that set it fetches from
-	// everything it meant to keep out. A file has no key under the old name,
-	// and a file with the variable set beside it is refused for that.
-	if os.Getenv("OPENPSIRT_PATCH_EXCLUDED") != "" {
-		return Config{}, fmt.Errorf("OPENPSIRT_PATCH_EXCLUDED is now OPENPSIRT_OUTBOUND_EXCLUDED: " +
-			"rename it, since the old name is not read")
-	}
 	given := map[string]string{}
 	for _, one := range settings {
 		if v, ok := os.LookupEnv(envPrefix + one.env); ok {
@@ -521,11 +515,17 @@ func load(given map[string]string) (Config, error) {
 			"OPENPSIRT_ZULIP_SITE, OPENPSIRT_ZULIP_EMAIL and OPENPSIRT_ZULIP_KEY: set all " +
 				"three or none — a bot is its server, its address and its key together")
 	}
+	// The key goes with every request, so over https alone. A path, query or
+	// fragment lands in front of every API path the adapter appends.
 	if site := strings.TrimSpace(c.ZulipSite); site != "" {
-		parsed, err := url.Parse(site)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
-			return Config{}, fmt.Errorf("OPENPSIRT_ZULIP_SITE: want the server's https " +
-				"address, such as https://chat.example.com: the bot's key is sent with every request")
+		parsed, err := plainAddress("OPENPSIRT_ZULIP_SITE", site, "https")
+		if err == nil && strings.Trim(parsed.Path, "/") != "" {
+			err = fmt.Errorf("OPENPSIRT_ZULIP_SITE: names the server, not a path below it: %q",
+				redact.URL(site))
+		}
+		if err != nil {
+			return Config{}, fmt.Errorf("%w — want the server's https address, such as "+
+				"https://chat.example.com: the bot's key is sent with every request", err)
 		}
 	}
 
@@ -573,20 +573,14 @@ func load(given map[string]string) (Config, error) {
 	// one made of spaces.
 	c.DirectoryURL = strings.TrimSpace(c.DirectoryURL)
 	if where := c.DirectoryURL; where != "" {
-		at, err := url.Parse(where)
-		if err != nil {
-			// The parser's error repeats the value, password and all.
-			return Config{}, errors.New("OPENPSIRT_DIRECTORY_URL: not an address at all")
-		}
 		// An address and nothing else. A name is joined to the end of this, so
 		// anything the address carries after its path lands in the middle of
-		// the result: a query becomes part of the filename in every document's
-		// own address, and a password in the address is published in every one
-		// of them and kept in the bytes that went out.
-		if at.Scheme != "https" || at.Host == "" || at.User != nil ||
-			at.RawQuery != "" || at.Fragment != "" {
-			return Config{}, fmt.Errorf("OPENPSIRT_DIRECTORY_URL: want an https address "+
-				"with no query, fragment or credentials, got %q", masked(where))
+		// the result: a query, even an empty one, becomes part of the filename
+		// in every document's own address, and a password in the address is
+		// published in every one of them and kept in the bytes that went out.
+		at, err := plainAddress("OPENPSIRT_DIRECTORY_URL", where, "https")
+		if err != nil {
+			return Config{}, err
 		}
 		// One trailing slash, so that a name joined to it is a file inside the
 		// directory rather than a sibling of it. Every trailing slash, because
@@ -605,6 +599,9 @@ func load(given map[string]string) (Config, error) {
 			"OPENPSIRT_DIRECTORY_URL: set it alongside OPENPSIRT_DIRECTORY_BUCKET or " +
 				"OPENPSIRT_DIRECTORY_DIR — a directory written with no address it is " +
 				"served from states addresses nobody can resolve")
+	}
+	if err := apart(c.Directory, c.Attachments); err != nil {
+		return Config{}, err
 	}
 	if strings.TrimSpace(c.Addr) == "" {
 		return Config{}, fmt.Errorf("OPENPSIRT_ADDR: must not be empty")
@@ -645,41 +642,94 @@ func absoluteBase(base string) error {
 	if base == "" {
 		return nil
 	}
-	parsed, err := url.Parse(base)
-	// Every refusal is logged, and shows the value with anything that may be a
-	// credential masked. Before a scheme is checked a password can sit
-	// anywhere: `admin:hunter2@psirt.example.com` parses with the scheme
-	// `admin` and no user information.
-	shown := masked(base)
+	parsed, err := plainAddress("OPENPSIRT_BASE_URL", base, "http", "https")
 	switch {
 	case err != nil:
-		return errors.New("OPENPSIRT_BASE_URL: not an address at all")
-	case parsed.Scheme != "http" && parsed.Scheme != "https":
-		return fmt.Errorf(
-			"OPENPSIRT_BASE_URL: want an absolute address such as "+
-				"https://psirt.example.com, got %q", shown)
-	case parsed.Host == "":
-		return fmt.Errorf("OPENPSIRT_BASE_URL: names no host: %q", shown)
-	case parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.ForceQuery:
-		return fmt.Errorf("OPENPSIRT_BASE_URL: names the address alone, with no query, "+
-			"fragment or credentials: %q", shown)
+		return err
 	case strings.Trim(parsed.Path, "/") != "":
 		// A path below the address would make every link this deployment
 		// writes point somewhere it does not answer.
 		return fmt.Errorf("OPENPSIRT_BASE_URL: names the address, not a path below it: %q",
-			shown)
+			redact.URL(base))
 	}
 	return nil
 }
 
-// masked is an address as a refusal may show it. Everything up to the last
-// "@" is replaced, because whatever precedes it may be a password whether or
-// not the parser read it as user information.
-func masked(address string) string {
-	if at := strings.LastIndex(address, "@"); at >= 0 {
-		return "xxxxx@" + address[at+1:]
+// apart refuses a published directory that is the attachment store, or holds
+// it, or sits inside it.
+//
+// What the directory holds is served to anybody, and an attachment is fetched
+// only after its finding's visibility is checked (REQ-70). Sharing one store
+// serves every attachment unauthenticated. A bucket wins over a folder in each,
+// so each is compared in the form it takes.
+func apart(directory, attachments Store) error {
+	if bucket := strings.TrimSpace(directory.Bucket); bucket != "" {
+		if other := strings.TrimSpace(attachments.Bucket); strings.EqualFold(bucket, other) &&
+			sameEndpoint(directory.Endpoint, attachments.Endpoint) {
+			return fmt.Errorf("OPENPSIRT_DIRECTORY_BUCKET: names the attachment store's " +
+				"bucket, and everything in the directory is served to anybody: give the " +
+				"directory a bucket of its own")
+		}
+		return nil
 	}
-	return address
+	dir, other := strings.TrimSpace(directory.Dir), strings.TrimSpace(attachments.Dir)
+	if dir == "" || other == "" || strings.TrimSpace(attachments.Bucket) != "" {
+		return nil
+	}
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("OPENPSIRT_DIRECTORY_DIR: %w", err)
+	}
+	other, err = filepath.Abs(other)
+	if err != nil {
+		return fmt.Errorf("OPENPSIRT_ATTACHMENT_DIR: %w", err)
+	}
+	if within(dir, other) || within(other, dir) {
+		return fmt.Errorf("OPENPSIRT_DIRECTORY_DIR: is, holds or sits inside " +
+			"OPENPSIRT_ATTACHMENT_DIR, and everything in the directory is served to " +
+			"anybody: give each a folder of its own")
+	}
+	return nil
+}
+
+// sameEndpoint reports whether two object store endpoints name one service.
+// Both unset is the provider's default for each.
+func sameEndpoint(a, b string) bool {
+	norm := func(endpoint string) string {
+		return strings.TrimRight(strings.ToLower(strings.TrimSpace(endpoint)), "/")
+	}
+	return norm(a) == norm(b)
+}
+
+// within reports whether path is root or a folder below it.
+func within(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// plainAddress reads an address that stands alone: a scheme from schemes, a
+// host, and no credentials, query or fragment, an empty query included.
+//
+// Every refusal is logged, so each shows the value through redact.URL. Before
+// a scheme is checked a password can sit anywhere: `admin:hunter2@host`
+// parses with the scheme `admin` and no user information.
+func plainAddress(name, raw string, schemes ...string) (*url.URL, error) {
+	parsed, err := url.Parse(raw)
+	shown := redact.URL(raw)
+	switch {
+	case err != nil:
+		// The parser's error repeats the value, password and all.
+		return nil, fmt.Errorf("%s: not an address at all", name)
+	case !slices.Contains(schemes, parsed.Scheme):
+		return nil, fmt.Errorf("%s: want an absolute %s address, got %q",
+			name, strings.Join(schemes, " or "), shown)
+	case parsed.Host == "":
+		return nil, fmt.Errorf("%s: names no host: %q", name, shown)
+	case parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "":
+		return nil, fmt.Errorf("%s: names the address alone, with no query, "+
+			"fragment or credentials: %q", name, shown)
+	}
+	return parsed, nil
 }
 
 // reader reads typed settings and keeps the first value it could not read.

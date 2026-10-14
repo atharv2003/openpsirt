@@ -192,6 +192,14 @@ Liveness does not depend on the database. Restarting a process cannot fix an
 unreachable database, and a liveness probe that fails on one turns a database
 outage into a restart loop on top of a database outage.
 
+The image's own health check, which Kubernetes ignores and Docker acts on,
+runs `openpsirt health`: it reads the configuration the server reads from the
+environment and asks `/healthz` where `OPENPSIRT_ADDR` says the server listens,
+on loopback where that names every interface, never through a proxy. It
+takes `--config` as every other command does. The image's check passes none,
+so a container configured by file replaces that check with one naming the same
+file; left alone, it reads the environment and asks port 8080.
+
 The startup probe allows ten minutes by default. Migrations run before the
 service answers, and a probe that gives up part way kills the pod and restarts
 the migration from the beginning.
@@ -228,6 +236,9 @@ file, never both (REQ-83).
 | A list entry holding a comma is refused | The loader reads a list as the environment carries it, where one entry would become two |
 | A malformed file is refused naming the line | What the parser reports |
 | A file anybody but its owner may read or write is refused, saying to set 0600 | It holds the database password and the sign-in and store secrets. Write is refused with read, because a file somebody else can change is a configuration somebody else chose |
+| A file owned by a user other than the process's own or root is refused | Its owner can rewrite it whatever its mode. Root's is accepted, because a mounted secret is root's |
+| The file is opened once, and every check is made on what was opened | Checked by path and read by path, a file swapped between the two is read unchecked |
+| A directory or a pipe is refused by path before it is opened, and the file opened must be the one checked | Opening a pipe with no writer waits for one, which holds the start with nothing logged |
 | A refusal that stops the process names the key rather than the variable, including one made after startup began | The process rewrites each variable's name in a refusal to its key on the way out, so a check written once for both sources speaks to whichever source is in use |
 | A refusal answered to a request names the setting both ways | Answered while running, it cannot be rewritten on the way out, and the operator reading it relayed may have configured either source. The advisory prefix and the publisher are the two |
 | A pod configured by file sets `enableServiceLinks: false` | Kubernetes gives a pod a variable for every Service in its namespace, named `<SERVICE>_SERVICE_HOST`, `<SERVICE>_PORT` and more. For a Service named `openpsirt` they start `OPENPSIRT_`, and are refused beside a file. The chart configures by environment and is unaffected |
@@ -250,6 +261,11 @@ a file inside one pod. The chart sees only a URL given in values; one in an
 operator's own Secret is not checked here, and the process warns at startup that
 SQLite is not a production engine.
 
+| Rule | |
+|---|---|
+| A single-pod SQLite trial keeps its file under `/var/lib/openpsirt` | The root filesystem is read-only, so the chart mounts that one directory for a SQLite URL, on a bounded scratch volume or a claim the operator names. A SQLite URL in values naming any other path, a directory beneath it included, is refused at render, because the process would crash-loop failing to create the file. A claim named for SQLite beside a URL held in a Secret is refused too, because the chart cannot read that URL and would mount nothing |
+| No other install gets the volume | A server database has nothing to keep on the pod |
+
 ## Network policy
 
 Sign-in by a trusted header is believed by address alone, and the addresses it
@@ -262,7 +278,7 @@ ingress controller.
 | Rendered whenever a trusted header is named, unless turned off | Off, any pod can send the header to the Service and be signed in as anybody, the bootstrap administrators included |
 | Admits the ingress controller by namespace and pod labels, both configurable, and any further peers named | The defaults are ingress-nginx's own labels. A controller on the host network needs an address block, and a metrics scraper a namespace of its own |
 | The controller's defaults apply only where neither label map is set, and are applied in the template | Helm merges a map an operator sets into a default map, so defaults held in the values would keep ingress-nginx's labels beside another controller's and admit nobody |
-| A controller named by its pods alone is looked for in every namespace | A pod selector alone selects pods in the policy's own namespace, which is never where the controller runs |
+| A controller named by its pods alone is refused at render | A pod selector alone selects pods in the policy's own namespace, which is never where the controller runs, and pod labels matched in every namespace are labels anybody who may create a pod can set. That pod could assert the sign-in header. The policy renders only where trusted-header sign-in is on, so the refusal applies there alone |
 | The controller's admission can be turned off, leaving the further peers alone | A controller on the host network is named by address, and its labels would admit nothing |
 | Anything reaching the Service directly is refused unless named as a further peer | A pipeline uploading with a key from inside the cluster is one |
 | Refused at render where it would admit nobody | See § Render-time refusals |
@@ -492,6 +508,7 @@ the inventories and `openpsirt -version` cannot disagree about one build.
 |---|---|
 | Keyless signatures | cosign, against the workflow's own identity. No key to hold, rotate, or lose to whoever holds it next |
 | What is signed | The image, the chart in the registry, and the checksum file that covers every attached asset. The chart is signed where it is installed from, which is the registry copy rather than the archive |
+| Every registry reference is named once, in lower case | A registry reference is lower case and a repository's owner and name need not be. The image and chart addresses are computed in one step and every push, signature, verification, attestation and release note reads them; the signing identity keeps the repository's own case, because the certificate carries it |
 | Build provenance | An attestation naming the repository, the workflow file and the tag that produced the asset |
 | What it proves | That an asset came out of this repository at that tag. Not that what is inside it is correct — that is what the inventories and the scan are for |
 

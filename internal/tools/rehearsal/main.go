@@ -7,8 +7,7 @@
 //	rehearsal -from v0.5.0 -engine postgres -dir .demo/rehearsal
 //
 // A server engine's URL is read from OPENPSIRT_TEST_<ENGINE>_URL, the variable
-// the test suite reads, so the password is never on the command line. -url
-// names one instead.
+// the test suite reads, so the password is never on the command line.
 //
 // The release seeds its own database: its image is built from its own tag,
 // and its own demo targets declare the products, upload the inventories, let
@@ -96,7 +95,6 @@ func main() {
 	var keep bool
 	flag.StringVar(&r.from, "from", "", "the release to upgrade from, as v0.5.0")
 	flag.StringVar(&r.engine, "engine", "", "sqlite, postgres, mysql or mariadb")
-	flag.StringVar(&r.adminURL, "url", "", "the engine's URL, when not OPENPSIRT_TEST_<ENGINE>_URL; the rehearsal makes a database of its own beside the one named")
 	flag.StringVar(&dir, "dir", ".demo/rehearsal", "where the run keeps what it makes")
 	flag.StringVar(&r.grype, "grype", "", "the scanner's database directory, shared between runs")
 	flag.StringVar(&r.image, "image", "openpsirt-rehearsal:current", "this tree's image")
@@ -104,16 +102,16 @@ func main() {
 	flag.Parse()
 
 	if r.from == "" || r.engine == "" {
-		fmt.Fprintln(os.Stderr, "usage: rehearsal -from vX.Y.Z -engine sqlite|postgres|mysql|mariadb [-url …]")
+		fmt.Fprintln(os.Stderr, "usage: rehearsal -from vX.Y.Z -engine sqlite|postgres|mysql|mariadb")
 		os.Exit(2)
 	}
 	if err := usable(r.from, r.engine); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	r.adminURL = engineURL(r.adminURL, r.engine, os.Getenv)
+	r.adminURL = engineURL(r.engine, os.Getenv)
 	if r.engine != "sqlite" && r.adminURL == "" {
-		fmt.Fprintf(os.Stderr, "%s needs %s or -url: the rehearsal makes its database beside the one it names\n",
+		fmt.Fprintf(os.Stderr, "%s needs %s: the rehearsal makes its database beside the one it names\n",
 			r.engine, engineVariable(r.engine))
 		os.Exit(2)
 	}
@@ -307,11 +305,12 @@ func engineVariable(engine string) string {
 	return "OPENPSIRT_TEST_" + strings.ToUpper(engine) + "_URL"
 }
 
-// engineURL is the URL named on the command line, or else the one the
-// environment holds for the engine.
-func engineURL(named, engine string, getenv func(string) string) string {
-	if named != "" || engine == "sqlite" {
-		return named
+// engineURL is the URL the environment holds for the engine. Never an
+// argument: a command line is readable by every local user for the whole run
+// and is written to the rehearsal's log.
+func engineURL(engine string, getenv func(string) string) string {
+	if engine == "sqlite" {
+		return ""
 	}
 	return getenv(engineVariable(engine))
 }

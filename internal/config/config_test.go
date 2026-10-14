@@ -84,10 +84,16 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		{"DIRECTORY_URL", "https://u:p@psirt.example.test/csaf"},
 		{"DIRECTORY_URL", "https://psirt.example.test/csaf?x=1"},
 		{"DIRECTORY_URL", "https://psirt.example.test/csaf#f"},
+		// An empty query is a query: written back out, the "?" lands between
+		// the directory and every name joined to it.
+		{"DIRECTORY_URL", "https://psirt.example.test/csaf?"},
 		// Swallowed, a list that cannot be read empties the exclusions, and
 		// every internal host becomes somewhere a report can send a fetch.
 		{"OUTBOUND_EXCLUDED", "10.0.0.0/33"},
 		{"OUTBOUND_EXCLUDED", "not a host"},
+		// Dropped, a mapping that cannot be read leaves the deployment
+		// starting with no group mappings and nobody holding what one grants.
+		{"GROUP_ROLES", "leads=owner"},
 	} {
 		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
 			t.Setenv(envPrefix+tc.key, tc.value)
@@ -161,19 +167,6 @@ func TestPatchBranchesAreOffUnlessTheDeploymentTurnsThemOn(t *testing.T) {
 	}
 	if c.PatchBranches {
 		t.Error("patch branch lookups are on in a deployment that never turned them on")
-	}
-}
-
-func TestTheExcludedListUnderItsOldNameIsRefusedRatherThanIgnored(t *testing.T) {
-	// Ignored, a deployment that set the old name fetches from everything it
-	// meant to keep out.
-	t.Setenv(envPrefix+"PATCH_EXCLUDED", "corp.example.com")
-	_, err := Load()
-	if err == nil {
-		t.Fatal("the old name was accepted and nothing it lists is excluded")
-	}
-	if !strings.Contains(err.Error(), envPrefix+"OUTBOUND_EXCLUDED") {
-		t.Errorf("the refusal does not name the new variable: %v", err)
 	}
 }
 
@@ -360,8 +353,11 @@ func TestTheDeploymentsOwnAddressHasToBeOne(t *testing.T) {
 // since a refusal is logged. That holds on every arm, including a value the
 // parser reads as a scheme and an opaque rest, and one it cannot parse at all.
 func TestARefusedAddressDoesNotRepeatItsPassword(t *testing.T) {
-	for _, key := range []string{"BASE_URL", "DIRECTORY_URL"} {
+	for _, key := range []string{"BASE_URL", "DIRECTORY_URL", "ZULIP_SITE"} {
 		for _, value := range []string{
+			"https://psirt.example.test/?token=hunter2",
+			"https://psirt.example.test/#hunter2",
+			"https://user:hunter2%zz@psirt.example.test/",
 			"https://user:hunter2@psirt.example.test/",
 			"admin:hunter2@psirt.example.test",
 			"ftp://user:hunter2@psirt.example.test/",
@@ -369,12 +365,20 @@ func TestARefusedAddressDoesNotRepeatItsPassword(t *testing.T) {
 			"https://user:hunter2@psirt.example.test/below",
 			"https://user:hunter2@psirt.example.test:bad/",
 			"http://user:hunter2@psirt.example.test/",
+			"https://hunter2@psirt.example.test/",
 		} {
 			t.Run(key+" "+value, func(t *testing.T) {
 				t.Setenv(envPrefix+key, value)
+				if key == "ZULIP_SITE" {
+					t.Setenv(envPrefix+"ZULIP_EMAIL", "bot@chat.example.test")
+					t.Setenv(envPrefix+"ZULIP_KEY", "k")
+				}
 				_, err := Load()
 				if err == nil {
 					t.Fatal("an address carrying credentials was accepted")
+				}
+				if !strings.Contains(err.Error(), envPrefix+key) {
+					t.Errorf("refused for something else: %v", err)
 				}
 				if strings.Contains(err.Error(), "hunter2") {
 					t.Errorf("the refusal repeats the password: %v", err)
@@ -434,7 +438,11 @@ func TestAZulipServerIsReachedOverHTTPSAlone(t *testing.T) {
 	t.Setenv("OPENPSIRT_ZULIP_EMAIL", "bot@chat.example.test")
 	t.Setenv("OPENPSIRT_ZULIP_KEY", "k")
 	for _, site := range []string{"http://chat.example.test", "chat.example.test",
-		"https://user:pass@chat.example.test"} {
+		"https://user:pass@chat.example.test",
+		// Every API path is appended to the site, so anything after the host
+		// lands in front of each one.
+		"https://chat.example.test/?x", "https://chat.example.test/?",
+		"https://chat.example.test/#f", "https://chat.example.test/zulip"} {
 		t.Setenv("OPENPSIRT_ZULIP_SITE", site)
 		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "OPENPSIRT_ZULIP_SITE") {
 			t.Errorf("a Zulip server at %q answered %v, want it refused by name", site, err)
@@ -443,5 +451,54 @@ func TestAZulipServerIsReachedOverHTTPSAlone(t *testing.T) {
 	t.Setenv("OPENPSIRT_ZULIP_SITE", "https://chat.example.test")
 	if _, err := Load(); err != nil {
 		t.Errorf("a whole Zulip configuration was refused: %v", err)
+	}
+}
+
+// The published directory is served to anybody, so it is never the attachment
+// store, a folder holding it, or a folder inside it.
+func TestThePublishedDirectoryIsNeverTheAttachmentStore(t *testing.T) {
+	root := t.TempDir()
+	for _, c := range []struct {
+		what    string
+		set     map[string]string
+		refused string
+	}{
+		{"one bucket", map[string]string{"DIRECTORY_BUCKET": "psirt", "ATTACHMENT_BUCKET": "PSIRT"}, "DIRECTORY_BUCKET"},
+		{"one bucket on one endpoint", map[string]string{
+			"DIRECTORY_BUCKET": "psirt", "DIRECTORY_ENDPOINT": "https://minio.example.test/",
+			"ATTACHMENT_BUCKET": "psirt", "ATTACHMENT_ENDPOINT": "https://MINIO.example.test",
+		}, "DIRECTORY_BUCKET"},
+		{"one folder", map[string]string{"DIRECTORY_DIR": root + "/a", "ATTACHMENT_DIR": root + "/a/"}, "DIRECTORY_DIR"},
+		{"the attachments inside the directory", map[string]string{
+			"DIRECTORY_DIR": root, "ATTACHMENT_DIR": root + "/attachments",
+		}, "DIRECTORY_DIR"},
+		{"the directory inside the attachments", map[string]string{
+			"DIRECTORY_DIR": root + "/files/csaf", "ATTACHMENT_DIR": root + "/files",
+		}, "DIRECTORY_DIR"},
+
+		{"two buckets", map[string]string{"DIRECTORY_BUCKET": "csaf", "ATTACHMENT_BUCKET": "psirt"}, ""},
+		{"one name on two stores", map[string]string{
+			"DIRECTORY_BUCKET": "psirt", "DIRECTORY_ENDPOINT": "https://one.example.test",
+			"ATTACHMENT_BUCKET": "psirt", "ATTACHMENT_ENDPOINT": "https://two.example.test",
+		}, ""},
+		{"sibling folders", map[string]string{"DIRECTORY_DIR": root + "/csaf", "ATTACHMENT_DIR": root + "/csaf-private"}, ""},
+		{"a bucket beside a folder", map[string]string{"DIRECTORY_DIR": root, "ATTACHMENT_BUCKET": "psirt", "ATTACHMENT_DIR": root}, ""},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			t.Setenv(envPrefix+"DIRECTORY_URL", "https://psirt.example.test/csaf")
+			for key, value := range c.set {
+				t.Setenv(envPrefix+key, value)
+			}
+			_, err := Load()
+			if c.refused == "" {
+				if err != nil {
+					t.Errorf("refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), envPrefix+c.refused) {
+				t.Errorf("answered %v, want a refusal naming %s", err, envPrefix+c.refused)
+			}
+		})
 	}
 }

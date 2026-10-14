@@ -344,6 +344,7 @@ Recorded by an administrator, as a date on the person.
 | Their roles are left where they are | What somebody held is part of why the record reads as it does, and bringing them back should not mean reconstructing it from memory. What stops them is the date |
 | Read once, where every way in already passes | A session, a personal token and a group-bound sign-in all resolve by identity. A second spelling of the check is a second rule to keep in step with the first |
 | **Every question of the form "may this person do this" excludes them** | The grants are left in place on purpose, so a query reading only grants answers that somebody who has left is still cleared. Three did: two of them decide whether an undisclosed finding may be handed to a person or a team, where the assignment itself is the disclosure, and the third decides whether their work is released |
+| Nobody who has left is told anything | Every audience a sweep derives starts from the people still here, a recorded event for them records nothing, and mail, digests and direct chat messages skip them, including what was opened before they left. `DESIGN-notifications.md` § Delivery |
 | A departed administrator does not satisfy the startup check | Otherwise configuration can map no group to admin and the deployment starts cleanly with nobody able to administer it — which is the state that check exists to prevent |
 | Naming somebody in configuration readmits them | It is the documented way back into a deployment nobody can administer, and nothing else clears the date. Done there rather than wherever a person is recorded: an administrator re-recording a departed colleague must not silently readmit them |
 | Sessions are ended rather than left to expire | Roles are re-read at sign-in, so withdrawing one takes effect then. This is what makes leaving immediate instead |
@@ -620,6 +621,7 @@ document, so the account has to be asked about.
 | Configuring both stops the process, naming the two settings | An identity here is a username (REQ-41). Two providers issuing usernames independently make the same name either one person or two, and nothing in the record says which — so the ambiguity is refused rather than resolved by whichever arrived first |
 | Configuring none is not a fault | It is the arrangement where a reverse proxy authenticates instead |
 | Refused at startup, not at a sign-in | A deployment whose sign-in is broken should be visible to whoever started it, rather than to the first person who tries to use it |
+| The forge's team listing is read to the end, up to twenty full pages, and one more asked for to tell a whole listing from a longer one | The listing covers every organization somebody belongs to, so a page is not a page of this deployment's teams. A listing still full past the bound refuses the sign-in rather than withdrawing roles from whoever is in many teams without saying so |
 
 The exchange happens here and the browser gets a session of this deployment's. A
 provider's token is never handed to a page: one of them is opaque and this API
@@ -638,7 +640,7 @@ sign-ins, which has to be swept and which anybody can fill.
 | The proof key is sent as a digest and kept as the secret it hashes | An authorization code taken in flight being exchanged by whoever took it |
 | The identity token must carry the value tying it to this sign-in | It belonging to a different one |
 | An identity token naming no subject is refused | Quietly reducing that deployment to matching by name |
-| A provider's stated address is used only where the provider says it verified it | An authorization waiting under somebody's work address being redeemable by anybody willing to claim it |
+| A provider's stated address is recorded only where the provider says it verified it | Mail about an undisclosed finding going to whatever address an account holder typed. No address redeems an authorization: the username claim alone does |
 | The sealed value carries when it was minted, and a stale one is refused | The window being a request to the browser and nothing else. The browser holding the value may be the one that planted it, and the key sealing it is never rotated — so without a time in the payload a sign-in sealed months ago stays acceptable |
 
 ## Outbound provider fetches
@@ -653,10 +655,12 @@ unspecified, or in one of the blocks the standard library does not call private
 and the internet does not route: carrier-grade translation, "this network",
 benchmarking, protocol assignments, reserved, IPv6 site-local, IPv4-compatible
 IPv6, and the local-use NAT64 prefix. An address in the well-known NAT64
-prefix, and a 6to4 address, is judged by the IPv4 address inside it. Every
+prefix, and a 6to4 address, is judged by the IPv4 address inside it, against
+the built-in blocks and an administrator's excluded networks alike. Every
 refusal the client makes itself, at the dial as well as before it, is told apart
-from a host that did not answer, and an address inside this network is told
-apart again, because what a name resolves to can change.
+from a host that did not answer, and an address inside this network or in an
+excluded network is told apart again, because what a name resolves to can
+change.
 
 One client, in one place, for every fetch out of this process. Written per
 caller it is forgotten by one of them: a bare client with a timeout and nothing
@@ -673,6 +677,8 @@ it re-resolves the issuer's name each time.
 | Pinning the fetch is not enough | A document fetched from the right host can name endpoints on another one, turning every sign-in into a redirect of the issuer's choosing. The endpoints a provider publishes are checked against the issuer's own host when the adapter is built, and a provider that would misdirect people stops the process |
 | The address check runs after the name resolves and before the connection is made | Checked earlier it would see a name rather than an address and refuse everything; resolving separately and then connecting leaves a window in which the name resolves to something else the second time |
 | The return address is stated in configuration, not taken from the request | Otherwise it is whatever a caller claimed the host was. A deployment that configured a provider without stating its address does not start |
+| Every request out carries one User-Agent, set where every request passes | A receiver sees one name and somewhere to read about it, and a caller that forgets to set it sends the library's default |
+| An address an administrator configured, a webhook or a chat server, goes through the same client without the address check | https only, no user in the address, no redirect followed. It was typed by the operator rather than read from a document, and REQ-69 lets it reach wherever that is |
 | An answer read back from a provider is bounded | A profile is a few hundred bytes; a body that never ends is a sign-in that allocates until the process dies |
 
 ## Trusted-header sign-in
@@ -794,6 +800,8 @@ is no default.
 | The subject cannot serve as the claim | An authorization is written before anybody has arrived, so the name it is written for has to be one a person can type. The subject is not knowable then |
 | There is no safe default rather than a different default | OpenID Connect permits a provider to let people choose their own `preferred_username`; whether a given one does is a question only its operator can answer. On a provider where the login is assigned by an administrator it is the right answer, and on one with self-registration it is the attack |
 | A missing claim is refused before discovery | Like every other refusal of what configuration supplies, it names the setting to fix and needs no provider to be reachable |
+| A token without the claim is refused, and the log names the claim | A verified address or the subject in its place is a value the operator never chose, and the subject cannot be written into an authorization before anybody arrives. A provider that omits the claim for some people is a configuration to fix, and the log line is where an operator finds which claim |
+| The issuer is read with surrounding spaces ignored | A file or a template leaves them, and a host with a space in it does not parse |
 | The groups claim is named with surrounding spaces ignored, once | Whether a provider reports groups decides whether group mappings are accepted at startup, so the claim checked is the claim read. A name read with its spaces passes that check and yields no groups, and every arrival is then refused |
 
 ## Sessions and request forgery
@@ -819,6 +827,12 @@ Origin is checked for both, because it costs nothing and still holds when the
 echoed value has leaked. Requests carrying a key or a token are exempt: nothing
 sends those automatically. Safe methods are named as a list, so a method nobody
 thought of is guarded rather than exempt by having been forgotten.
+
+Both sides of the comparison are origins as a browser serializes them: scheme
+and host in lower case, and no port where it is the scheme's default. A base
+address naming `https://psirt.example.com:443` is the origin a browser calls
+`https://psirt.example.com`, and compared as written every write from the
+deployment's own page would be refused.
 
 ## Group name matching
 
@@ -1157,7 +1171,9 @@ reintroduce it.
 | The host is named only where one `@`, with no `=` or `&` before it, or none at all, says where it begins, and only when it is shaped like a host | With a second `@`, or one after a query parameter's name, what follows the `@` may be the password |
 | The upgrade rehearsal reads the URL from the environment and hands it to a container through the environment | An argument is readable by every local user and is written to the rehearsal's log |
 | A URL the parser refuses is judged by the database package before any other parser reads it | Every other parser quotes the text it could not read |
-| A refused deployment address or directory address shows nothing up to its last `@`, and one the parser cannot read is not shown | Before the scheme is checked a password can sit anywhere: `admin:hunter2@psirt.example.com` parses with the scheme `admin` and no user information |
+| Every configured address is shown through one redaction rule: the database server, the object store endpoint, the published directory, the deployment address, the chat server and the identity provider's issuer | Two private rules with different reach are how one of them forgets the query string |
+| Redaction replaces the password, the value of every query key that carries a credential, and the fragment. In a deployment, directory, chat server or issuer address it replaces a user name standing alone as well | A database driver reads a password from the query, and a presigned object store address carries its signature and session token there. Those four addresses carry no user, so a name there is a token |
+| A refused address with no `//` after its scheme shows nothing up to its last `@`, and one the parser cannot read is not shown | Before the scheme is checked a password can sit anywhere: `admin:hunter2@psirt.example.com` parses with the scheme `admin` and no user information |
 
 The rule is written down rather than left as a habit because the failure is
 invisible: nothing breaks, no test fails, and the leak lives in a system nobody
@@ -1339,6 +1355,7 @@ between the two mints.
 |---|---|
 | Minted only where nothing holds one, and the answer is what is stored | Two replicas starting together both find nothing and both mint. Written as a plain set, the second overwrites the first — and every sign-in already in flight, sealed with the losing key, is refused when the callback lands |
 | The caller takes whichever key won | It wants a key everybody agrees on, not the one it generated |
+| A stored key that is empty, short or not one this minted fails sign-in closed | An empty key is one anybody can compute, so a pending sign-in sealed with it would be accepted from anybody. Removing the row lets the next sign-in mint afresh |
 
 What a setting held is answered by the write that replaced it. Read in a
 statement of its own beforehand it is the value at some earlier moment: two
@@ -1424,6 +1441,8 @@ notice the absence and say so.
   text and, for a connection failure, the address and user it tried.
 - Naming every address as a trusted source is refused. It reaches the same
   place as naming none, through the setting that is supposed to be the guard.
+  An IPv4-mapped range is held as the IPv4 range it is, so `::ffff:0:0/96`,
+  which matches every IPv4 client, is refused with `0.0.0.0/0`.
 - Granting a role somebody already holds succeeds. An administrator scripting
   grants should not have to check first. The refused insert stands on a
   savepoint of its own, because on PostgreSQL a refused statement aborts the

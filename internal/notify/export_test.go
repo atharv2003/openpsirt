@@ -8,7 +8,17 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/nexthop-ai/openpsirt/internal/outward"
 )
+
+// CycleForTest runs one turn of the watch's sweep, as Run does on its
+// interval, so a test pins what the sweep reaches rather than a method the
+// sweep might stop calling.
+func CycleForTest(w *Watch, ctx context.Context) { w.cycle(ctx) }
+
+// TalkCycleForTest runs one turn of the chat sweep, as Run does.
+func TalkCycleForTest(t *Talk, ctx context.Context) { t.cycle(ctx) }
 
 // SweepBatch is how many notifications one sweep carries.
 //
@@ -32,8 +42,8 @@ func StillToTell(s *Signal, ctx context.Context, name string) (int, error) {
 	return len(rows), err
 }
 
-// TrustForTest points the sweep at a client that trusts a test server's
-// certificate.
+// TrustForTest points the sweep at the client it uses, trusting a test
+// server's certificate.
 //
 // Doing nothing else: the guard that refuses anything but https and refuses a
 // redirect is what is being tested around, not switched off — a test server
@@ -41,22 +51,25 @@ func StillToTell(s *Signal, ctx context.Context, name string) (int, error) {
 // testing the delivery over plain http, which is the one thing this refuses to
 // do.
 func TrustForTest(s *Signal, client *http.Client) {
-	client.CheckRedirect = s.client.CheckRedirect
-	client.Transport = &outboundGuard{inner: client.Transport}
-	s.client = client
+	s.client = trusting(client)
 }
 
-// SlackForTest is a bot pointed at a test server, through a client that
-// trusts its certificate and keeps the guard that refuses anything but https.
+// SlackForTest is a bot pointed at a test server, through the client it uses,
+// trusting the server's certificate.
 func SlackForTest(token, api string, client *http.Client) *SlackBot {
-	client.Transport = &outboundGuard{inner: client.Transport}
-	return newSlack(token, api, client)
+	return newSlack(token, api, trusting(client))
 }
 
 // ZulipForTest is a bot on a test server, on the same terms.
 func ZulipForTest(site, email, key string, client *http.Client) *ZulipBot {
-	client.Transport = &outboundGuard{inner: client.Transport}
-	return newZulip(site, email, key, client)
+	return newZulip(site, email, key, trusting(client))
+}
+
+// trusting is the configured client, trusting what a test server's own client
+// trusts.
+func trusting(client *http.Client) *http.Client {
+	return outward.ConfiguredTrusting(signalTimeout,
+		client.Transport.(*http.Transport).TLSClientConfig.RootCAs)
 }
 
 // SharedKinds is the table of kinds a channel carries, so a test can hold it

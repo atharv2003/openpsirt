@@ -115,11 +115,11 @@ starts read them, so they stay in the environment beside a file.
 
 | Variable | File key | Meaning | Default |
 |---|---|---|---|
-| `OPENPSIRT_ADDR` | `server.address` | The `host:port` the HTTP server listens on | `:8080` |
+| `OPENPSIRT_ADDR` | `server.address` | The `host:port` the HTTP server listens on. The image's health check, `openpsirt health`, asks the server there. A container configured by file replaces the image's check with `openpsirt health --config <file>`, because the image's check names no file | `:8080` |
 | `OPENPSIRT_BASE_URL` | `server.base_url` | The address people arrive on, **written in full, with no path below it and no query, fragment or credentials**: `https://psirt.example.com`. Behind a proxy that is not what the process thinks it is called, and a sign-in provider compares the address it sends people back to against what it was registered with, so it is stated rather than guessed. Required once a provider is configured | unset |
 | `OPENPSIRT_PLAIN_HTTP` | `server.plain_http` | Serve without TLS, which is what running locally looks like. It only loosens cookies: the session cookie is sent over plain HTTP, which it otherwise is not | `false` |
 | `OPENPSIRT_SHUTDOWN_GRACE` | `server.shutdown_grace` | How long requests in flight get to finish on a stop signal, and then how long background work gets to finish after that | `15s` |
-| `OPENPSIRT_STARTUP_TIMEOUT` | `server.startup_timeout` | How long everything contacted before the server listens has to answer: the database, the schema, the administrators named here, and the attachment store. Past it the process stops and names what it was waiting on | `60s` |
+| `OPENPSIRT_STARTUP_TIMEOUT` | `server.startup_timeout` | How long everything contacted before the server listens has to answer: the database, the schema, the administrators named here, and the attachment store. `openpsirt migrate` connects within it too, and migrates without a bound. Past it the process stops and names what it was waiting on | `60s` |
 | `OPENPSIRT_LOG_LEVEL` | `log.level` | `debug`, `info`, `warn` or `error` | `info` |
 | `OPENPSIRT_LOG_FORMAT` | `log.format` | `text` or `json` | `text` |
 
@@ -167,6 +167,8 @@ read.
 |---|---|
 | The URL asks for a transport that falls back to cleartext, or says nothing | Every connection is opened with one that does not: `sslmode=require` on PostgreSQL where the URL says `prefer`, `allow` or nothing, and `tls=skip-verify` on MySQL and MariaDB where it says `preferred` or nothing. Encrypted, with no certificate checked, which is what the default already gave where the server offered it |
 | A PostgreSQL URL says nothing and `PGSSLMODE` is set | The environment's mode is judged in the URL's place: `require`, `verify-ca` and `verify-full` are left to apply, `prefer` and `allow` become `require`, and `disable` is refused |
+| A PostgreSQL URL names a service | The service file's mode is judged too: the URL, the environment and the service file together must leave no attempt in cleartext, or the process refuses to start |
+| A PostgreSQL query pair cannot be read | Refused at startup. The driver drops it, so the mode it held is replaced by the driver's default |
 | The URL asks for cleartext | `sslmode=disable`, `tls=false` or `tls=0` in any case, or `allowFallbackToPlaintext` true: refused at startup, naming the setting |
 | The connection is encrypted | Nothing happens. The transport is logged as it always is |
 | The connection is in cleartext | Refused at startup, naming the setting |
@@ -237,13 +239,11 @@ it, which `signin.claim-window` also bounds.
 scopes requested are `openid profile email` and are not configurable, so a
 claim carried by any of the three is available.
 
-A claim the provider does not send, or sends as something other than a string,
-reads as absent. The sign-in then falls back to the address the provider says
-it verified, and failing that to the subject — which matches no authorization
-anybody typed, so the person is refused rather than admitted. A claim name
-with a typo in it therefore reads as "this person was never granted access",
-not as a configuration error, so check the name against the provider's own
-token before deciding somebody's grant is missing.
+A claim the provider does not send, or sends empty or as something other than
+a string, refuses the sign-in. Nothing stands in for it: not the address the
+provider verified, and not the subject. The person sees only that they were
+not let in, and the log line `a sign-in could not be completed` names the claim
+that was missing, so a claim name with a typo in it shows up there.
 
 ### GitHub
 
@@ -308,7 +308,7 @@ set.
 | `networkPolicy.enabled` | Whether the policy is rendered for a trusted-header install. Turn it off only where something else keeps other pods from reaching this one | `true` |
 | `networkPolicy.ingressController.enabled` | Whether the ingress controller is admitted by its labels. Off, the policy admits `networkPolicy.from` alone | `true` |
 | `networkPolicy.ingressController.namespaceLabels` | The labels of the ingress controller's namespace. Set here or in `podLabels`, it replaces both of ingress-nginx's defaults | ingress-nginx's, where neither is set |
-| `networkPolicy.ingressController.podLabels` | The labels of its pods, replacing the defaults the same way | ingress-nginx's, where neither is set |
+| `networkPolicy.ingressController.podLabels` | The labels of its pods, replacing the defaults the same way. Refused at render without `namespaceLabels`, because a pod with these labels can be created in any namespace | ingress-nginx's, where neither is set |
 | `networkPolicy.from` | Further peers, in the NetworkPolicy's own form: an `ipBlock` for a controller on the host network, or a namespace a metrics scraper runs in | none |
 
 A policy is enforced only where the cluster's network plugin supports
@@ -572,7 +572,7 @@ people direct messages.
 | Variable | File key | Meaning | Default |
 |---|---|---|---|
 | `OPENPSIRT_SLACK_TOKEN` | `chat.slack.token` | A Slack app's bot token, beginning `xoxb-` | unset |
-| `OPENPSIRT_ZULIP_SITE` | `chat.zulip.site` | The Zulip server's https address, e.g. `https://chat.example.com` | unset |
+| `OPENPSIRT_ZULIP_SITE` | `chat.zulip.site` | The Zulip server's https address, e.g. `https://chat.example.com`. Refused at startup if it carries a path, a query, a fragment or credentials | unset |
 | `OPENPSIRT_ZULIP_EMAIL` | `chat.zulip.email` | The bot's address, as Zulip shows it | unset |
 | `OPENPSIRT_ZULIP_KEY` | `chat.zulip.key` | The bot's API key | unset |
 
@@ -675,7 +675,7 @@ web server serves them, at the address you give below.
 
 | Variable | File key | What it does | Default |
 |---|---|---|---|
-| `OPENPSIRT_DIRECTORY_URL` | `directory.url` | The `https` address the directory is reachable at, which only you know. Every address the directory states about itself is built from it, and so is the address each advisory states for itself, so nothing is written without it. Refused at startup if it is not an `https` address, or carries a query, a fragment or credentials. A value that is only whitespace is unset | unset |
+| `OPENPSIRT_DIRECTORY_URL` | `directory.url` | The `https` address the directory is reachable at, which only you know. Every address the directory states about itself is built from it, and so is the address each advisory states for itself, so nothing is written without it. Refused at startup if it is not an `https` address, or carries a query (an empty one included), a fragment or credentials. A value that is only whitespace is unset | unset |
 | `OPENPSIRT_DIRECTORY_BUCKET` | `directory.bucket` | The bucket the files are written to. Empty means no object store | unset |
 | `OPENPSIRT_DIRECTORY_ENDPOINT` | `directory.endpoint` | The address of a self-hosted store. A cloud provider needs none | unset |
 | `OPENPSIRT_DIRECTORY_REGION` | `directory.region` | The region, where the store wants one | unset |
@@ -684,7 +684,7 @@ web server serves them, at the address you give below.
 | `OPENPSIRT_DIRECTORY_SESSION_TOKEN` | `directory.session_token` | A session token, where the credentials are temporary ones. Refused without a key and secret, or a name in the endpoint | unset |
 | `OPENPSIRT_DIRECTORY_PATH_STYLE` | `directory.path_style` | Address the bucket in the path rather than the host, which is what a self-hosted store usually wants | set when an endpoint is |
 | `OPENPSIRT_DIRECTORY_ALLOW_HTTP` | `directory.allow_http` | Accept a store endpoint that is not `https` and is not this machine | off |
-| `OPENPSIRT_DIRECTORY_DIR` | `directory.dir` | A directory on this machine to write the files into instead. The bucket wins where both are set | unset |
+| `OPENPSIRT_DIRECTORY_DIR` | `directory.dir` | A directory on this machine to write the files into instead. The bucket wins where both are set. Refused at startup where it is, holds or sits inside `OPENPSIRT_ATTACHMENT_DIR`, and a bucket is refused where it is the attachment bucket on the same endpoint | unset |
 | `OPENPSIRT_DIRECTORY_LIST` | `directory.list` | Tell aggregators they may list you | on |
 | `OPENPSIRT_DIRECTORY_MIRROR` | `directory.mirror` | Tell aggregators they may mirror your documents | off |
 
@@ -838,8 +838,7 @@ alone.
 OPENPSIRT_OUTBOUND_EXCLUDED=corp.example.com,internal.example.net,203.0.113.0/24
 ```
 
-The chart sets it from `outbound.excluded`. Its earlier name,
-`OPENPSIRT_PATCH_EXCLUDED`, is refused at startup.
+The chart sets it from `outbound.excluded`.
 
 ## Supplier advisories
 

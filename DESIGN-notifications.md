@@ -111,6 +111,7 @@ one in a single package, one function per destination.
 | Built in one place | An address spelled by hand elsewhere in the server is a test failure. A link built by hand is the link nothing holds to the interface's routes |
 | Held to the interface's route table | Every builder is called with names holding every separator an address has, and each result is matched against the table the interface's router is built from, query parameters included (`DESIGN-interface.md` § The route table). A builder added without a sample fails the same test |
 | Each part escaped for where it lands | A path segment escaped as one, a query value as one. A product or issue name holding a slash otherwise opens a screen about something else |
+| An address naming a part of dots alone is the front page | A browser resolves "." and ".." before the request is sent, percent-encoded or not, so no escaping keeps the link on its screen. Every builder is also called with "." and "..", and the route check refuses a segment of dots |
 | A private notification's message carries the front page | The rule in § Outbound content. The front page's address comes from the same package |
 
 ## Mentions
@@ -124,6 +125,9 @@ names is told at once.
 | A name nobody holds and a name held by somebody who may not read this are not distinguished | Both reach nobody. A refusal naming which would answer, one comment at a time, whether a given person can see undisclosed work |
 | Never the author | They are not asking themselves a question |
 | Never a failure of the write | The words are on record by the time anybody is told |
+| A name is written plain, `@ana`, where it is letters, digits and `. _ : @ -`, starting and ending with a letter or digit, and delimited, `@\<ana+psirt@example.com>`, otherwise | The plain form stops at the first character outside it, so `ana+psirt@example.com` or `auth0|abc` would be read as `ana` or `auth0` and somebody else, or nobody, would be told. The backslash keeps markdown from reading the brackets as a tag or an address. The editor writes whichever form the identity needs, and `@<…>` is read too where markdown leaves it as text or links it as an address |
+| Inside the brackets a backslash escapes the character after it, and the editor escapes each of ``\ < > * _ ` [ ] ~`` | An identity holding `>` would end the brackets early, and one like `_svc_` would be read as emphasis and split the run, so either would name somebody else or nobody |
+| A run of text is read whole | The parser splits one run into several text nodes where it pleases, and a delimited name holding a space would otherwise be cut in two |
 
 ## New criticals in a shipped release
 
@@ -239,7 +243,9 @@ findings list.
 
 The queue is counted per team and product; the others per claim. A claim is one
 person's action and one thing to read, however many rows it wrote. A queue is a
-population: one routing rule places thousands of findings in a sweep.
+population: one routing rule places thousands of findings in a sweep. Within it
+the unit is an issue in a component, whatever its places' visibility, and the
+condition is undisclosed where any of those places is.
 
 ## Reports that must come back empty
 
@@ -409,6 +415,7 @@ what somebody may do, not what they want to read.
 | Nothing is repeated | An event records what it was about, kept apart from the name a condition clears against, which is a uniqueness key and would deduplicate two unrelated events into one |
 | It pages past what it has already said | Filtering one page rather than paging until enough survive gives a holder with a page's worth of already-told items an empty digest. Routed work arrives deliberately without a message, so the digest is the only place it is named |
 | A digest with nothing in it is not sent, and the clock still moves | A daily "nothing" is how somebody stops opening the daily message. Leaving the mark unmoved would make a quiet week report itself as new the following Monday |
+| A digest that cannot be assembled moves the clock | On the rule a refusing mailbox follows: it is tried tomorrow rather than every minute, and a batch of them cannot crowd out a reader it can serve |
 | A first digest reports nothing under "nobody owns" | There is no "since" to measure against |
 | **"Nobody owns" is about the assignee alone** | It counts what is open and unassigned, including what somebody has claimed and what is waiting for approval — 8,400 rows against 7,471 for the equivalent findings narrowing on one real build, with a pending approval at the top. Narrowing it would change what people are sent, so the screen asking the same question narrows its own list instead and counts from that |
 | One message is bounded, and says so | What is over the bound stays in the application, and the message says how many of how many it listed. Without that a holder of four hundred things reads "fifty pieces of work assigned to you" as a statement of fact, with nothing to tell it apart from a message about fifty |
@@ -500,6 +507,7 @@ of this table's rules are.
 | Who it has told is read for the kind being derived | Two conditions one argument apart reading the same list leaves anybody who is neither an administrator nor currently holding the thing never handed a list and never reconciled. One call for every condition is what stops a third from spelling it a third way |
 | Who it has told is read through an index on the kind, whether a row is open, and the person | A sweep asks it once per kind, and every other index on the table leads with the person. Without it each asking reads the whole table, cleared rows included. With 152,859 open conditions over 204 people on PostgreSQL, a steady sweep takes 5.0 to 5.2 s without the index and 4.3 to 4.4 s with it, and a sweep opening 85,869 conditions 401 to 404 s either way. `DESIGN-database.md` § Indexes has the read on each engine |
 | A sweep with no administrator recorded still derives everything that is not an administrator's | Returning early skips the per-person conditions as well, and every alert a triager holds then stands with nothing able to resolve it. Only the conditions addressed to administrators alone depend on there being one |
+| Nobody who has left is in any audience | Their grants and administrator flag stay in place on purpose, so an audience read from grants alone would keep naming them. Every sweep starts from the people still here, an event for somebody who has left records nothing, and the mail, digest and direct-chat sweeps skip them in the query, which covers rows opened before they left |
 | Nobody is told they were unassigned | A name being removed is not an action directed at the person who held it, and a queue that gets shorter says so already |
 | A failure to tell somebody is logged, not returned | The assignment happened and the claim was sent back; answering the caller with an error invites a retry that does the first thing twice |
 | More than one process sweeps | The chart ships two replicas, each running its own watch. The unique index makes a duplicate one row, and the pass treats a duplicate as the answer already being there — without that it would abort, and every administrator after the one it failed on would be told nothing that cycle |
@@ -538,6 +546,7 @@ request-forgery primitive unless governed:
 | https only | The body is authenticated and not encrypted, and what it says is what somebody is being told about a vulnerability |
 | A redirect is refused, never followed | A redirect asks this deployment to send a signed request somewhere else. A receiver that moved should be reconfigured, which is visible |
 | A private address is allowed | The one place this differs from a sign-in provider's endpoints. A provider's address arrives in a discovery document from outside; this one was typed by the operator, whose chat server is reasonably on their own network |
+| The request goes through the process's one outbound client | Its configured form, which carries every control above and the User-Agent every request out carries. `DESIGN-access.md` § Outbound provider fetches. A second client built here is one a change to the shared refusals misses |
 
 | Rule | Reason |
 |---|---|
@@ -553,6 +562,7 @@ request-forgery primitive unless governed:
 | What a sweep reads is what this destination has not settled | Read as "everything not cleared", the window is the oldest two hundred, and an event is never cleared because only a condition is. Past two hundred events the same two hundred are re-read every cycle and nothing created afterwards is ever carried, with no error, no log and no counter |
 | A destination's kind is a kind some notification is of, or every kind | A mistyped kind would be listed as configured and working and never receive anything, so it is refused naming the kinds there are |
 | A destination's reason is why the last delivery that settled failed | Nothing once one has gone since, because the destination works again |
+| A destination's name is matched folded and shown as typed | An administrator types it, so the key it is unique under and retired by is the name folded to lower case, written where it is stored, and the spelling typed is kept beside it for the listing. Two names differing in capitals are one destination. Migration 43 folds the names v0.8.0 stored; two that fold to one key under one kind stay two, as `DESIGN-database.md` § Migrations says, and the one given a numbered key is listed under it |
 | A destination's kind is normalized where it is written | Stored as typed and compared loosely, a destination added under one spelling is retired by another only by accident, and one believed retired goes on receiving everything it takes, undisclosed findings included |
 | Reading and changing where things go is refused in the data layer | It is this table's own rule and the rest of them live there (REQ-42 and REQ-43). What an operator's question needs is named field by field rather than embedding the row, so the signing secret cannot reach a caller that forgets to drop it |
 

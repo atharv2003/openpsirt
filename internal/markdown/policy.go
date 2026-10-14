@@ -531,7 +531,26 @@ func mintedToken(token string) bool {
 // Otherwise narrow: it must follow something that is not a word character, so
 // an email address in the middle of a sentence is not read as a mention of
 // whatever follows the @.
-var mention = regexp.MustCompile(`(^|[^\w@.:-])@([A-Za-z0-9][A-Za-z0-9._:@-]{0,190})`)
+//
+// An identity holding anything else — a plus, a bar, a space, a letter outside
+// ASCII — is written delimited, as `@\<identity>`: the backslash keeps markdown
+// from reading the brackets as a tag or an address, so the whole of it is a
+// mention rather than whatever prefix the plain form reads. `@<identity>` is
+// read too, where markdown leaves it as text.
+//
+// Inside the brackets a backslash escapes the character after it, as markdown
+// reads one: `@\<a\>b>` names `a>b`, and `@\<\_svc\_>` names `_svc_` where
+// the bare underscores would be read as emphasis and split the run.
+var mention = regexp.MustCompile(`(^|[^\w@.:-])@(?:\\?<((?:[^<>\n\\]|\\[^\n]){1,191})>|([A-Za-z0-9][A-Za-z0-9._:@-]{0,190}))`)
+
+// escapedPunct is a backslash before ASCII punctuation, which markdown reads as the
+// punctuation alone. A backslash before anything else is itself.
+var escapedPunct = regexp.MustCompile(`\\([[:punct:]])`)
+
+// trailingAt is a run of text ending in an @ that begins a mention: one
+// standing at the start, or after a character that cannot end a word or an
+// address.
+var trailingAt = regexp.MustCompile(`(^|[^\w@.:-])@$`)
 
 // Mentions lists the identities a piece of text names, without repeats.
 //
@@ -571,15 +590,47 @@ func Mentions(source string) []string {
 		if !ok {
 			return ast.WalkContinue, nil
 		}
-		for _, match := range mention.FindAllStringSubmatch(string(words.Value([]byte(source))), -1) {
-			// Punctuation at the end is the sentence rather than the name:
-			// "thanks @ana." and "@ana: yes" both name ana.
-			name := strings.TrimRight(match[2], ".-_:")
+		add := func(name string) {
 			if name == "" || seen[name] {
-				continue
+				return
 			}
 			seen[name] = true
 			found = append(found, name)
+		}
+		// One run of text, read whole. The parser splits a run into several
+		// text nodes where it pleases — `@\<Ana Smith>.` arrives as two — so
+		// the run is read from its first node, and a node that follows text is
+		// already read.
+		if _, after := words.PreviousSibling().(*ast.Text); after {
+			return ast.WalkContinue, nil
+		}
+		var run strings.Builder
+		last := words
+		for at := ast.Node(words); at != nil; at = at.NextSibling() {
+			piece, ok := at.(*ast.Text)
+			if !ok {
+				break
+			}
+			last = piece
+			run.Write(piece.Value([]byte(source)))
+			if piece.SoftLineBreak() || piece.HardLineBreak() {
+				run.WriteString("\n")
+			}
+		}
+		said := run.String()
+		for _, match := range mention.FindAllStringSubmatch(said, -1) {
+			if match[2] != "" {
+				add(strings.TrimSpace(escapedPunct.ReplaceAllString(match[2], "$1")))
+				continue
+			}
+			// Punctuation at the end is the sentence rather than the name:
+			// "thanks @ana." and "@ana: yes" both name ana.
+			add(strings.TrimRight(match[3], ".-_:"))
+		}
+		// `@<ana+psirt@example.com>` written without the backslash is an @
+		// and then an address markdown links. The address is the identity.
+		if link, ok := last.NextSibling().(*ast.AutoLink); ok && trailingAt.MatchString(said) {
+			add(string(link.Label([]byte(source))))
 		}
 		return ast.WalkContinue, nil
 	})

@@ -1,6 +1,3 @@
-{{- if (.Values.patchBranches).excluded }}
-{{- fail "patchBranches.excluded is now outbound.excluded: move the list there, since the old key is not read" }}
-{{- end }}
 {{- if and (not .Values.database.url) (not .Values.database.existingSecret) }}
 {{- fail "set database.url or database.existingSecret: openpsirt needs a database" }}
 {{- end }}
@@ -18,6 +15,13 @@
 {{- end }}
 {{- if and .Values.database.url (regexMatch "^(sqlite|sqlite3|file):" (lower .Values.database.url)) (gt (int .Values.replicaCount) 1) }}
 {{- fail (printf "database.url is SQLite and replicaCount is %d: SQLite is one file on one pod, so a second replica would start with an empty database of its own rather than share this one. Use PostgreSQL, MySQL or MariaDB, or set replicaCount to 1 for a single-pod trial" (int .Values.replicaCount)) }}
+{{- end }}
+{{- $sqlite := and .Values.database.url (regexMatch "^(sqlite|sqlite3|file):" (lower .Values.database.url)) }}
+{{- if and $sqlite (not (regexMatch "^(?i:sqlite3?|file):(//)?/var/lib/openpsirt/[^/?#.][^/?#]*([?#]|$)" .Values.database.url)) }}
+{{- fail "database.url is SQLite outside /var/lib/openpsirt: the root filesystem is read-only, and /var/lib/openpsirt is the one writable directory the chart mounts for a database file, with nothing beneath it. Use, for example, sqlite:///var/lib/openpsirt/openpsirt.db" }}
+{{- end }}
+{{- if and .Values.database.sqlite.existingClaim (not $sqlite) }}
+{{- fail "database.sqlite.existingClaim is set and database.url is not SQLite: the claim is mounted only for a SQLite URL in database.url, and the chart cannot read a URL in database.existingSecret, so it would be silently ignored. Use database.url for a SQLite trial" }}
 {{- end }}
 {{- if and .Values.scanner.persistence.enabled (not .Values.scanner.persistence.existingClaim) (gt (int .Values.replicaCount) 1) (not (has "ReadWriteMany" .Values.scanner.persistence.accessModes)) }}
 {{- fail (printf "scanner.persistence is enabled with replicaCount %d and no ReadWriteMany access mode: every replica mounts the one claim this chart makes, so on storage that binds to a single node the replicas that land elsewhere stay Pending. Add ReadWriteMany, name scanner.persistence.existingClaim per replica set, or set replicaCount to 1" (int .Values.replicaCount)) }}
@@ -332,6 +336,11 @@ spec:
             # needs setting to use it.
             - name: repositories
               mountPath: /var/cache/openpsirt/repositories
+            {{- if $sqlite }}
+            # The SQLite file, on the one directory a database may be kept in.
+            - name: data
+              mountPath: /var/lib/openpsirt
+            {{- end }}
       volumes:
         - name: tmp
           # Bounded, because an emptyDir without a limit is node disk that a
@@ -365,6 +374,17 @@ spec:
             sizeLimit: {{ div (mul (int64 (.Values.patchBranches.quota | default 21474836480)) 6) 5 }}
             {{- end }}
           {{- end }}
+        {{- if $sqlite }}
+        - name: data
+          {{- with .Values.database.sqlite.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ . }}
+          {{- else }}
+          # Bounded like every scratch volume here, and lost with the pod.
+          emptyDir:
+            sizeLimit: {{ .Values.database.sqlite.sizeLimit }}
+          {{- end }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}
       {{- end }}

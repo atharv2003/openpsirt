@@ -172,6 +172,8 @@ where the server offers it, the other connects in cleartext unless asked.
 | Required is asked of the connection, never of the URL | The engines spell the transport differently and each spelling has several values, so a check reading the URL would be three parsers agreeing about what "encrypted" means — and would still be wrong about a server that ignored what was asked for |
 | Required is also imposed on every connection the pool opens | The question is asked of one connection at startup, and the pool opens connections for the life of the process. A transport that falls back to cleartext — `sslmode` of `prefer` or `allow`, `tls=preferred`, or none named — is replaced by one that does not, and one that asks for cleartext is refused, as is `allowFallbackToPlaintext` set true. One the deployment named that cannot fall back is left as written. A MySQL value is read as the driver reads it, in any case and with 0 and 1 as false and true |
 | A PostgreSQL URL naming no mode | The driver takes `PGSSLMODE` there, and a mode in the URL overrides it, so the environment's mode is judged in the URL's place. A mode is appended only where that one is weak, so a `verify-full` set in the environment is never replaced by one checking no certificate |
+| A PostgreSQL key is read as the driver reads it | The driver decodes each query key and takes the first value of a repeated one, so an escaped `sslmode` is judged as the mode it is and every repeat is judged. A pair the URL parser cannot read is refused, because the driver drops it and falls to its own default |
+| The driver's own reading is the last word on PostgreSQL | It merges a service file above the environment and under the URL, and a mode from there leaves a fallback to cleartext nothing in the URL shows. Every attempt the parsed configuration makes, the first and each fallback, must be encrypted |
 | A server that will not say is refused under it | What the requirement asks for is certainty, and "we could not find out" is not it |
 | Required against SQLite is refused | A file opened directly has no connection to encrypt. Accepting it would make the setting one that changes nothing, which is worse than not offering it |
 
@@ -184,7 +186,10 @@ cleartext by a deployment that asked for it.
 Embedded in the binary and applied at startup by default, so a deployment is one
 artifact and an upgrade is deploying it. Automatic application can be disabled,
 and `openpsirt migrate up|status` runs them separately for an operator who
-would rather use different credentials at a time they choose.
+would rather use different credentials at a time they choose. It refuses an
+action it does not know before contacting anything, and connects within the
+startup timeout a server's start is held to; the migration itself is unbounded,
+because a schema change on a large table takes longer than a start.
 
 With automatic application off, the schema is compared before anything is
 served. The binary and the schema move independently, and uncompared, a build
@@ -438,9 +443,10 @@ row moves. § Indexes says what each index serves.
 
 ### The v0.9.0 upgrade
 
-Migration 43. It adds the image version table, and moves what v0.8.0 stored
-for a container image to an image identified by its name
-(`DESIGN-data-model.md` § Container images).
+Migration 43. It adds the image version table, moves what v0.8.0 stored for
+a container image to an image identified by its name
+(`DESIGN-data-model.md` § Container images), and folds each destination's
+name into the key it is matched under.
 
 | Step | What it does |
 |---|---|
@@ -459,6 +465,7 @@ for a container image to an image identified by its name
 | Findings and tags are pointed at the kept component | Both the component a finding is against and what pulls it in. A tag the merged image carried twice for one issue in one product keeps the first added |
 | The findings are read and moved once for every image | Read for the places decisions are keyed on before anything moves, and moved after every image is merged, a batch of components at a time. The finding table is the largest there is and nothing indexes it by component alone, so a pass per image is a scan of it per image |
 | The other components are removed | Nothing points at them any more |
+| Each destination's name is folded | The name becomes its lower-case key and the spelling typed is kept beside it (`DESIGN-notifications.md` § Outbound HTTP). Two names one kind held that fold to one key stay two. One still in use keeps the key before a retired one, then the one already spelled as the key, then the earliest. The other takes the key followed by its own number, and that numbered key is also the name it is listed under, so retiring it by the name shown reaches it. On MySQL and MariaDB in a transaction of its own between the image version table and the merge, which asks whether the column is there before adding it, so a start after one stopped part way folds rather than failing on the column |
 
 The rules an identity, a fold key and a live key are worked out by are copied
 into the migration rather than called, so a later change to the application

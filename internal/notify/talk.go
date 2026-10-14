@@ -89,13 +89,16 @@ func NewTalk(db *bun.DB, chats []Chat, baseURL string, logger *slog.Logger,
 
 // Run sweeps until the context ends.
 func (t *Talk) Run(ctx context.Context, interval time.Duration) {
-	background.Every(ctx, interval, betweenPosts, func(ctx context.Context) {
-		if sent, failed, err := t.Once(ctx); err != nil {
-			t.logger.Error("carrying notifications to chat", "error", err)
-		} else if sent > 0 || failed > 0 {
-			t.logger.Info("notifications carried to chat", "sent", sent, "failed", failed)
-		}
-	})
+	background.Every(ctx, interval, betweenPosts, t.cycle)
+}
+
+// cycle is one turn of the sweep, with what it did logged.
+func (t *Talk) cycle(ctx context.Context) {
+	if sent, failed, err := t.Once(ctx); err != nil {
+		t.logger.Error("carrying notifications to chat", "error", err)
+	} else if sent > 0 || failed > 0 {
+		t.logger.Info("notifications carried to chat", "sent", sent, "failed", failed)
+	}
 }
 
 // Once carries one cycle's worth: every channel's note, then every person's.
@@ -356,6 +359,8 @@ func direct(q *bun.SelectQuery, platform string, offered []string,
 		Where("nt.read_at IS NULL").
 		Where("nt.created_at >= ?", since).
 		Where(`"pe"."email" IS NOT NULL AND "pe"."email" <> ?`, "").
+		// Nothing goes to somebody who has left.
+		Where(`"pe"."deactivated_at" IS NULL`).
 		Where(`NOT EXISTS (SELECT 1 FROM "chat_preference" AS "off" `+
 			`WHERE "off"."person_id" = "nt"."person_id" AND "off"."direct" = ?)`, false).
 		Where(`NOT EXISTS (SELECT 1 FROM "chat_delivery" AS "went" `+
