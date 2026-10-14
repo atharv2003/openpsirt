@@ -1,8 +1,9 @@
 // Copyright Nexthop Systems Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { useAfterClaim } from "../api/claims";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, type Body } from "../api/client";
 import { unwrap, whichOf } from "../api/queries";
 import { Editor, forget, mentioning } from "./Editor";
@@ -283,7 +284,7 @@ export function Decide({
   // a value merged into what is on screen — "start from this" means this and
   // not what somebody had half written — so the screen that offers one mounts
   // the form again, and the fields below seed themselves from it.
-  const queries = useQueryClient();
+  const after = useAfterClaim();
   const draftKey = draftKeyFor(at);
   // The draft chosen here and not sent, read once as the form is built.
   //
@@ -360,16 +361,19 @@ export function Decide({
   // A promise with no date is what leaving the finding alone already says, so
   // the date is what makes it a claim at all.
   const needsLanding = outcome === "patch-needed";
-  // Ctrl or ⌘ with Enter, anywhere in the form. Only when it is ready, so the
-  // shortcut cannot submit something the button would refuse.
+  // Ctrl or ⌘ with Enter, from inside the form. Only when it is ready, so the
+  // shortcut cannot submit something the button would refuse. Not from outside
+  // it: a comment box on the same screen takes the same keys for its own.
   //
   // Through refs rather than by re-binding on every keystroke: the listener is
   // one, and what it reads is whatever the form says at the moment it fires.
   const readyRef = useRef(false);
   const startRef = useRef(() => {});
+  const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     function pressed(event: KeyboardEvent) {
       if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey)) return;
+      if (!(event.target instanceof Node) || !rootRef.current?.contains(event.target)) return;
       if (!readyRef.current) return;
       event.preventDefault();
       startRef.current();
@@ -437,7 +441,9 @@ export function Decide({
     const diff = new Map<string, Other>();
     const differing = new Set<string>();
     {
+      // silent-read: handed whole to Covering, which draws its failure.
       for (const m of reach.data?.automatic ?? []) auto.set(shown(m), true);
+      // silent-read: handed whole to Covering, which draws its failure.
       for (const m of reach.data?.differing ?? []) {
         // Its place, said as an aside. The subject of the question is the
         // version — a build at matching versions never reaches this list — so
@@ -558,10 +564,7 @@ export function Decide({
       rememberUsed({ outcome, justification: reason });
       forget(draftKey);
       setReviewing(false);
-      void queries.invalidateQueries({ queryKey: ["finding"] });
-      void queries.invalidateQueries({ queryKey: ["findings"] });
-      void queries.invalidateQueries({ queryKey: ["queue"] });
-      void queries.invalidateQueries({ queryKey: ["home"] });
+      after();
       onDone(recorded);
     },
   });
@@ -810,6 +813,7 @@ export function Decide({
         onChange={setExcluded}
         matching={matching.length}
         differing={offered.length}
+        reach={reach}
       />
       <div className="tier auto" style={{ margin: 0 }}>
         <p className="said">{forecast(outcome, classes, days, until, soFar)}</p>
@@ -826,7 +830,7 @@ export function Decide({
           {/* The pane is named for both questions, so the box somebody types
               a judgment into carries its own name. */}
           <h4 className="deciding-head">Decision</h4>
-          <div className="writing">
+          <div className="writing" ref={rootRef}>
             {form}
             {aside}
           </div>

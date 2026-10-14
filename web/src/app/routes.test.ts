@@ -78,6 +78,35 @@ const SAMPLES: Record<string, () => string[]> = {
   refiled: () => [routes.refiled(routes.issueAt("CVE-1"), "CVE-1", odd)],
 };
 
+describe("an address refiled under another name", () => {
+  it("renames the finding and leaves a branch that begins with the name alone", () => {
+    const at = routes.findingAt(
+      { product: "sonic", stream: "CVE-2024-6387-fix", variant: "x" },
+      { vulnerability: "CVE-2024-6387", component: "github.com/a/b" },
+    );
+    const out = routes.refiled(at, "CVE-2024-6387", "CVE-2024-9999");
+    expect(out).toContain("/streams/CVE-2024-6387-fix/");
+    expect(out).toContain("/findings/CVE-2024-9999/");
+    expect(out).toContain("github.com%2Fa%2Fb");
+  });
+
+  it("escapes a component's name once, whatever characters it holds", () => {
+    for (const component of ["libstdc++6", "@scope/x", "50%/y"]) {
+      const before = { product: "sonic", stream: "main", variant: "x" };
+      const at = routes.findingAt(before, { vulnerability: "CVE-1", component });
+      expect(routes.refiled(at, "CVE-1", "CVE-2")).toBe(
+        routes.findingAt(before, { vulnerability: "CVE-2", component }),
+      );
+    }
+  });
+
+  it("does not take one name for another it begins", () => {
+    expect(routes.refiled(routes.issueAt("CVE-10"), "CVE-1", "CVE-2")).toBe(
+      routes.issueAt("CVE-10"),
+    );
+  });
+});
+
 describe("every address the interface builds", () => {
   it("has a sample here for every builder, and a builder for every sample", () => {
     const builders = Object.entries(routes)

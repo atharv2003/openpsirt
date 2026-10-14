@@ -61,6 +61,7 @@ import {
   usePaging,
   widened,
   withEach,
+  withinBuild,
   withinVariant,
   withParam,
   withParams,
@@ -252,7 +253,10 @@ export function Findings() {
   // Built from the address rather than from the values read out of it, so that
   // the finding screen can build the same query from the same address and
   // there is one place a filter is translated.
-  const query = useMemo(() => withinVariant(listQuery(asked), Boolean(variant)), [asked, variant]);
+  const query = useMemo(
+    () => withinBuild(withinVariant(listQuery(asked), Boolean(variant)), oneBuild),
+    [asked, variant, oneBuild],
+  );
 
   // The same question as a file: every filter the list asked, and never the
   // paging, since a file is the whole of a narrowing rather than the page in
@@ -295,6 +299,7 @@ export function Findings() {
   const kept = useKept();
   const prepared = useMemo(() => {
     if (declined === here(params)) return null;
+    // silent-read: the saved-filter picker says when this list could not be read.
     const one = ruleIn(kept.data?.items ?? [], params);
     return one?.prepares ? { name: one.name, prepares: one.prepares } : null;
   }, [kept.data, params, declined]);
@@ -695,8 +700,11 @@ export function Findings() {
           params={asked}
           set={set}
           setMany={setMany}
+          // silent-read: choices offered in the panel; an unread list offers fewer.
           tags={inUse.data?.items ?? []}
+          // silent-read: handed whole to the panel, which says a failure beside the picker.
           kinds={kindsHere.data?.items ?? []}
+          kindsRead={kindsHere}
           oneBuild={oneBuild}
           spanning={spanning}
           variantNamed={Boolean(variant)}

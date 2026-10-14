@@ -37,7 +37,12 @@ export function Settings({ who }: { who: Who }) {
   const set = useMutation({
     mutationFn: async ({ name, value }: { name: string; value: string }) =>
       unwrap(await api.PUT("/v1/settings/{name}", { params: { path: { name } }, body: { value } })),
-    onSuccess: () => void queries.invalidateQueries({ queryKey: ["settings"] }),
+    // And the identity read, which carries the settings a form beside it
+    // quotes, such as the embargo length.
+    onSuccess: () => {
+      void queries.invalidateQueries({ queryKey: ["settings"] });
+      void queries.invalidateQueries({ queryKey: ["whoami"] });
+    },
   });
 
   if (settings.isPending) return <Loading />;
@@ -223,7 +228,9 @@ function Field({
   // problem to the next key somebody adds.
   const field = useId();
   const typed = Number(count);
-  const usable = count.trim() !== "" && Number.isFinite(typed) && typed >= 1;
+  // A whole number: the composer stores whole units, so 1.5 days would be
+  // saved as two.
+  const usable = count.trim() !== "" && Number.isSafeInteger(typed) && typed >= 1;
   const asked = takes
     ? usable
       ? write(typed, unit)
@@ -236,7 +243,16 @@ function Field({
   // Changed, and worth offering to save. A reader who cannot write still sees
   // what is set — the value is the answer they came for — and is offered no
   // control that would be refused.
-  const changed = canSet && asked !== "" && asked !== (setting.value ?? "");
+  //
+  // Compared with the stored value written the same way. The server spells a
+  // duration 2160h0m0s and the composer writes 2160h, so a raw comparison
+  // offers to save every untouched default, which pins it.
+  const stored = composed
+    ? write(composed.count, composed.unit)
+    : measured
+      ? writeBytes(measured.count, measured.unit)
+      : (setting.value ?? "");
+  const changed = canSet && asked !== "" && asked !== stored;
 
   return (
     <div className="settingrow">

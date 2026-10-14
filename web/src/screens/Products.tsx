@@ -13,6 +13,7 @@ import { AddButton, Declare, Field } from "../ui/Declare";
 import { Empty } from "../ui/Empty";
 import { EndOfLife } from "../ui/EndOfLife";
 import { Failed } from "../ui/Failed";
+import { Unread } from "../ui/Reading";
 import type { Who } from "../app/session";
 import { Wide } from "../ui/Wide";
 import { productAt, streamsAt } from "../app/routes";
@@ -39,6 +40,14 @@ export function Products({ who }: { who: Who }) {
     queryFn: async () =>
       unwrap(await api.GET("/v1/products", { params: { query: { counts: true } } })),
   });
+  // How long a build may go unscanned before it counts as quiet: the
+  // deployment's own setting, which the coverage read reports beside its rows.
+  // One row is enough to carry it. Nothing is flagged until it has arrived.
+  const scanning = useQuery({
+    queryKey: ["scanning", "quiet-after"],
+    queryFn: async () => unwrap(await api.GET("/v1/scanning", { params: { query: { limit: 1 } } })),
+  });
+  const quietAfter = scanning.data?.quiet_after_days;
   const declare = useMutation({
     mutationFn: async () =>
       unwrap(
@@ -152,11 +161,18 @@ export function Products({ who }: { who: Who }) {
         {who.admin && <AddButton label="Add product" onClick={() => setAdding(true)} />}
       </div>
 
+      <Unread
+        of={scanning}
+        what="How long a build may go unscanned could not be read, so nothing is flagged."
+      />
       {setEndOfLife.isError && (
         <Failed error={setEndOfLife.error} what="That support date could not be set." />
       )}
       {setFloor.isError && (
         <Failed error={setFloor.error} what="That triage line could not be set." />
+      )}
+      {setPairs.isError && (
+        <Failed error={setPairs.error} what="Those pair thresholds could not be set." />
       )}
 
       {items.length === 0 ? (
@@ -196,7 +212,9 @@ export function Products({ who }: { who: Who }) {
             <tbody>
               {items.map((product) => {
                 const stale =
-                  !!product.last_scan_at && asOf - Date.parse(product.last_scan_at) > 7 * DAY_MS;
+                  quietAfter !== undefined &&
+                  !!product.last_scan_at &&
+                  asOf - Date.parse(product.last_scan_at) > quietAfter * DAY_MS;
                 return (
                   <tr key={product.name} className="row">
                     <td>
@@ -234,8 +252,9 @@ export function Products({ who }: { who: Who }) {
                         share={product.pair_share ?? 0}
                         approvers={product.pair_approvers ?? 0}
                         admin={who.admin}
+                        busy={setPairs.isPending}
                         onSet={(share, approvers) =>
-                          setPairs.mutate({ product: product.name ?? "", share, approvers })
+                          setPairs.mutateAsync({ product: product.name ?? "", share, approvers })
                         }
                       />
                     </td>
@@ -403,13 +422,17 @@ function Pairs({
   share,
   approvers,
   admin,
+  busy,
   onSet,
 }: {
   product: string;
   share: number;
   approvers: number;
   admin: boolean;
-  onSet: (share: number, approvers: number) => void;
+  busy: boolean;
+  // Settles once the write has. The inputs stay open on a refusal, so what
+  // was typed is still there to correct.
+  onSet: (share: number, approvers: number) => Promise<unknown>;
 }) {
   const [editing, setEditing] = useState(false);
   const [shareSaid, setShare] = useState(share ? String(share) : "");
@@ -456,9 +479,12 @@ function Pairs({
       <button
         type="button"
         className="linkish"
+        disabled={busy}
         onClick={() => {
-          onSet(Number(shareSaid) || 0, Number(approversSaid) || 0);
-          setEditing(false);
+          onSet(Number(shareSaid) || 0, Number(approversSaid) || 0).then(
+            () => setEditing(false),
+            () => undefined,
+          );
         }}
       >
         Save

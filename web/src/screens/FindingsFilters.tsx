@@ -7,8 +7,11 @@ import type { Outcome } from "../ui/outcomes";
 import { notACredential } from "../ui/noautofill";
 import { Choices } from "../ui/Choices";
 import { Words } from "../ui/Words";
+import { Unread } from "../ui/Reading";
+import type { Readable } from "../ui/Count";
 import { called, identifiersIn, useWeaknessNames, useWeaknessSearch, type Named } from "../ui/cwe";
 import { useState } from "react";
+import { BENEATH_PARTS } from "./list";
 // The findings list's filters, apart from the list itself.
 //
 // Everything the server can narrow by is here, named for what it asks, each
@@ -335,7 +338,13 @@ export function activeFilters(
   }
   each("declared_as", "Producer said", DECLARED_AS);
   add("under", "Inside container", at("under"));
-  add("beneath", "At or under", at("beneath"));
+  // With what qualifies it, which goes when the chip does.
+  add(
+    "beneath",
+    "At or under",
+    at("beneath") && [at("beneath"), at("beneath_version")].filter(Boolean).join(" "),
+    [["beneath", ""], ...BENEATH_PARTS.map((part): [string, string] => [part, ""])],
+  );
   if (at("under_build") === "yes") add("under_build", "Held directly by the build", "only");
   // One chip per component hidden, and the page has no second list of them:
   // hiding drew its own row saying the same names the summary already said,
@@ -511,6 +520,7 @@ export function Filters({
   setMany,
   tags,
   kinds,
+  kindsRead,
   oneBuild,
   spanning,
   variantNamed,
@@ -525,6 +535,9 @@ export function Filters({
   tags: string[];
   // The package kinds the server reports present in the scope on screen.
   kinds: readonly KindPresent[];
+  // The read the kinds come from. The picker offers nothing else, so a
+  // failure is said beside it.
+  kindsRead: Readable;
   oneBuild: boolean;
   spanning: boolean;
   // Whether the selection names a variant, which is what "only this
@@ -537,6 +550,7 @@ export function Filters({
   // The weaknesses offered while one is typed, searched by number or by name,
   // and the names of the ones chosen.
   const [weaknessTyped, setWeaknessTyped] = useState("");
+  // silent-read: a suggestion list; a weakness not offered can still be typed.
   const weaknessOffers = useWeaknessSearch(weaknessTyped).data ?? [];
   const weaknessNames = useWeaknessNames(all("weakness"));
   const weaknessNamed = (word: string) => {
@@ -698,6 +712,7 @@ export function Filters({
           options={kindsOffered(kinds, all("ecosystem"))}
           onChange={(chosen) => setMany("ecosystem", chosen)}
         />
+        <Unread of={kindsRead} what="The package types could not be read." />
         <Choices
           label="Producer said"
           hint="What the inventory called the dependency. Nothing here ranks or decides by it"

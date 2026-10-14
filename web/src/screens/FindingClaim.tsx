@@ -9,6 +9,7 @@
 // question, which is why they are one file: what does the record say, and how
 // did it come to say that.
 
+import { useAfterClaim } from "../api/claims";
 import { FLOORS } from "../ui/severities";
 import { useState, type ReactNode } from "react";
 import { at, on } from "../ui/when";
@@ -16,7 +17,7 @@ import { initials } from "../ui/initials";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, type Body } from "../api/client";
-import { notYours, unwrap } from "../api/queries";
+import { notYours, Refused, unwrap } from "../api/queries";
 import { Elsewhere } from "../ui/Elsewhere";
 import { useComment, useEditComment } from "../api/mutations";
 import { Failed } from "../ui/Failed";
@@ -260,6 +261,11 @@ export function Standing({
                   <> · covered {last.covered} records at the time</>
                 )}
               </>
+            ) : state === "approved" && approvals.isError ? (
+              <>
+                <span className="state agreed">Approved</span>
+                <span className="hint"> · who approved it could not be read</span>
+              </>
             ) : state === "approved" ? (
               <>
                 <span className="state agreed">Approved</span>
@@ -427,7 +433,17 @@ export function Revisions({ claimId }: { claimId: number }) {
       unwrap(await api.GET("/v1/claims/{id}/approvals", { params: { path: { id: claimId } } })),
   });
   const items = revisions.data?.items ?? [];
+  if (revisions.isError && !notYours(revisions.error)) {
+    return (
+      <div className="card">
+        <h3>Revision history</h3>
+        <Failed error={revisions.error} what="The revision history could not be read." />
+      </div>
+    );
+  }
   if (items.length === 0) return null;
+  // Who approved each revision is unknown, not "never", where that read failed.
+  const unagreed = approvals.isError && !notYours(approvals.error);
   const agreed = new Map<number, { by: string; at: string; withdrawn: boolean }>();
   for (const a of approvals.data?.items ?? []) {
     if (a.revision_id)
@@ -456,6 +472,15 @@ export function Revisions({ claimId }: { claimId: number }) {
                     <span className={a.withdrawn ? "state open" : "state agreed"}>
                       {a.withdrawn ? "Approval withdrawn" : "Approved"} by {a.by}
                       {a.at && <>, {on(a.at)}</>}
+                    </span>
+                  ) : unagreed ? (
+                    <span
+                      className="hint"
+                      title={
+                        approvals.error instanceof Refused ? approvals.error.message : undefined
+                      }
+                    >
+                      Approvals could not be read
                     </span>
                   ) : (
                     <span className="state waiting">Never approved</span>
@@ -516,6 +541,7 @@ export function Comments({
         consequence="Does not affect the approval"
         placeholder="A question, a note, something worth knowing later."
         draftKey={`comment:${claimId}`}
+        // silent-read: a write's answer, whose failure the thread draws from `adding`.
         notNotified={comment.data?.not_notified ?? []}
         // Said, as the note thread says it: an empty thread with a live
         // composer above it reads as a claim nobody has objected to.
@@ -537,7 +563,7 @@ export function Comments({
             onDone={done}
           />
         )}
-        history={useCommentHistory}
+        useHistory={useCommentHistory}
       />
     </div>
   );
@@ -594,7 +620,7 @@ function Prior({
   undecided: boolean;
   onReuse: (reasoning: string, outcome: string, justification: string) => void;
 }) {
-  const queries = useQueryClient();
+  const after = useAfterClaim();
   const [note, setNote] = useState("");
   const [asking, setAsking] = useState(false);
   // What reaffirming answered, said on the card it was done from.
@@ -613,9 +639,7 @@ function Prior({
     onSuccess: (made) => {
       setAsking(false);
       setDone({ claimId: made.claim_id ?? 0, waiting: !!made.needs_approval });
-      void queries.invalidateQueries({ queryKey: ["finding"] });
-      void queries.invalidateQueries({ queryKey: ["decided"] });
-      void queries.invalidateQueries({ queryKey: ["queue"] });
+      after();
     },
   });
   const lapsed = item.state === "lapsed";
