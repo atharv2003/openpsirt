@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ReactNode } from "react";
+import { linkTo } from "../api/links";
+import { sizeSaid } from "./size";
 
 // One attached file as a list shows it: a link to fetch it, its type and size;
 // or, where it was removed, its name and why. The fetch address is the one
@@ -34,12 +36,15 @@ export function Attached({
   }
   return (
     <>
-      <a href={`/v1/attachments/${file.token}`} rel="noreferrer">
+      <a
+        href={linkTo("/v1/attachments/{token}", { path: { token: file.token ?? "" } })}
+        rel="noreferrer"
+      >
         {file.filename}
       </a>
       <span className="hint">
         {" "}
-        · {file.content_type} · {Math.max(1, Math.round((file.size ?? 0) / 1024))} KB
+        · {file.content_type} · {sizeSaid(file.size ?? 0)}
       </span>
       {children}
     </>

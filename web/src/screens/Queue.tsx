@@ -13,7 +13,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { UNOWNED_LIST, usePaging } from "./list";
-import { claimAt, decisionAt, findingAt, issueAt } from "../app/routes";
+import { claimAt, decisionAt, findingOf, issueAt } from "../app/routes";
 import { unwrap } from "../api/queries";
 import { claimOf, useAfterClaim, useApproveClaim, useRejectClaim, type Claim } from "../api/claims";
 import { Empty } from "../ui/Empty";
@@ -28,6 +28,7 @@ import { Count } from "../ui/Count";
 import { QueueFilters, queueNarrowing } from "./QueueFilters";
 import { issuesIn, toggled } from "./outliers";
 import { promised, queueReason, REASONS, wordsFor, type Reason } from "./queueReasons";
+import { fileAt } from "../api/links";
 
 // A page of claims. The queue is read at the grain of a claim, and a claim
 // is a card with its whole argument, so a page is what fits a sitting.
@@ -52,6 +53,19 @@ export function Queue() {
   // everything ticked on an earlier page was counted in the button and
   // silently never approved.
   const [picked, setPicked] = useState<Map<string, Claim>>(new Map());
+  // Moving to another tab: the tab's own words set or cleared, the page back
+  // to its first, and the selection dropped, because it was made out of the
+  // list being replaced.
+  function switchTab(changes: Record<string, string | null>) {
+    const now = new URLSearchParams(params);
+    now.delete("offset");
+    for (const [key, value] of Object.entries(changes)) {
+      if (value === null) now.delete(key);
+      else now.set(key, value);
+    }
+    setPicked(new Map());
+    setParams(now);
+  }
   const { cap, over } = useBulkCap(picked.size);
   const [batch, setBatch] = useState("");
   // The batch just agreed to, which is the only one there is a safe control
@@ -242,12 +256,14 @@ export function Queue() {
       }
     }
   }
-  const asked = [...exporting].length > 0 ? "?" + exporting.toString() : "";
+  const asked = exporting.toString();
   // The file the tab on screen was taken from. Mine lists every claim its
   // reader proposed, whatever became of it, which the queue's own file does
   // not hold; it has a file of its own.
-  const file = mine ? "/v1/my-claims" : "/v1/review-queue";
-  const fileQuery = mine ? "" : asked;
+  const file = (format: "csv" | "json") =>
+    mine
+      ? fileAt("/v1/my-claims.{format}", format)
+      : fileAt("/v1/review-queue.{format}", format, { query: asked });
   const claims = (queue.data?.items ?? []).map(claimOf);
   const records = claims.reduce((sum, c) => sum + c.records, 0);
   const words = wordsFor(reason);
@@ -331,10 +347,10 @@ export function Queue() {
             offers none rather than another list under its heading. */}
         {!reaffirm && (
           <span style={{ marginLeft: "auto" }}>
-            <a className="btn quiet" href={`${file}.csv${fileQuery}`}>
+            <a className="btn quiet" href={file("csv")}>
               CSV
             </a>{" "}
-            <a className="btn quiet" href={`${file}.json${fileQuery}`}>
+            <a className="btn quiet" href={file("json")}>
               JSON
             </a>
           </span>
@@ -348,17 +364,14 @@ export function Queue() {
             type="button"
             className="tab2"
             aria-selected={!aside && reason === each.reason}
-            onClick={() => {
-              const now = new URLSearchParams(params);
-              now.delete("mine");
-              now.delete("reaffirm");
-              now.delete("offset");
-              if (each.reason === "approval") now.delete("reason");
-              else now.set("reason", each.reason);
-              if (each.reason !== reason) now.delete("own");
-              setPicked(new Map());
-              setParams(now);
-            }}
+            onClick={() =>
+              switchTab({
+                mine: null,
+                reaffirm: null,
+                reason: each.reason === "approval" ? null : each.reason,
+                ...(each.reason !== reason ? { own: null } : {}),
+              })
+            }
           >
             {each.tab}{" "}
             <span className="n">
@@ -372,15 +385,7 @@ export function Queue() {
           type="button"
           className="tab2"
           aria-selected={mine}
-          onClick={() => {
-            const now = new URLSearchParams(params);
-            now.set("mine", "1");
-            now.delete("reaffirm");
-            now.delete("reason");
-            now.delete("own");
-            now.delete("offset");
-            setParams(now);
-          }}
+          onClick={() => switchTab({ mine: "1", reaffirm: null, reason: null, own: null })}
         >
           Mine, recent{" "}
           <span className="n">
@@ -391,15 +396,7 @@ export function Queue() {
           type="button"
           className="tab2"
           aria-selected={reaffirm}
-          onClick={() => {
-            const now = new URLSearchParams(params);
-            now.set("reaffirm", "1");
-            now.delete("mine");
-            now.delete("reason");
-            now.delete("own");
-            now.delete("offset");
-            setParams(now);
-          }}
+          onClick={() => switchTab({ reaffirm: "1", mine: null, reason: null, own: null })}
         >
           To reaffirm{" "}
           <span className="n">
@@ -625,6 +622,22 @@ export function Queue() {
 // no approving here. A missed promise can be moved to a new version or date,
 // which puts it in front of a second person again where the new date needs
 // one; either can be decided again on the finding.
+// Who proposed a claim and how long it has stood, which every card says first.
+function Proposal({ claim }: { claim: Claim }) {
+  return (
+    <>
+      {claim.proposedBy && (
+        <span>
+          Proposed by <b>{claim.proposedBy}</b>
+        </span>
+      )}
+      <span>
+        Standing <b>{claim.ageDays === 0 ? "today" : `${claim.ageDays} days`}</b>
+      </span>
+    </>
+  );
+}
+
 function Dated({ claim, reason, marked }: { claim: Claim; reason: Reason; marked: boolean }) {
   const f = claim.finding;
   const [moving, setMoving] = useState(false);
@@ -651,7 +664,7 @@ function Dated({ claim, reason, marked }: { claim: Claim; reason: Reason; marked
       after();
     },
   });
-  const decideAgain = f ? findingPath(f) : claimAt(claim.id);
+  const decideAgain = f ? findingOf(f) : claimAt(claim.id);
   const words = wordsFor(reason);
 
   return (
@@ -685,14 +698,7 @@ function Dated({ claim, reason, marked }: { claim: Claim; reason: Reason; marked
         </div>
       )}
       <div className="qmeta">
-        {claim.proposedBy && (
-          <span>
-            Proposed by <b>{claim.proposedBy}</b>
-          </span>
-        )}
-        <span>
-          Standing <b>{claim.ageDays === 0 ? "today" : `${claim.ageDays} days`}</b>
-        </span>
+        <Proposal claim={claim} />
         {claim.builds.length > 0 && (
           <span>
             Covers <b>{claim.builds.join(", ")}</b>
@@ -847,7 +853,7 @@ function Card({
         {f?.exploited && <Exploited when />}
         {/* The issue opens its finding, which carries everything an approver
             could want; the decision record is one link further, from there. */}
-        <Link to={f ? findingPath(f) : decisionAt(claim.decisionId)} className="linkish id">
+        <Link to={f ? findingOf(f) : decisionAt(claim.decisionId)} className="linkish id">
           {claim.title}
         </Link>
         {/* What is being claimed, in its own right rather than as the fifth
@@ -961,14 +967,7 @@ function Card({
       )}
 
       <div className="qmeta">
-        {claim.proposedBy && (
-          <span>
-            Proposed by <b>{claim.proposedBy}</b>
-          </span>
-        )}
-        <span>
-          Standing <b>{claim.ageDays === 0 ? "today" : `${claim.ageDays} days`}</b>
-        </span>
+        <Proposal claim={claim} />
         {claim.deferredDays > 0 && (
           <span>
             Put off <b>{claim.deferredDays} days</b> in total
@@ -1193,29 +1192,6 @@ function Card({
         </div>
       )}
     </article>
-  );
-}
-
-// The address of a claim's finding, with everything that picks its component.
-function findingPath(f: {
-  product?: string;
-  stream?: string;
-  variant?: string;
-  vulnerability?: string;
-  component?: string;
-  version?: string;
-  ecosystem?: string;
-  namespace?: string;
-}): string {
-  return findingAt(
-    { product: f.product ?? "", stream: f.stream ?? "", variant: f.variant ?? "" },
-    {
-      vulnerability: f.vulnerability ?? "",
-      component: f.component ?? "",
-      version: f.version ?? "",
-      ecosystem: f.ecosystem,
-      namespace: f.namespace,
-    },
   );
 }
 

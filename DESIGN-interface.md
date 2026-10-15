@@ -137,6 +137,12 @@ than a screen rendering `undefined`. `make web-api` regenerates it and fails if
 the result differs from what is committed — the generated types say a list may be
 `null`, which the hand-written version would have discovered in a browser.
 
+| Rule | |
+|---|---|
+| A table of words over a word the server sends is keyed on the generated union | A word the server adds is then a compile error in the table until it has words, rather than the bare token on screen. A lint refuses a literal table in the screens declared or checked as keyed on any string, whole or partial; a table typed by an index signature is not caught. A table over an open set — a package kind, a keyboard key, this interface's own names — says why beside it |
+| A read is declared once and asked through its hook | One read declared at two sites is one cache entry under two sets of conditions, and an invalidation written against one key misses a read declared under another. The catalog's products, branches and variants, one release's variants, where an issue sits, a claim's approvals and revisions, what sits around a component, and the outbound destinations each have one definition, keyed so that what changes them reaches every screen showing them |
+| A download or document link is built from the generated paths | A file, a document or an attachment is fetched by the browser rather than through the client, so its address is built by the one link builder over the generated paths: the path is a key of the document, each placeholder is required, named as the path names it and escaped as a segment, and a placeholder left without a value is refused rather than sent as its own name |
+
 The session is a cookie the browser holds and nothing in the application ever
 sees. The application holds the cross-site-request token, deliberately readable
 by script where the session cookie is not: echoing it distinguishes a request our
@@ -183,6 +189,8 @@ what every other application on the same screen calls them.
 | Every state is ink or the raised tone | Picked, pressed, checked, selected, the page you are on, the component a path leads to, a setting that is set. The accent stays with links, focus rings, hover on what opens, and the row or option the keys are on. A web test fails on a style rule for a state that uses the accent |
 | Severity is a dot and a word | Colored by the band, with no fill behind them. A tinted pill on every row of a fifty-row list is fifty patches of color competing with the column that is read first |
 | A count beside a tab is a number | Quieter than the word it counts and the same shape whether the tab is selected or not |
+| A warning or an all-clear tint is a token | Each of the two colors has three: a panel on the surface, a wash over whatever is behind, and the line around either. Two screens' warnings are then one shade, and a different strength is a raw mix that says why beside it |
+| A shape many rules share is one rule | The sentence-case label, the small uppercase heading over a group, a chip's tint arms and the editor column's reserved height are each written once with every selector that takes them, so a change lands everywhere it is drawn |
 
 | Rule | |
 |---|---|
@@ -216,6 +224,7 @@ take the word.
 |---|---|
 | A problem is never drawn in the done color | Green reads as good news, which is the one reading a failure must not get. A web test fails on a chip drawn as done whose words say something is wrong |
 | A claim is drawn in the color of what it does | Warm where it hides risk, which is every outcome but affected, and green where it does not. An outcome with no color of its own draws as the neutral base, the color of a claim that hides nothing; a web test fails on an outcome the client names that the stylesheet does not color |
+| A claim's card carries a stripe for where it stands, the same on the claim page and the finding screen | Pending while a second person is needed or the claim is still argued; in force once agreed, or while proposed where nothing waits on a second person; lapsed once it stopped applying. A withdrawn claim carries none: its proposer ended it, which is neither standing nor lapsing. The chip says whether a claim is finished, so a withdrawn or sent-back claim reads lapsed there; the stripe says whether it is in force, so a sent-back claim, still argued, reads pending. One mapping serves both screens |
 
 ## The shell
 
@@ -472,6 +481,7 @@ bound — is a narrowing only somebody editing the address can use.
 | Filtering is the server's, not the browser's | A list narrowed after it arrives is narrowed within one page of it, so "hide the kernel" would hide it from the twenty rows already fetched and from nothing else |
 | The daily questions are on the bar | Decision state, severity, who holds it and when it is due, each a button naming itself and its value, with New today beside them. Everything else is behind More filters, a panel that opens with how many of its own filters are on written on the control while it is shut. A filter is on the bar or in the panel, never both. New today is the one shortcut: a single value of the panel's First seen after, drawn pressed only while that date is a day back, so any other date stays the panel's and the button does not clear it |
 | A filter on the bar is one button | The name, the value and the menu of values are one control, so a name cannot wrap to a different line from its value. A value in force tints the button. A question with several answers at once — decision state, who holds it — takes ticks and stays open; a step on a scale — severity, due — takes one and closes |
+| A control holding several answers says the first and how many more, and is worked from the keyboard | The filter bar's menus and the panel's lists of ticks say "Undecided +1" for two answers, so a narrowed control still says which way it narrows. Both keep a selection in the order offered, open on an arrow key, move with the arrows, Home and End, and close on Escape back to the control |
 | The panel is shut until somebody opens it, whatever the address narrows by | It is most of a screen. Opened because a filter is set, a link to a narrowed list covers the rows somebody followed it to read — and it says nothing the chips above the list do not already say, each of which removes its own filter when clicked |
 
 Exploited and fix-available are two flags, not one parameter holding one of two
@@ -595,6 +605,7 @@ something half-formed.
 | Rule | |
 |---|---|
 | A saved filter keeps what the list is narrowed by, never where | One list per person, offered on every findings list, including the one across every product. The product, the branch, the variant, and anything naming one build or one run are the scope picker's, so they are left out of what is kept. Picking one applies it within the scope on screen: across every product from home, within one product where one is picked. A PSIRT working several products keeps a filter once |
+| The server and the interface leave out the same scope words | The server drops them when it stores a filter and the interface drops them when it compares an address with a kept query, byte for byte. One file in the repository's test data lists them, and a test on each side compares its own list with it, so a word dropped on one side only fails on the side that was not changed |
 | The scope left out is these words of the list's address | The branch and the variant; a subtree of one build and its version, ecosystem and namespace; what differs between the builds of a selection; what is spread over the variants of one branch; and the run that opened it. The grouping is left out with them, because the list across every product groups by issue alone. The server leaves them out of what it keeps, and the list leaves them out when it compares its address with what is kept |
 | The open filter is named in the address | Picking one writes its name as `rule`, the same word a finding reads the filter's name from, and the open marker, Forget and the prepared claim follow that name. Two filters can keep one query, and only the name tells them apart |
 | Changing a filter on screen drops the name | The list is then no longer that saved filter. Paging, the page size, the branch and the variant leave it, because none of those is a filter |
@@ -1564,7 +1575,7 @@ A control somebody can see and cannot reach is a control that is not there.
 
 | Rule | |
 |---|---|
-| **The findings list is worked from the keyboard** | `j` and `k` move a cursor through the rows, `Enter` opens one where it sits, `Escape` closes it and `o` opens the finding. It is the screen a triager spends the day on and it answered one key, which was the search box's. Every key means nothing while what has focus takes typing — `j` inside a justification is the letter — and a modified key is the browser's |
+| **The findings list is worked from the keyboard** | `j` and `k` move a cursor through the rows, `Enter` opens one where it sits, `Escape` closes it and `o` opens the finding. It is the screen a triager spends the day on and it answered one key, which was the search box's. Every key means nothing while what has focus takes typing — `j` inside a justification is the letter — and a modified key is the browser's. A key a control has already answered is the control's: an arrow opening a filter's list does not also move the cursor |
 | **The cursor is drawn, and goes when the question changes** | A cursor nobody can see is a key that appears to do nothing, and a cursor pointing at row nine of a list that has been re-read points at a different finding |
 | The focus ring is added to, never replaced | An accent border and a wash around it are an addition to the global ring. A checkbox and a radio are painted by the browser, so a border declaration reaches nothing on them and a wash at a tenth of full strength is 1.16:1 against the surface — where 3:1 is the floor. Tabbing into the permission grid, where one press writes a grant per product, nothing on screen said which box had focus |
 | Where a control has no border of its own, the ring goes on the box around it | The two search boxes draw their own frame and the input inside has none, so the ring taken off the input had nowhere to go |
@@ -1682,6 +1693,7 @@ chosen (REQ-64).
 | Both halves are one box rather than two fields | Somebody typing a name does not classify it first, and an identifier is not mistakable for a package name in practice |
 | It asks at whatever the picker has selected, including nothing | A term goes to the list at that scope, which spans every product a reader can see where no product is picked — the same list at its widest address. Returning without navigating anywhere leaves the box looking live and swallowing what was typed |
 | A term that resolves to an issue goes to the issue instead | Decided by asking rather than by the shape of the text: a second copy of the server's name resolution is wrong about every identifier a deployment mints for itself |
+| A term resolves to an issue when the issue's read holds a row | That read answers an issue nobody here carries with an empty list, so an empty answer is a component search and only an unanswered read stops at the box |
 | The findings list's box holds the term the list applies | Whatever takes the term out of the address — its chip, clearing the filters, a saved filter, Back — empties the box as well, or Enter there puts back a search the reader thought was gone |
 
 ## A person's own page
@@ -1825,6 +1837,7 @@ What this deployment is doing, rather than what it has found.
 | A set-aside job is shown in the queue's own words | What it points at may have been deleted since, and a list that fails to render because one row points at nothing is worse than one that says what the row says |
 | An operator's screen, not an auditor's | What a worker reported quotes what its job was about, so a failed parse can carry a component name out of an SBOM the reader holds nothing on. That is not one of the deployment's own records, which is what that grant reads |
 | A webhook is shown by its name, kind and host, never its address | For two of the services it names the path is the credential, so the server returns the host alone and records a failure with the address replaced by its host. The host is not a link: it is somewhere this deployment posts to rather than somewhere a person goes |
+| A destination's kind is said in the notification area's words | The webhook and chat tabs name the notifications a destination takes the way the notification area names them, and the wildcard as "everything". The response offers the kinds as a closed list, so a kind with no words is a compile error |
 | What a full queue needs is both numbers | An operator adds workers or raises the limit, and neither is decided from the depth alone. Said beside the count rather than drawn as a bar, because at the limit is a state rather than a proportion |
 | A resolved issue is counted at the severity it held while it was open | The step it left in no longer has one, and counting it as unrated would make every answered critical disappear from the answered column |
 | The signing secret is never shown, so changing one means recording the destination again | It signs our requests rather than authenticating anybody to us. A configuration screen that showed it would put a shared secret on a page |

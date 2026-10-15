@@ -3,7 +3,9 @@
 
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
+import { linkTo } from "../api/links";
 import { issueAt } from "../app/routes";
+import { LINK_SCHEMES } from "./schemes";
 
 // The API returns no markup, so this carries the half of the policy that
 // travels with rendering (DESIGN-text.md). The other half — what may be submitted at all, which links survive, what a
@@ -167,12 +169,12 @@ function issuePath(identifier: string): string {
 // The address one is actually fetched from. Same origin, so the content
 // security policy permits it and the request carries who is asking.
 function fetchPath(token: string): string {
-  return `/v1/attachments/${token}`;
+  return linkTo("/v1/attachments/{token}", { path: { token } });
 }
 
-// Only the schemes a link may use once attachment references have been
+// The schemes a link may use once attachment and issue references have been
 // rewritten into paths. Everything else is dropped, autolinked text included.
-const SCHEMES = /^(?:https?:|mailto:)/i;
+const SCHEMES = new RegExp(`^(?:${LINK_SCHEMES.join("|")}):`, "i");
 
 // sameDeployment reports whether a destination lands on the page's own origin.
 function sameDeployment(href: string): boolean {

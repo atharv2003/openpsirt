@@ -16,15 +16,15 @@ import (
 // AdvisoryReleaseBody is one release of one issue an advisory covers, and what the
 // document states about it.
 type AdvisoryReleaseBody struct {
-	Product       string `json:"product"`
-	ProductName   string `json:"product_name,omitempty" doc:"The product's display name, or its name where it has none"`
-	Vulnerability string `json:"vulnerability"`
-	Stream        string `json:"stream"`
-	Variant       string `json:"variant"`
-	Status        string `json:"status" enum:"known_affected,known_not_affected,fixed" doc:"What the document states about the release"`
+	Product       string             `json:"product"`
+	ProductName   string             `json:"product_name,omitempty" doc:"The product's display name, or its name where it has none"`
+	Vulnerability string             `json:"vulnerability"`
+	Stream        string             `json:"stream"`
+	Variant       string             `json:"variant"`
+	Status        core.ReleaseStatus `json:"status" doc:"What the document states about the release"`
 	// Decided is where the decisions put it, which differs from the status
 	// only where the release is marked affected.
-	Decided string               `json:"decided" enum:"known_affected,known_not_affected,fixed" doc:"Where the release's decisions put it, before any mark"`
+	Decided core.ReleaseStatus   `json:"decided" doc:"Where the release's decisions put it, before any mark"`
 	Marked  bool                 `json:"marked" doc:"Whether the release is marked affected whatever its decisions say"`
 	Changed bool                 `json:"changed" doc:"Whether the status differs from what an agreement standing on what the advisory says now saw. The agreement stands"`
 	Covered *ReleaseCoveringBody `json:"covered,omitempty" doc:"The decision every open place of the issue in the release stands under. Absent where no one outcome covers them all"`
@@ -36,7 +36,7 @@ type AdvisoryReleaseBody struct {
 // ReleaseCoveringBody is the decision a release stands under.
 type ReleaseCoveringBody struct {
 	Decision   int64        `json:"decision" doc:"The earliest decision covering the release"`
-	Outcome    string       `json:"outcome"`
+	Outcome    core.Outcome `json:"outcome"`
 	Reason     string       `json:"reason,omitempty" doc:"The decision's justification, which the document states as the reason the release is not affected"`
 	Mitigation string       `json:"mitigation,omitempty" doc:"What stops the flaw, where the decision named it. The document states it as the impact"`
 	MadeOn     []MadeOnBody `json:"made_on" doc:"The builds the decision was made on: the one on screen when it was proposed and every one chosen beside it. Empty where none was recorded"`
@@ -86,13 +86,13 @@ func registerReleases(api huma.API, in core.Deps) {
 			body := AdvisoryReleaseBody{
 				Product: one.Covered.Product, ProductName: one.Covered.ProductName,
 				Vulnerability: one.Covered.Issue, Stream: one.Stream, Variant: one.Variant,
-				Status: one.Status, Decided: one.Decided(),
+				Status: core.ReleaseStatus(one.Status), Decided: core.ReleaseStatus(one.Decided()),
 				Marked: one.Overridden, Changed: one.Changed,
 				Elsewhere: one.MadeElsewhere(),
 			}
 			if one.Grounds != nil {
 				body.Covered = &ReleaseCoveringBody{
-					Decision: one.Grounds.Decision, Outcome: one.Grounds.Outcome,
+					Decision: one.Grounds.Decision, Outcome: core.Outcome(one.Grounds.Outcome),
 					Reason: one.Grounds.Reason, Mitigation: one.Grounds.Mitigation,
 					MadeOn: make([]MadeOnBody, 0, len(one.Grounds.MadeOn)),
 				}

@@ -26,18 +26,10 @@ import { Exploited, Severity } from "../ui/Severity";
 import { on } from "../ui/when";
 import { mayOf, useWho } from "../app/session";
 import type { Who } from "../app/session";
-import { allFindingsAt, claimAt, findingAt } from "../app/routes";
+import { allFindingsAt, claimAt, findingOf } from "../app/routes";
 import { issuesIn, toggled } from "./outliers";
+import { stripeOf } from "../ui/stripe";
 import { OutlierRows } from "../ui/OutlierRows";
-
-// The stripe down the card, which says the claim's state before anybody reads
-// a word of it. Three colors and no fourth: waiting, in force, and finished
-// with — the same three the finding screen draws.
-function stripe(happened?: string): string {
-  if (happened === "approved") return "approved";
-  if (happened === "withdrawn" || happened === "lapsed") return "lapsed";
-  return "pending";
-}
 
 // One claim as the server answers it.
 type Claimed = Body<"ClaimDetail">;
@@ -126,7 +118,7 @@ export function Claim({ who }: { who: Who }) {
 function Argument({ claim, id, onChanged }: { claim: Claimed; id: number; onChanged: () => void }) {
   const bulk = claim.issues > 1;
   return (
-    <div className={`card standing ${stripe(claim.happened)}`}>
+    <div className={`card standing ${stripeOf(claim.happened, !!claim.argument.needs_approval)}`}>
       <header className="dhead">
         <h3>The decision</h3>
         <Happened word={claim.happened} by={claim.by_name || claim.by} />
@@ -242,23 +234,7 @@ function Argument({ claim, id, onChanged }: { claim: Claimed; id: number; onChan
           <span className="id">{claim.finding.component}</span>{" "}
           {claim.finding.version && <span className="id">{claim.finding.version}</span>}
           {" · "}
-          <Link
-            className="linkish"
-            to={findingAt(
-              {
-                product: claim.finding.product,
-                stream: claim.finding.stream,
-                variant: claim.finding.variant,
-              },
-              {
-                vulnerability: claim.finding.vulnerability,
-                component: claim.finding.component,
-                version: claim.finding.version ?? "",
-                ecosystem: claim.finding.ecosystem,
-                namespace: claim.finding.namespace,
-              },
-            )}
-          >
+          <Link className="linkish" to={findingOf(claim.finding)}>
             Open the finding →
           </Link>
         </p>

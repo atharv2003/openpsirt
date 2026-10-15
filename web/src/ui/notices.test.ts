@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { label, waiting } from "./notices";
+import { label, takes, waiting } from "./notices";
 
 // The two decisions the notification area makes for itself, tested apart from
 // the drawing.
@@ -30,6 +30,15 @@ describe("what a notification is called", () => {
     expect(label("approval-withdrawn")).toBe("agreed claim changed");
     expect(label("claim-lapsed")).toBe("stopped applying");
     expect(label("merge-superseded")).toBe("superseded by a merge");
+    // The kinds that have words only because the table is keyed on the
+    // published union.
+    expect(label("mentioned")).toBe("named in a note");
+    expect(label("holding-absent")).toBe("somebody away holding work");
+    expect(label("disclosure-due")).toBe("embargo date reached");
+    expect(label("disclosure-near")).toBe("embargo running out");
+    expect(label("statement-revised")).toBe("cited statement changed");
+    expect(label("brought-in")).toBe("brought into a case");
+    expect(label("unanswered-report")).toBe("report not answered");
   });
 
   it("shows a kind it does not know rather than hiding it", () => {
@@ -62,5 +71,12 @@ describe("the count on the way in", () => {
     // as "2.5".
     expect(waiting(2.5)).toBe("2");
     expect(waiting(0.5)).toBe("·");
+  });
+});
+
+describe("what a destination takes", () => {
+  it("says one kind in its words and the wildcard as everything", () => {
+    expect(takes("holding-absent")).toBe("somebody away holding work");
+    expect(takes("*")).toBe("everything");
   });
 });

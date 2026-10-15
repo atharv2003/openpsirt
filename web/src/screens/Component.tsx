@@ -9,6 +9,7 @@ import { api, type Body } from "../api/client";
 import { buildKey, fromBuildKey } from "../ui/builds";
 import { unwrap, whichOf } from "../api/queries";
 import { claimAt, componentAt, decideAt, dependenciesAt } from "../app/routes";
+import { aroundKey, fetchAround } from "../api/around";
 import { Loading } from "../ui/Loading";
 import { Failed } from "../ui/Failed";
 import { Empty } from "../ui/Empty";
@@ -16,7 +17,7 @@ import { Outward } from "../ui/Outward";
 import { on } from "../ui/when";
 import { Editor } from "../ui/Editor";
 import { notACredential } from "../ui/noautofill";
-import { Pace } from "../ui/Charts";
+import { Pace, TREND_WEEKS, trendSaid } from "../ui/Charts";
 import { ranked, rankedLabel, rankedWhy, upgradeCount } from "../ui/ranked";
 import { ROLLED } from "../ui/severities";
 import { ExploitedHere, Severity } from "../ui/Severity";
@@ -452,34 +453,8 @@ function Sits({
   const scope = { product, stream: here.stream ?? "", variant: here.variant ?? "" };
   const component = pkg.name;
   const around = useQuery({
-    queryKey: [
-      "around",
-      product,
-      component,
-      here.stream,
-      here.variant,
-      pkg.version,
-      here.ecosystem,
-      pkg.namespace,
-    ],
-    queryFn: async () =>
-      unwrap(
-        await api.GET(
-          "/v1/products/{product}/streams/{stream}/variants/{variant}/components/{component}/around",
-          {
-            params: {
-              path: { ...scope, component },
-              // All three, because a name and a version do not always pick one
-              // component: a build can hold one package under two namespaces.
-              query: {
-                ...(pkg.version ? { version: pkg.version } : {}),
-                ...(here.ecosystem ? { ecosystem: here.ecosystem } : {}),
-                ...(pkg.namespace ? { namespace: pkg.namespace } : {}),
-              },
-            },
-          },
-        ),
-      ),
+    queryKey: aroundKey(scope, component, pkg.version, here.ecosystem, pkg.namespace),
+    queryFn: fetchAround(scope, component, pkg.version, here.ecosystem, pkg.namespace),
     retry: false,
   });
 
@@ -1094,7 +1069,7 @@ function Ships({ product, rows, here }: { product: string; rows: Build[]; here: 
   );
 }
 
-// Twelve weeks of what opened and closed at this package and under it.
+// The trend window of what opened and closed at this package and under it.
 function History({ product, pkg, here }: { product: string; pkg: Package; here: Build }) {
   const component = pkg.name;
   const trend = useQuery({
@@ -1122,7 +1097,7 @@ function History({ product, pkg, here }: { product: string; pkg: Package; here: 
               ...(pkg.version ? { beneath_version: pkg.version } : {}),
               ...(here.ecosystem ? { beneath_ecosystem: here.ecosystem } : {}),
               ...(pkg.namespace ? { beneath_namespace: pkg.namespace } : {}),
-              weeks: 12,
+              weeks: TREND_WEEKS,
             },
           },
         }),
@@ -1135,7 +1110,7 @@ function History({ product, pkg, here }: { product: string; pkg: Package; here: 
   return (
     <div className="card" style={{ marginTop: 12 }}>
       <div className="screen-head" style={{ marginBottom: 8 }}>
-        <h3>Twelve weeks</h3>
+        <h3>{trendSaid}</h3>
         <span className="eyebrow" style={{ marginLeft: "auto" }}>
           {here.stream} · {here.variant}
         </span>
@@ -1145,7 +1120,7 @@ function History({ product, pkg, here }: { product: string; pkg: Package; here: 
       ) : trend.isPending ? (
         <Loading />
       ) : !moved ? (
-        <p className="hint">Nothing opened or closed in twelve weeks.</p>
+        <p className="hint">Nothing opened or closed in {trendSaid}.</p>
       ) : (
         <Pace points={points} />
       )}

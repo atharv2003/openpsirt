@@ -18,6 +18,7 @@ import { Severity } from "../ui/Severity";
 import { Across } from "../ui/Charts";
 import { PickPair, useBuildPair } from "../ui/PickBuild";
 import { inventoryComparisonAt, runAt, type Build } from "../app/routes";
+import { fileAt } from "../api/links";
 
 // The rows of each column shown before it says how many more there are.
 const SHOWN = 8;
@@ -33,13 +34,13 @@ export function Compare() {
   const { from, fromVariant, to, toVariant, ready, pair, set } = builds;
   const undisclosed = builds.params.get("undisclosed") === "yes";
 
-  // The request the file is asked for with, which is the screen's own. Built
-  // once so that a comparison somebody exports is the comparison in front of
-  // them rather than one assembled again from parts.
-  const asked = new URLSearchParams({
-    ...pair,
-    ...(undisclosed ? { include_undisclosed: "true" } : {}),
-  }).toString();
+  // The question, built once: the columns, the prose and the files are asked
+  // it alike, so a comparison somebody exports or reads as notes is the one in
+  // front of them rather than one assembled again from parts.
+  const query = { ...pair, ...(undisclosed ? { include_undisclosed: true } : {}) };
+  const asked = new URLSearchParams(
+    Object.entries(query).map(([key, value]) => [key, String(value)]),
+  ).toString();
   // The same comparison as prose, fetched rather than assembled here: what an
   // API caller gets and what this shows have to be the same words, and two
   // implementations of "how a release note reads" is one that drifts.
@@ -61,13 +62,7 @@ export function Compare() {
         await api.GET("/v1/products/{product}/comparison/notes", {
           params: {
             path: { product },
-            query: {
-              from,
-              from_variant: fromVariant,
-              to,
-              to_variant: toVariant,
-              ...(undisclosed ? { include_undisclosed: true } : {}),
-            },
+            query,
           },
           parseAs: "text",
         }),
@@ -81,13 +76,7 @@ export function Compare() {
         await api.GET("/v1/products/{product}/comparison", {
           params: {
             path: { product },
-            query: {
-              from,
-              from_variant: fromVariant,
-              to,
-              to_variant: toVariant,
-              ...(undisclosed ? { include_undisclosed: true } : {}),
-            },
+            query,
           },
         }),
       ),
@@ -201,13 +190,19 @@ export function Compare() {
                   chances to send somebody two of them. */}
               <a
                 className="btn quiet"
-                href={`/v1/products/${encodeURIComponent(product)}/comparison.csv?${asked}`}
+                href={fileAt("/v1/products/{product}/comparison.{format}", "csv", {
+                  path: { product },
+                  query: asked,
+                })}
               >
                 CSV
               </a>
               <a
                 className="btn quiet"
-                href={`/v1/products/${encodeURIComponent(product)}/comparison.json?${asked}`}
+                href={fileAt("/v1/products/{product}/comparison.{format}", "json", {
+                  path: { product },
+                  query: asked,
+                })}
               >
                 JSON
               </a>
@@ -253,7 +248,7 @@ type Changed = Body<"ChangedBody">;
 
 // Marks read as sentences rather than as field values, because a reader of a
 // release note is being told what happened rather than shown a column.
-const WENT: Record<string, string> = {
+const WENT: Record<NonNullable<Changed["because"]>, string> = {
   upgraded: "Upgraded",
   revised: "Revised",
   patched: "Patched",
@@ -262,6 +257,8 @@ const WENT: Record<string, string> = {
   unexplained: "Unexplained",
   unaffected: "Not affected",
   disclaimed: "Not affected, per supplier",
+  invalid: "Taken back",
+  fixed: "Fixed",
 };
 
 function Columns({
@@ -369,7 +366,7 @@ function Column({
               </span>
               <span className="why">
                 {row.because && (
-                  <span className={`mark ${row.because}`}>
+                  <span className={row.because === "patched" ? "mark patched" : "mark"}>
                     {own(WENT, row.because) ?? row.because}
                   </span>
                 )}

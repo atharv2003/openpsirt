@@ -3595,7 +3595,7 @@ export interface paths {
          *
          *     No issue is minted. What arrived is a claim, and whether it is a flaw is a judgment somebody makes afterwards — so a report nobody believes is answered and filed rather than either minting a flaw nobody believes or going unrecorded.
          *
-         *     `summary` is required and everything else is optional: a claim arriving anonymously is an ordinary claim, and a report with nothing in it records only that a mail arrived. The summary is stored as markdown and goes through the same submission policy a justification does, so raw HTML and link schemes outside http, https and mailto are refused naming the line they are on.
+         *     `summary` is required and everything else is optional: a claim arriving anonymously is an ordinary claim, and a report with nothing in it records only that a mail arrived. The summary is stored as markdown and goes through the same submission policy a justification does, so raw HTML and a link using anything but http, https, mailto, attachment or issue are refused naming the line they are on.
          *
          *     `received` is the day it arrived, which is what an embargo would be counted from. A date that cannot be read is treated as one nobody gave.
          *
@@ -5564,7 +5564,7 @@ export interface paths {
          * Keep a filter under a name
          * @description Keeps the findings list's current narrowing so it can be opened again. Saving under a name you already use replaces it: the act is deciding what that name means, and refusing would make somebody delete before they could correct.
          *
-         *     The branch, the variant, anything naming one build or one run, and the grouping are left out of what is kept: `stream`, `variant`, `beneath` and its three qualifiers, `differs`, `variants`, `opened_by_run` and `view`. Every other parameter is kept as sent.
+         *     The branch, the variant, anything naming one build or one run, and the grouping are left out of what is kept: `stream`, `variant`, `beneath`, `beneath_version`, `beneath_ecosystem`, `beneath_namespace`, `differs`, `variants`, `opened_by_run`, `view`. Every other parameter is kept as sent.
          *
          *     Refused with 422 where adding the name would take you past the per-person limit.
          *
@@ -10036,8 +10036,11 @@ export interface components {
              * @description The name for this when acknowledging it
              */
             id: number;
-            /** @description The kind, as a word: assigned, sent-back, build-quiet */
-            kind: string;
+            /**
+             * @description What it is about
+             * @enum {string}
+             */
+            kind: "assigned" | "mentioned" | "sent-back" | "build-quiet" | "holding-absent" | "critical-on-release" | "disclosure-due" | "disclosure-near" | "statement-revised" | "claim-waiting" | "sent-back-waiting" | "deferral-ending" | "queue-untaken" | "approval-undone" | "approval-withdrawn" | "claim-lapsed" | "merge-superseded" | "brought-in" | "disclosed" | "unanswered-report" | "vulnerability-data-stale" | "risk-unagreed" | "pairs-concentrated" | "supplier-silent" | "inventory-moved" | "obligation-open" | "obligation-near" | "obligation-passed";
             /**
              * @description An event happened once and is acknowledged; a condition holds until what it is about changes
              * @enum {string}
@@ -10142,8 +10145,11 @@ export interface components {
             failing: number;
             /** @description The host a webhook sends to. The rest of the address is never returned */
             host?: string;
-            /** @description The notifications that go here, or * for all of them */
-            kind: string;
+            /**
+             * @description The notifications that go here, or * for all of them
+             * @enum {string}
+             */
+            kind: "assigned" | "mentioned" | "sent-back" | "build-quiet" | "holding-absent" | "critical-on-release" | "disclosure-due" | "disclosure-near" | "statement-revised" | "claim-waiting" | "sent-back-waiting" | "deferral-ending" | "queue-untaken" | "approval-undone" | "approval-withdrawn" | "claim-lapsed" | "merge-superseded" | "brought-in" | "disclosed" | "unanswered-report" | "vulnerability-data-stale" | "risk-unagreed" | "pairs-concentrated" | "supplier-silent" | "inventory-moved" | "obligation-open" | "obligation-near" | "obligation-passed" | "*";
             /** @description The name as it was typed. Matched without regard to capitals, so retiring it takes any spelling */
             name: string;
             /**
@@ -11195,7 +11201,7 @@ export interface components {
              * @description The kind of reference. A patch is the change itself
              * @enum {string}
              */
-            kind: "patch" | "advisory" | "report" | "other";
+            kind: "patch" | "advisory" | "report";
             /**
              * @description 'found' is a commit the copy of its repository holds, 'absent' one it does not. Omitted where no copy has been asked, or where the link names no commit
              * @enum {string}
@@ -11229,7 +11235,8 @@ export interface components {
             made_on: components["schemas"]["MadeOnBody"][] | null;
             /** @description What stops the flaw, where the decision named it. The document states it as the impact */
             mitigation?: string;
-            outcome: string;
+            /** @enum {string} */
+            outcome: "affected" | "not-applicable" | "mismatched" | "deferred" | "wont-fix" | "already-fixed" | "upgrade-needed" | "patch-needed";
             /** @description The decision's justification, which the document states as the reason the release is not affected */
             reason?: string;
         };
@@ -12049,8 +12056,11 @@ export interface components {
             decision: number;
             /** @description Where it sits, as the decision names it */
             place: string;
-            /** @description How far that decision has got */
-            state: string;
+            /**
+             * @description How far that decision has got
+             * @enum {string}
+             */
+            state: "proposed" | "approved" | "withdrawn" | "lapsed";
             vulnerability: string;
         };
         SpentBody: {

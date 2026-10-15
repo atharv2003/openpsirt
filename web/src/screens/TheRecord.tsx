@@ -7,6 +7,7 @@ import { Loading } from "../ui/Loading";
 import { at, on } from "../ui/when";
 import { useQuery } from "@tanstack/react-query";
 import { api, type Body } from "../api/client";
+import { useProducts } from "../api/catalog";
 import { usePaging } from "./list";
 import { notYours, unwrap } from "../api/queries";
 import { Empty } from "../ui/Empty";
@@ -22,6 +23,7 @@ import { calendarDay, coveringPeriod, endExclusive, stated } from "./reports/Win
 import { PAGE as RULINGS_PAGE, useRulingsAcross } from "../api/intake";
 import { RulingCard, useBackOff } from "./InboxRuling";
 import { allFindingsAt, claimAt } from "../app/routes";
+import { fileAt as linkedFile } from "../api/links";
 
 // The share of the record one page holds. The server's own ceiling is two
 // hundred; a page is what somebody reads, and the rest is a click away rather
@@ -128,10 +130,7 @@ export function TheRecord() {
     window.scrollTo({ top: 0 });
   }
 
-  const declared = useQuery({
-    queryKey: ["products"],
-    queryFn: async () => unwrap(await api.GET("/v1/products", {})),
-  });
+  const declared = useProducts();
   const record = useQuery({
     queryKey: ["audit", products, outcomes, states, sent.from, sent.to, alone, inForce, offset],
     queryFn: async () =>
@@ -429,7 +428,7 @@ function Administered() {
   // The rows shown, rather than an offset: the newest first is the
   // order, and asking for the next page of a list that only grows at the top
   // is how a row is seen twice or not at all.
-  const [showing, setShowing] = useState(50);
+  const [showing, setShowing] = useState(CHANGES_FIRST);
   // Past what the route answers in one request, the file is how the rest is
   // read; asking for more would be refused and take the section with it.
   const longest = CHANGES_MOST;
@@ -467,7 +466,7 @@ function Administered() {
   }
   // Empty under a kind somebody picked is an answer, and the picker stays so
   // it can be put back.
-  if (rows.length === 0 && showing === 50 && !kind) return null;
+  if (rows.length === 0 && showing === CHANGES_FIRST && !kind) return null;
 
   return (
     <div style={{ marginTop: 24 }} id="changes">
@@ -500,7 +499,7 @@ function Administered() {
             const next = new URLSearchParams(params);
             if (event.target.value) next.set("change", event.target.value);
             else next.delete("change");
-            setShowing(50);
+            setShowing(CHANGES_FIRST);
             setParams(next, { replace: true });
           }}
           aria-label="Kind of change"
@@ -610,6 +609,10 @@ export function periodSent(params: URLSearchParams): { from: string; to: string 
   };
 }
 
+// The change-history rows shown before the reader asks for more. An empty
+// section is hidden only at this length, so the three readers share it.
+const CHANGES_FIRST = 50;
+
 // The most change-history rows one request is answered with. The route
 // refuses a larger page.
 export const CHANGES_MOST = 200;
@@ -647,15 +650,14 @@ export function changeKind(params: URLSearchParams): ChangeKind | "" {
 // The address the change history comes from as a file, built the way the
 // record's own link is: the screen's period straight from the address, so the
 // file and the section it was taken from cannot disagree about the stretch.
-function changesAt(params: URLSearchParams, format: string): string {
+function changesAt(params: URLSearchParams, format: "csv" | "json"): string {
   const asked = new URLSearchParams();
   const sent = periodSent(params);
   if (sent.from) asked.set("from", sent.from);
   if (sent.to) asked.set("to", sent.to);
   const kind = changeKind(params);
   if (kind) asked.set("kind", kind);
-  const query = asked.toString();
-  return `/v1/administration/changes.${format}${query ? `?${query}` : ""}`;
+  return linkedFile("/v1/administration/changes.{format}", format, { query: asked });
 }
 
 // The states a claim's matching decisions are in, as the state filter names
@@ -844,7 +846,7 @@ function Judgment({ row, states }: { row: Judged; states: string[] }) {
 // The screen's own filters are the file's, straight from the address, so a
 // narrowed screen and the file taken from it cannot disagree about what was
 // asked for.
-function fileAt(params: URLSearchParams, format: string): string {
+function fileAt(params: URLSearchParams, format: "csv" | "json"): string {
   const asked = new URLSearchParams(params);
   asked.delete("offset");
   // The change history's own filter, which the record's route does not take
@@ -855,6 +857,5 @@ function fileAt(params: URLSearchParams, format: string): string {
     if (sent[name]) asked.set(name, sent[name]);
     else asked.delete(name);
   }
-  const query = asked.toString();
-  return `/v1/audit.${format}${query ? `?${query}` : ""}`;
+  return linkedFile("/v1/audit.{format}", format, { query: asked });
 }

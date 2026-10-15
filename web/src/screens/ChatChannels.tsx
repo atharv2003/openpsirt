@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type Body } from "../api/client";
+import { useDestinations, useRetireDestination } from "../api/outbound";
+import { own } from "../ui/own";
 import { unwrap } from "../api/queries";
 import { AddButton, Declare, Field } from "../ui/Declare";
 import { Empty } from "../ui/Empty";
 import { Failed } from "../ui/Failed";
 import { Loading } from "../ui/Loading";
+import { takes } from "../ui/notices";
 import { Wide } from "../ui/Wide";
 
 // The chat channels this deployment posts to.
@@ -21,7 +24,11 @@ import { Wide } from "../ui/Wide";
 type Destination = Body<"OutboundBody">;
 
 // What a platform is called on screen.
-const PLATFORMS: Record<string, string> = { slack: "Slack", zulip: "Zulip" };
+const PLATFORMS: Record<Destination["platform"], string> = {
+  webhook: "Webhook",
+  slack: "Slack",
+  zulip: "Zulip",
+};
 
 // What a channel belongs to, as somebody would say it.
 function scopeOf(row: Destination) {
@@ -43,10 +50,7 @@ export function ChatChannels({ platforms }: { platforms: string[] }) {
   const [scope, setScope] = useState<Scope>("deployment");
   const [owner, setOwner] = useState("");
 
-  const listed = useQuery({
-    queryKey: ["outbound"],
-    queryFn: async () => unwrap(await api.GET("/v1/outbound", {})),
-  });
+  const listed = useDestinations();
   const add = useMutation({
     mutationFn: async () =>
       unwrap(
@@ -73,11 +77,7 @@ export function ChatChannels({ platforms }: { platforms: string[] }) {
       void queries.invalidateQueries({ queryKey: ["outbound"] });
     },
   });
-  const retire = useMutation({
-    mutationFn: async (where: { name: string; kind: string }) =>
-      unwrap(await api.DELETE("/v1/outbound/{name}/{kind}", { params: { path: where } })),
-    onSuccess: () => void queries.invalidateQueries({ queryKey: ["outbound"] }),
-  });
+  const retire = useRetireDestination();
 
   // With no platform configured the channels still stored are listed, so
   // they can be retired rather than posting again when a token returns.
@@ -130,7 +130,7 @@ export function ChatChannels({ platforms }: { platforms: string[] }) {
               {rows.map((row) => (
                 <tr key={`${row.name} ${row.kind}`} className="row">
                   <td className="id">{row.name}</td>
-                  <td>{row.kind === "*" ? "everything" : row.kind}</td>
+                  <td>{takes(row.kind)}</td>
                   <td>
                     {PLATFORMS[row.platform ?? ""] ?? row.platform} ·{" "}
                     <span className="id">{row.channel}</span>
@@ -187,7 +187,7 @@ export function ChatChannels({ platforms }: { platforms: string[] }) {
             >
               {platforms.map((each) => (
                 <option key={each} value={each}>
-                  {PLATFORMS[each] ?? each}
+                  {own(PLATFORMS, each) ?? each}
                 </option>
               ))}
             </select>

@@ -13,7 +13,7 @@ import { Failed } from "../ui/Failed";
 import { Loading } from "../ui/Loading";
 import { Because } from "../ui/Outcome";
 import { Wide } from "../ui/Wide";
-import { findingAt } from "../app/routes";
+import { findingOf } from "../app/routes";
 import { issuesIn, toggled } from "./outliers";
 import { OutlierRows } from "../ui/OutlierRows";
 
@@ -94,23 +94,7 @@ function Mine({ row }: { row: Body<"BecameBody"> }) {
         </td>
         <td>
           {row.finding ? (
-            <Link
-              to={findingAt(
-                {
-                  product: row.finding.product ?? "",
-                  stream: row.finding.stream ?? "",
-                  variant: row.finding.variant ?? "",
-                },
-                {
-                  vulnerability: row.finding.vulnerability ?? "",
-                  component: row.finding.component ?? "",
-                  version: row.finding.version ?? "",
-                  ecosystem: row.finding.ecosystem,
-                  namespace: row.finding.namespace,
-                },
-              )}
-              className="id"
-            >
+            <Link to={findingOf(row.finding)} className="id">
               {row.place?.vulnerability}
             </Link>
           ) : (
@@ -207,7 +191,7 @@ function Mine({ row }: { row: Body<"BecameBody"> }) {
 // "Undone" is drawn apart from "waiting" though the claim is waiting in both:
 // somebody had agreed, and the proposer is entitled to find that surprising.
 export function Happened({ word, by }: { word?: string; by?: string }) {
-  const how: Record<string, { cls: string; said: string }> = {
+  const how: Record<Body<"BecameBody">["happened"], { cls: string; said: string }> = {
     waiting: { cls: "waiting", said: "Waiting" },
     "sent-back": { cls: "lapsed", said: "Sent back" },
     approved: { cls: "agreed", said: "Approved" },

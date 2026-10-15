@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type Body } from "../api/client";
+import { useDestinations, useRetireDestination } from "../api/outbound";
 import { unwrap } from "../api/queries";
 import { AddButton, Declare, Field } from "../ui/Declare";
 import { Empty } from "../ui/Empty";
 import { Failed } from "../ui/Failed";
 import { Loading } from "../ui/Loading";
+import { takes } from "../ui/notices";
 import { Wide } from "../ui/Wide";
 
 // The destinations this deployment posts to, and whether anything is arriving.
@@ -48,19 +50,6 @@ function NoWebhooks() {
   );
 }
 
-function useDestinations() {
-  return useQuery({
-    queryKey: ["outbound"],
-    queryFn: async () => unwrap(await api.GET("/v1/outbound", {})),
-  });
-}
-
-// A kind's own word. A destination taking everything says so in a word
-// rather than in the wildcard the address is stored with.
-function kindOf(kind?: string) {
-  return kind === "*" ? "everything" : kind;
-}
-
 // The number failing, and the reason the last one did.
 function Failing({ row }: { row: Destination }) {
   if ((row.failing ?? 0) === 0) return <span style={{ color: "var(--faint)" }}>none</span>;
@@ -96,11 +85,7 @@ export function Webhooks() {
       void queries.invalidateQueries({ queryKey: ["outbound"] });
     },
   });
-  const retire = useMutation({
-    mutationFn: async (where: { name: string; kind: string }) =>
-      unwrap(await api.DELETE("/v1/outbound/{name}/{kind}", { params: { path: where } })),
-    onSuccess: () => void queries.invalidateQueries({ queryKey: ["outbound"] }),
-  });
+  const retire = useRetireDestination();
 
   // A chat channel is configured on its own tab.
   const rows = (sent.data?.items ?? []).filter((row) => row.platform === "webhook");
@@ -139,7 +124,7 @@ export function Webhooks() {
               {rows.map((row) => (
                 <tr key={`${row.name} ${row.kind}`} className="row">
                   <td className="id">{row.name}</td>
-                  <td>{kindOf(row.kind)}</td>
+                  <td>{takes(row.kind)}</td>
                   {/* Not a link: it is somewhere this deployment posts to,
                       not somewhere a person goes. */}
                   <td className="id">{row.host}</td>
@@ -258,7 +243,7 @@ export function WebhookDelivery() {
               {rows.map((row) => (
                 <tr key={`${row.name} ${row.kind}`} className="row">
                   <td className="id">{row.name}</td>
-                  <td>{kindOf(row.kind)}</td>
+                  <td>{takes(row.kind)}</td>
                   <td className="id">{row.platform === "webhook" ? row.host : row.channel}</td>
                   <td>{(row.sent ?? 0).toLocaleString()}</td>
                   <td>

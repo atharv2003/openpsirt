@@ -22,6 +22,7 @@ import { on } from "../ui/when";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, type Body } from "../api/client";
+import { own } from "../ui/own";
 import { at as choicesAt, unwrap, whichOf } from "../api/queries";
 import { mayOf, useWho } from "../app/session";
 import { Failed } from "../ui/Failed";
@@ -29,7 +30,7 @@ import { Severity, Exploited, ExploitedHere as ExploitedHereBadge } from "../ui/
 import { Weaknesses } from "../ui/Weakness";
 import { AffectedBuilds } from "./FindingBuilds";
 import { Markdown } from "../ui/Markdown";
-import { Decide, said, type Recorded } from "../ui/Decide";
+import { Decide, said, type At, type Recorded } from "../ui/Decide";
 import { Because } from "../ui/Outcome";
 import { useFindingNeighbors } from "./findingNeighbors";
 import { useDecisionPrefill } from "./findingPrefill";
@@ -80,19 +81,16 @@ const SAMPLE = 8;
 // Each says what to do with the row rather than naming the rule: somebody
 // reading this is deciding whether to look further, and "below the line" on
 // its own is a term they would have to go and learn.
+const NO_DEADLINE: Record<NonNullable<Body<"FindingBody">["no_deadline"]>, string> = {
+  "not-rated": "nobody has rated it yet. The clock starts when somebody does.",
+  "below-the-line": "below what this product triages at. Recorded and counted; nothing is late.",
+  "nothing-to-take":
+    "upstream has released no fix, or has declined to, so there is no version that would close it.",
+  "out-of-support": "the release is past its end of life, so nothing here will be fixed.",
+};
+
 function whyNone(reason: string | undefined): string {
-  switch (reason) {
-    case "not-rated":
-      return "nobody has rated it yet. The clock starts when somebody does.";
-    case "below-the-line":
-      return "below what this product triages at. Recorded and counted; nothing is late.";
-    case "nothing-to-take":
-      return "upstream has released no fix, or has declined to, so there is no version that would close it.";
-    case "out-of-support":
-      return "the release is past its end of life, so nothing here will be fixed.";
-    default:
-      return "nothing here is late.";
-  }
+  return own(NO_DEADLINE, reason) ?? "nothing here is late.";
 }
 
 export function Finding() {
@@ -116,6 +114,9 @@ export function Finding() {
   const from = params.get("from") ?? "";
   const who = useWho();
   const at = { product, stream, variant, vulnerability, component };
+  // The same finding with what picks its component, as the panes acting on it
+  // take it.
+  const located: At = { ...at, version, ecosystem, namespace };
   const [recorded, setRecorded] = useState<Recorded | null>(null);
   // The decision form, for the one act that has to put it in front of
   // somebody: reusing an earlier reasoning fills it in and then has to show
@@ -414,8 +415,7 @@ export function Finding() {
             the world's, and somebody scanning the head for what state this is
             in is the person who put the mark here. */}
         <Marks
-          at={at}
-          which={{ version, ecosystem, namespace }}
+          at={located}
           tags={it.tags ?? []}
           mayMark={mayTriage}
           onChanged={() => void finding.refetch()}
@@ -1065,13 +1065,12 @@ export function Finding() {
             {prefill.settled && (
               <div ref={form}>
                 <Decide
-                  at={{ ...at, version, ecosystem, namespace }}
+                  at={located}
                   places={places}
                   undisclosed={!!it.undisclosed}
                   assigning={
                     <Assignee
-                      at={at}
-                      which={{ version, ecosystem, namespace }}
+                      at={located}
                       assigned={it.assigned_to ?? ""}
                       undisclosed={!!it.undisclosed}
                       routedBy={it.routed_by ?? ""}
@@ -1142,8 +1141,7 @@ export function Finding() {
             reassigning a decided finding is still ordinary. */}
         {!undecided && (
           <Assignee
-            at={at}
-            which={{ version, ecosystem, namespace }}
+            at={located}
             assigned={it.assigned_to ?? ""}
             undisclosed={!!it.undisclosed}
             routedBy={it.routed_by ?? ""}

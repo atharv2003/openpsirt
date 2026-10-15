@@ -6,7 +6,6 @@ package adminapi
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -63,8 +62,21 @@ func TestTheScreenTakesWhatAValueIsFromTheServer(t *testing.T) {
 	}
 
 	// Nor does it name one. The title and the section are served, so a key
-	// appearing here is a lookup coming back.
-	if at := regexp.MustCompile(`"(remediation|triage|scanning|disclosure|attachment|session|token|signin|people|upstream|patch|queue|routing|saved)\.[a-z.-]+"`).FindString(body); at != "" {
+	// appearing here is a lookup coming back. The prefixes are the ones the
+	// settings offered carry, so a setting under a new prefix is looked for
+	// too.
+	var prefixes []string
+	for _, each := range settable {
+		prefix, _, _ := strings.Cut(each.name, ".")
+		if quoted := regexp.QuoteMeta(prefix); !slices.Contains(prefixes, quoted) {
+			prefixes = append(prefixes, quoted)
+		}
+	}
+	if len(prefixes) == 0 {
+		t.Fatal("no settings are offered, so this looked for no names")
+	}
+	named := regexp.MustCompile(`"(` + strings.Join(prefixes, "|") + `)\.[a-z.-]+"`)
+	if at := named.FindString(body); at != "" {
 		t.Errorf("the settings screen names the setting %s, which the server describes", at)
 	}
 
@@ -81,16 +93,9 @@ func TestTheScreenTakesWhatAValueIsFromTheServer(t *testing.T) {
 // the interface is a second list keyed on the name, and a setting added here
 // and not there is drawn under its dotted key in a section of its own.
 func TestEverySettingCarriesATitleASectionAndOneLine(t *testing.T) {
-	// The sections the API document declares, read from the one place they
-	// are written, so the list checked here cannot drift from what is served.
-	field, ok := reflect.TypeFor[SettingBody]().FieldByName("Section")
-	if !ok {
-		t.Fatal("a setting carries no section field")
-	}
-	sections := strings.Split(field.Tag.Get("enum"), ",")
-	if len(sections) < 2 {
-		t.Fatalf("the section field declares %q, which is not a list of sections", field.Tag.Get("enum"))
-	}
+	// The sections the API document declares, from the list it is built
+	// from. A row's section is typed, and an untyped literal still converts.
+	sections := setting.Sections()
 	if len(settable) == 0 {
 		t.Fatal("no settings are offered, so this checked nothing")
 	}
@@ -140,26 +145,26 @@ func TestEverySettingOfferedReportsWhatIsInForce(t *testing.T) {
 		// And it is the kind the write path will check it as, or an operator
 		// pressing the value back is refused their own deployment's default.
 		switch each.kind {
-		case aDuration:
+		case setting.Duration:
 			if d, err := time.ParseDuration(value); err != nil || d <= 0 {
 				t.Errorf("%s ships %q, which the write path refuses as a length of time",
 					each.name, value)
 			}
-		case aCount, aSize:
+		case setting.Count, setting.Size:
 			if n, err := strconv.Atoi(value); err != nil || n <= 0 {
 				t.Errorf("%s ships %q, which the write path refuses as a count",
 					each.name, value)
 			}
-		case aPercent:
+		case setting.Percent:
 			if n, err := strconv.Atoi(value); err != nil || n <= 0 || n > 100 {
 				t.Errorf("%s ships %q, which the write path refuses as a share",
 					each.name, value)
 			}
-		case aWord:
+		case setting.Word:
 			if !slices.Contains(theFloor, value) {
 				t.Errorf("%s ships %q, which is not one of the words it takes", each.name, value)
 			}
-		case aSwitch:
+		case setting.Switch:
 			if !slices.Contains(theSwitch, value) {
 				t.Errorf("%s ships %q, which is neither on nor off", each.name, value)
 			}
@@ -191,7 +196,7 @@ func TestAWordSettingOffersTheListItIsCheckedAgainst(t *testing.T) {
 	said := 0
 	for _, each := range settable {
 		switch each.kind {
-		case aWord, aSwitch:
+		case setting.Word, setting.Switch:
 			said++
 			if len(each.words) == 0 {
 				t.Errorf("%s takes one of a few words and offers none", each.name)

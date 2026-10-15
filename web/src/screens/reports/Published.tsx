@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useQuery } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
 import { unwrap } from "../../api/queries";
 import { useScope } from "../../app/scope";
@@ -12,15 +11,9 @@ import { Loading } from "../../ui/Loading";
 import { on } from "../../ui/when";
 import { Sheet } from "./Sheet";
 import { byProduct } from "./catalog";
-import {
-  PeriodPicker,
-  WindowPicker,
-  asked,
-  coveringPeriod,
-  daysAsked,
-  periodAsked,
-} from "./Window";
+import { PeriodPicker, WindowPicker, coveringPeriod, useSheetWindow } from "./Window";
 import { Wide } from "../../ui/Wide";
+import { linkTo } from "../../api/links";
 
 // The window back. A year by default, because publishing is rare enough that a
 // month of it is usually nothing and reads as a tool that is not working.
@@ -38,12 +31,9 @@ const WINDOWS = [90, 365, 3650] as const;
 // the catalog offers as a file.
 export function Published() {
   const at = useScope();
-  const [params] = useSearchParams();
-  const days = daysAsked(params, 365);
   // An auditor asking what went out in a financial year names two dates; the
   // window answers "lately", which is the other question.
-  const period = periodAsked(params);
-  const when = asked(period, days);
+  const { days, period, when } = useSheetWindow(365);
   const product = at.product ?? "";
 
   const gone = useQuery({
@@ -115,7 +105,9 @@ export function Published() {
                     <td>
                       <a
                         className="id linkish"
-                        href={`/v1/advisories/${encodeURIComponent(row.advisory)}/document`}
+                        href={linkTo("/v1/advisories/{advisory}/document", {
+                          path: { advisory: row.advisory },
+                        })}
                       >
                         {row.advisory}
                       </a>

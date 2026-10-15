@@ -68,6 +68,7 @@ import {
 } from "./list";
 import { allFindingsAt, findingAt } from "../app/routes";
 import { useReseed } from "../ui/reseed";
+import { fileAt } from "../api/links";
 
 // The filters the bar sets itself, so the count on More filters leaves them out.
 const ON_THE_BAR = new Set(["q", "floor", "state", "assigned", "running"]);
@@ -272,9 +273,13 @@ export function Findings() {
     return new URLSearchParams(carried).toString();
   }, [query, selection, spanning]);
 
-  const exportsAt = spanning
-    ? "/v1/findings"
-    : `/v1/products/${encodeURIComponent(product)}/findings`;
+  const listFile = (format: "csv" | "json") =>
+    spanning
+      ? fileAt("/v1/findings.{format}", format, { query: asFile })
+      : fileAt("/v1/products/{product}/findings.{format}", format, {
+          path: { product },
+          query: asFile,
+        });
 
   // The state a row hands the finding it opens: the list's own address, with
   // the build it is looking at written in, so the finding can ask for the row
@@ -494,6 +499,9 @@ export function Findings() {
   });
   useEffect(() => {
     function key(event: KeyboardEvent) {
+      // A key a control on the page has already answered is that control's: an
+      // arrow opening a filter's list does not also move the cursor.
+      if (event.defaultPrevented) return;
       const { rows, cursor, peeking, at: addressOf } = live.current;
       const means = meansFor(event, typingIn(document.activeElement));
       if (means === null) return;
@@ -1126,7 +1134,7 @@ export function Findings() {
         <span className="hint" style={{ display: "flex", gap: 6 }}>
           <span>Export</span>
           {(["csv", "json"] as const).map((as) => (
-            <a key={as} className="linkish" href={`${exportsAt}.${as}?${asFile}`}>
+            <a key={as} className="linkish" href={listFile(as)}>
               {as.toUpperCase()}
             </a>
           ))}

@@ -3,10 +3,10 @@
 
 import { BANDS } from "../../ui/severities";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { api } from "../../api/client";
 import { unwrap } from "../../api/queries";
-import { exportAt } from "../../api/exports";
+import { fileAt } from "../../api/links";
 import { findingsPath, scopeQuery, useScope } from "../../app/scope";
 import { Failed } from "../../ui/Failed";
 import { Loading } from "../../ui/Loading";
@@ -19,14 +19,13 @@ import { Sheet } from "./Sheet";
 import { byProduct } from "./catalog";
 import {
   PeriodPicker,
-  WindowPicker,
   asked,
+  WindowPicker,
   coveringPeriod,
-  daysAsked,
   endExclusive,
-  periodAsked,
   stated,
   windowStart,
+  useSheetWindow,
 } from "./Window";
 import { useRowOpener } from "../../ui/opens";
 import { Wide } from "../../ui/Wide";
@@ -84,15 +83,13 @@ export function Overview() {
   const at = useScope();
   const opener = useRowOpener();
   const scope = scopeQuery(at);
-  const [params] = useSearchParams();
-  const days = daysAsked(params, 30);
-  const period = periodAsked(params);
   // The window every figure on this sheet covers, and the one the lists it
   // links to have to be narrowed by. One value, because a heading saying one
   // stretch over a list showing another is the failure this sheet is easiest to
   // ship. A rolling window is sent as the date its links open the record
   // from: a count of days the server counts from this minute, and the record
   // reads a date from midnight.
+  const { days, period } = useSheetWindow(30);
   const when = stated(period) ? asked(period, days) : { from: windowStart(days) };
   // A period naming only its end still runs from the beginning, so there is
   // no date to narrow a list by — and a list narrowed by an empty one opens
@@ -563,9 +560,7 @@ export function Overview() {
 // somebody follows rather than a request this page makes, narrowed the way the
 // panel above it is.
 function repeatsFile(product: string, format: "csv" | "json"): string {
-  return exportAt(
-    "/v1/deferrals/repeated",
-    format,
-    new URLSearchParams(product ? { product } : {}),
-  );
+  return fileAt("/v1/deferrals/repeated.{format}", format, {
+    query: product ? { product } : undefined,
+  });
 }

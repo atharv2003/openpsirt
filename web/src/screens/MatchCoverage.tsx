@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../api/client";
+import { api, type Body } from "../api/client";
 import { unwrap } from "../api/queries";
 import { Crumbs } from "../ui/Crumbs";
 import { Empty } from "../ui/Empty";
@@ -13,14 +13,13 @@ import { Loading } from "../ui/Loading";
 import { Paged } from "../ui/Paged";
 import { Wide } from "../ui/Wide";
 import { own } from "../ui/own";
-import { exportAt } from "../api/exports";
-import { apiBuildPath } from "./list";
+import { fileAt as linkedFile } from "../api/links";
 import { componentAt } from "../app/routes";
 
 const PAGE = 200;
 
 // Each reason's label, and what fixes it on hover.
-const REASONS: Record<string, { label: string; fix: string }> = {
+const REASONS: Record<Body<"ReasonCountBody">["reason"], { label: string; fix: string }> = {
   "no-identifier": {
     label: "No package identifier",
     fix: "No purl. A CPE on its own matches nothing.",
@@ -181,9 +180,12 @@ function fileAt(
   format: "csv" | "json",
   reason: string,
 ): string {
-  return exportAt(
-    apiBuildPath(at) + "/match-coverage",
+  return linkedFile(
+    "/v1/products/{product}/streams/{stream}/variants/{variant}/match-coverage.{format}",
     format,
-    reason ? new URLSearchParams({ reason }) : undefined,
+    {
+      path: at,
+      query: reason ? { reason } : undefined,
+    },
   );
 }

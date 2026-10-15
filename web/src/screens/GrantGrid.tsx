@@ -1,11 +1,9 @@
 // Copyright Nexthop Systems Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useQuery } from "@tanstack/react-query";
-import { api } from "../api/client";
-import { unwrap } from "../api/queries";
+import { useProducts } from "../api/catalog";
 import { Reading } from "../ui/Reading";
-import { type Holding, ROLES, wouldReachNothing } from "../ui/roles";
+import { type Holding, ROLES, type Role, wouldReachNothing } from "../ui/roles";
 import { Wide } from "../ui/Wide";
 
 // The grants in force, as a grid of products against capabilities. A column is
@@ -44,15 +42,12 @@ export function GrantGrid({
 }: {
   holds: Held[];
   busy: boolean;
-  onGrant: (product: string, role: string) => void;
+  onGrant: (product: string, role: Role) => void;
   onWithdraw: (product: string, role: string) => void;
-  onGrantEverywhere: (role: string) => void;
+  onGrantEverywhere: (role: Role) => void;
   onWithdrawEverywhere: (role: string) => void;
 }) {
-  const products = useQuery({
-    queryKey: ["products"],
-    queryFn: async () => unwrap(await api.GET("/v1/products", {})),
-  });
+  const products = useProducts();
 
   // A held role names its product as it is shown; a grant names it as the API
   // takes it. Both are mapped to the second, or every grant looks like the
