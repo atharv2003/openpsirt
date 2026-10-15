@@ -817,7 +817,7 @@ func TestAFindingOnATagCarriesNoDeadline(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			return n
+			return int(n)
 		}
 		if clocked(tag) != 0 {
 			t.Errorf("%d findings on a tag carry a deadline", clocked(tag))
@@ -1091,7 +1091,7 @@ func TestARewriteStoppedPartWayLeavesNoDeadlineOnATag(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		f.db.AddQueryHook(&cancelOnDeadline{cancel: cancel})
+		f.hook(&cancelOnDeadline{cancel: cancel})
 		if _, err := f.store.Recompute(ctx, finding.DefaultWindows()); err == nil {
 			t.Fatal("a rewrite cancelled part way finished, so this proves nothing")
 		}

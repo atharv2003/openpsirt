@@ -273,7 +273,7 @@ func (q *Queue) depthIn(ctx context.Context, db bun.IDB, kind string) (int, erro
 	if err != nil {
 		return 0, fmt.Errorf("measure backlog: %w", err)
 	}
-	return n, nil
+	return int(n), nil
 }
 
 // Backlog is the limit in force, which is what an administrator set or the
@@ -632,7 +632,8 @@ func (q *Queue) Fail(ctx context.Context, id int64, worker string, cause error) 
 	// The attempt count and the write that acts on it are read in one
 	// transaction, so whether this was the last attempt rests on the value
 	// the statement that buries or re-queues the job was written against.
-	said := head(cause.Error(), mostOfAnError)
+	// A scanner's standard error is quoted in it, in bytes of its choosing.
+	said := head(bound.Text(cause.Error()), mostOfAnError)
 	var matched bool
 	return database.InTransaction(ctx, q.db.DB, func(ctx context.Context, tx bun.Tx) error {
 		job := new(Job)
@@ -785,7 +786,7 @@ func (q *Queue) SetAside(ctx context.Context, limit int) ([]Job, int, error) {
 	if err := q.db.NewSelect().Model(&jobs).
 		Where(`"state" = ?`, Dead).
 		OrderExpr(`"updated_at" DESC, "id" DESC`).
-		Limit(limit).Scan(ctx); err != nil {
+		Limit(int64(limit)).Scan(ctx); err != nil {
 		return nil, 0, fmt.Errorf("list work that was set aside: %w", err)
 	}
 	// Counted as well as listed. A page that stops at the cap with nothing
@@ -797,7 +798,7 @@ func (q *Queue) SetAside(ctx context.Context, limit int) ([]Job, int, error) {
 	if err != nil {
 		return nil, 0, fmt.Errorf("count work that was set aside: %w", err)
 	}
-	return jobs, total, nil
+	return jobs, int(total), nil
 }
 
 // SetAsideCeiling bounds the set-aside listing. A read on an interactive route

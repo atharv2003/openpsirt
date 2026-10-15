@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"strings"
 
 	"github.com/uptrace/bun"
 
@@ -35,17 +34,15 @@ type Words struct {
 // a markdown field typed here is held to.
 const MostWords = markdown.MaxBytes
 
-// WordsOf is reasoning as it is kept: valid UTF-8, without NUL, and cut to
-// MostWords on a character boundary. The query builder makes the same two
-// repairs on the way to the engine, so they are made here first: the words
-// keyed and compared are then the words stored.
+// WordsOf is reasoning as it is kept: text as bound.Text makes it, cut to
+// MostWords on a character boundary. The words keyed and compared are then
+// the words stored.
 //
 // Cut rather than refused. The reasoning is somebody else's, and one
 // over-long explanation is no reason to refuse the scan or the document that
 // carried it.
 func WordsOf(said string) string {
-	kept := strings.ReplaceAll(strings.ToValidUTF8(said, "�"), "\x00", "")
-	return bound.Head(kept, MostWords)
+	return bound.Head(bound.Text(said), MostWords)
 }
 
 // wordsDigest is what one stored copy of the reasoning is found by.

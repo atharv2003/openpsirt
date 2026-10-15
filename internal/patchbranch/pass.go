@@ -640,7 +640,9 @@ func (p *Pass) finish(ctx context.Context, before repositoryRow, dir string, fai
 		update = update.Set(`"fetched_at" = ?`, utc(before.FetchedAt)).Set(`"failed" = ?`, before.Failed).
 			Set(`"ended_at" = ?`, utc(before.EndedAt))
 	case failed != nil:
-		update = update.Set(`"failed" = ?`, bound.HeadRunes(failed.Error(), MostReason)).
+		// git quotes what the remote said, in bytes of the remote's choosing.
+		reason := bound.Text(failed.Error())
+		update = update.Set(`"failed" = ?`, bound.HeadRunes(reason, MostReason)).
 			Set(`"ended_at" = ?`, p.Now().UTC())
 	default:
 		now := p.Now().UTC()

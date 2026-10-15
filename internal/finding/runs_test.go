@@ -48,7 +48,7 @@ func TestNamingAPageOfFindingsDoesNotCostAQueryPerRow(t *testing.T) {
 
 		read := func(limit int) (int, int64) {
 			counted := &counter{}
-			f.db.AddQueryHook(counted)
+			f.hook(counted)
 			groups, _, err := f.store.Groups(t.Context(), f.holding(t, access.PublicRead),
 				f.scope, limit, 0, finding.Filter{})
 			if err != nil {
@@ -366,7 +366,7 @@ func (f *fixture) liveAssessments(t *testing.T, vulnerabilityID int64) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return n
+	return int(n)
 }
 
 // vulnerability names one of a run of issues, zero-padded so the order a test

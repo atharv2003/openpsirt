@@ -173,7 +173,7 @@ where the server offers it, the other connects in cleartext unless asked.
 | Required is asked of the connection, never of the URL | The engines spell the transport differently and each spelling has several values, so a check reading the URL would be three parsers agreeing about what "encrypted" means — and would still be wrong about a server that ignored what was asked for |
 | Required is also imposed on every connection the pool opens | The question is asked of one connection at startup, and the pool opens connections for the life of the process. A transport that falls back to cleartext — `sslmode` of `prefer` or `allow`, `tls=preferred`, or none named — is replaced by one that does not, and one that asks for cleartext is refused, as is `allowFallbackToPlaintext` set true. One the deployment named that cannot fall back is left as written. A MySQL value is read as the driver reads it, in any case and with 0 and 1 as false and true |
 | A PostgreSQL URL naming no mode | The driver takes `PGSSLMODE` there, and a mode in the URL overrides it, so the environment's mode is judged in the URL's place. A mode is appended only where that one is weak, so a `verify-full` set in the environment is never replaced by one checking no certificate |
-| A PostgreSQL key is read as the driver reads it | The driver decodes each query key and takes the first value of a repeated one, so an escaped `sslmode` is judged as the mode it is and every repeat is judged. A pair the URL parser cannot read is refused, because the driver drops it and falls to its own default |
+| A PostgreSQL key is read as the driver reads it | The driver decodes each query key and takes the last value of a repeated one, so an escaped `sslmode` is judged as the mode it is and every repeat is judged. A pair the URL parser cannot read is refused, naming the setting, before the driver refuses it in its own words |
 | The driver's own reading is the last word on PostgreSQL | It merges a service file above the environment and under the URL, and a mode from there leaves a fallback to cleartext nothing in the URL shows. Every attempt the parsed configuration makes, the first and each fallback, must be encrypted |
 | A server that will not say is refused under it | What the requirement asks for is certainty, and "we could not find out" is not it |
 | Required against SQLite is refused | A file opened directly has no connection to encrypt. Accepting it would make the setting one that changes nothing, which is worse than not offering it |
@@ -283,6 +283,7 @@ schema they build on each of the four engines, captured from the tag.
 |---|---|
 | Each file a release shipped is the file it tagged, and each file numbered or named as the release's is one it shipped | A database the release built has applied exactly those. An edit changes a schema deployments already hold without changing the version they recorded |
 | The migrations up to a release's last build, on every engine, the schema the tag built | The files alone do not fix it: the column spellings and widths they use are read from helpers a later change is free to edit. On SQLite the description also says whether each table's key is `AUTOINCREMENT` and whether each index is partial, which the engine's column and index listings leave out |
+| The migration library's bookkeeping table is left out of the schema compared, on every engine, and a record that lists it is compared without it | The library creates that table and chooses its column types, and a release of the library changes them with no migration here changing |
 | A release the baseline replaced lists no file | Its files are gone from the tree. Its schema on each engine is what holds the baseline. v0.5.0's record is the one |
 
 Below 1.0 there is no compatibility (REQ-76), and a schema change edits what
@@ -1332,14 +1333,14 @@ A cut is made on a character boundary, never at a byte offset.
 | Rule | Reason |
 |---|---|
 | A value shortened to fit a width is cut between characters | A byte offset lands inside a multi-byte character about two times in three, and what is left is not valid UTF-8 |
-| The query builder writes text as valid UTF-8 | It writes every value into the statement text, character by character: an invalid byte becomes U+FFFD and a NUL is dropped. A cut inside a character is stored with a replacement character where its last character was |
-| Text another program wrote is stored however it is encoded | A scanner's standard error and git's account of what a remote said carry whatever bytes they carry. Each engine refuses an invalid byte or a NUL handed to it as a parameter — PostgreSQL always, MySQL and MariaDB in strict mode — and none is handed one, because the builder sends none |
+| The query builder writes text as valid UTF-8. On PostgreSQL and SQLite it refuses a NUL, and on MySQL and MariaDB it drops one | It writes every value into the statement text, character by character: an invalid byte becomes U+FFFD. A cut inside a character is stored with a replacement character where its last character was. On PostgreSQL and SQLite a string holding a NUL fails the statement before it reaches the engine |
+| Text another program wrote is stored however it is encoded | A scanner's output and standard error, git's account of what a remote said, an inventory or a VEX document, a package index's answer, a CVE record and a supplier's answer carry whatever bytes they carry. PostgreSQL refuses an invalid byte or a NUL handed to it as a parameter, and MySQL and MariaDB refuse an invalid byte in strict mode. Each NUL is dropped where the text is read, and the builder replaces each invalid byte |
 | The two directions are separate operations | Keeping the head leaves the partial character at the end and keeping the tail leaves it at the front, so one of them trims backward and the other forward |
 | Both live in one place | Every site wrote its own slice, and the ones that were correct were written by people who had already been bitten. The cut is one fact, so it is written once and called |
 
 A test on each of the four engines ends a scan run with a failure, a caution
 and versions carrying invalid bytes and a NUL, and records a patch repository's
-failure quoting a remote error in invalid bytes: each is stored, valid, with
+failure quoting a remote error in invalid bytes and a NUL: each is stored, valid, with
 the text around the bytes kept, and the repository waits its day.
 
 A lookup key is cut in characters, which is how its column is declared; a

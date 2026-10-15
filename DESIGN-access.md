@@ -668,6 +668,7 @@ sign-ins, which has to be swept and which anybody can fill.
 | The proof key is sent as a digest and kept as the secret it hashes | An authorization code taken in flight being exchanged by whoever took it |
 | The identity token must carry the value tying it to this sign-in | It belonging to a different one |
 | An identity token naming no subject is refused | Quietly reducing that deployment to matching by name |
+| An identity carrying a NUL character in its subject, username, name, address or groups is refused | An identity is matched exactly, so dropping the character would make two identities one, and a NUL fails the statement on two of the engines |
 | A provider's stated address is recorded only where the provider says it verified it | Mail about an undisclosed finding going to whatever address an account holder typed. No address redeems an authorization: the username claim alone does |
 | The sealed value carries when it was minted, and a stale one is refused | The window being a request to the browser and nothing else. The browser holding the value may be the one that planted it, and the key sealing it is never rotated — so without a time in the payload a sign-in sealed months ago stays acceptable |
 
@@ -1197,6 +1198,7 @@ reintroduce it.
 | A password parameter in the query is redacted pair by pair, as written | The query parser drops a pair it cannot decode, so a malformed escape would leave the password neither found nor replaced |
 | A server URL with an `@` in its path or in a query parameter's name, a fragment, or no `//` after the scheme is refused | A password holding an unescaped `/`, `?` or `#` still parses, with the password split across host, path, query or fragment where redaction does not look. An `@` in a query parameter's value is a user name a driver reads from the query, and is accepted |
 | Every error from opening a connection has each spelling of each credential taken out | A driver describes the connection string it was given, and its own redaction covers the user information only |
+| A PostgreSQL connection string reaches the driver with each `@` in its query escaped | The driver reads the query the same either way. Its error masks a password by taking the last `@` for the end of the user information, so a bare one in a password parameter leaves the rest of that password in the message |
 | A refusal names the scheme, the host and the kind of fault, and asks for percent-encoding | The parser's own message quotes the text it could not read, which is the URL |
 | The host is named only where one `@`, with no `=` or `&` before it, or none at all, says where it begins, and only when it is shaped like a host | With a second `@`, or one after a query parameter's name, what follows the `@` may be the password |
 | The upgrade rehearsal reads the URL from the environment and hands it to a container through the environment | An argument is readable by every local user and is written to the rehearsal's log |

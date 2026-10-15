@@ -134,7 +134,16 @@ func ParseURL(raw string) (Target, error) {
 func driverDSN(engine Engine, u *url.URL, raw string) (string, error) {
 	switch engine {
 	case Postgres:
-		// pgx accepts the URL as given.
+		// pgx accepts the URL as given, with an "@" in the query escaped. Its
+		// parser reads the query the same either way. Its error masks the
+		// password it finds by taking the last "@" for the end of the
+		// userinfo, so a password parameter holding a bare one is quoted from
+		// that "@" on.
+		if strings.Contains(u.RawQuery, "@") {
+			escaped := *u
+			escaped.RawQuery = strings.ReplaceAll(u.RawQuery, "@", "%40")
+			return escaped.String(), nil
+		}
 		return raw, nil
 
 	case MySQL, MariaDB:
@@ -476,7 +485,8 @@ func secretsOf(u *url.URL) []string {
 		if !redact.Secret(key) {
 			continue
 		}
-		add(value)
+		// The PostgreSQL driver is handed the value with each "@" escaped.
+		add(value, strings.ReplaceAll(value, "@", "%40"))
 		if decoded, err := url.QueryUnescape(value); err == nil {
 			add(decoded)
 		}
