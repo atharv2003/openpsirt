@@ -40,6 +40,9 @@ type Deps struct {
 	DB     *database.DB
 	Queue  *queue.Queue
 	Limits sbom.Limits
+	// VexCeiling is the most statements one VEX document this deployment
+	// writes may carry. Zero is the ceiling a document is built to hold.
+	VexCeiling int
 	// Access resolves the caller. A nil resolver authorizes nothing, the only
 	// safe answer from a process with no way to identify a caller.
 	Access *access.Resolver
@@ -93,6 +96,9 @@ type Deps struct {
 	// none, which is ordinary: attachments are off and everything else
 	// works.
 	Files attach.Storage
+	// Uploads counts the forms this server is reading at once, across every
+	// upload route. One per server, made where the routes are.
+	Uploads *Uploads
 }
 
 // Attachments returns a store over the files this deployment holds, or nothing

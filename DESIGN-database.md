@@ -103,7 +103,7 @@ Engine-specific code is confined to these places:
 | Reading a table's layout beside a measurement | PostgreSQL keeps a table's pages and each column's correlation in catalogs of its own. MySQL and MariaDB report a table's size through the information schema, in bytes of a page size each server sets |
 | Refreshing planner statistics in a deployment | SQLite gathers none unless asked, and the servers keep their own. § SQLite settings has the measurement |
 | A test choosing which engine it runs on | The same act as the row above, written at the call site: `dbtest.Only(t, database.SQLite, …)` says a question has the same answer everywhere and is asked once. Allowed anywhere, because it selects an engine rather than branching a query on one — which is the distinction the whole rule is about |
-| A release's upgrade | Changing an existing table is spelled per engine: PostgreSQL drops or restores a column's refusal of a null where the other two servers restate the column, MySQL and MariaDB drop a foreign key by a word of their own, SQLite rebuilds the table with its foreign keys suspended, and PostgreSQL alone is told to move its identity past rows carried across. The catalog is asked which indexes a table already has |
+| A release's upgrade | Changing an existing table is spelled per engine: PostgreSQL drops or restores a column's refusal of a null where the other two servers restate the column, MySQL and MariaDB drop a foreign key by a word of their own, SQLite rebuilds the table with its foreign keys suspended, and PostgreSQL alone is told to move its identity past rows carried across. The catalog is asked which indexes and which columns a table already has |
 | When PostgreSQL vacuums the finding table | A storage setting of PostgreSQL's alone, and an index-only scan there reads the table for every page changed since the last vacuum. § Indexes has the measurement |
 | Asking each engine what words it reserves | One statement per engine, because each publishes its keywords somewhere of its own and two publish nothing a query can read. It is not a query the application runs: it regenerates the word list the quoting gate reads, and the gate exists because the four engines do not reserve the same words |
 
@@ -446,11 +446,12 @@ row moves. § Indexes says what each index serves.
 Migration 43. It adds the image version table, moves what v0.8.0 stored for
 a container image to an image identified by its name
 (`DESIGN-data-model.md` § Container images), and folds each destination's
-name into the key it is matched under.
+name into the key it is matched under. It stores a claim's reasoning once,
+keys a build's claim on it, and keys a reference on its address as given.
 
 | Step | What it does |
 |---|---|
-| The image version table is made | By v0.9.0's declaration. On MySQL and MariaDB in a transaction of its own, before the rest: both commit a data-definition statement as it runs, so the steps after it would otherwise run a statement at a time and a merge stopped part way would stay part done. The next start steps over the table and runs the rest again whole |
+| The image version table is made | By v0.9.0's declaration. On MySQL and MariaDB in a transaction of its own, as is every step after it: both commit a data-definition statement as it runs, so steps sharing a transaction would run a statement at a time and a merge stopped part way would stay part done. The next start steps over the table, and each later step steps over what a stopped attempt finished |
 | Every build's row is taken | The lock a scan's apply and a run's apply take, so on a server a replica of v0.8.0 still running waits rather than writing a graph part way through the upgrade |
 | Images are found by their package identifier | A component whose identifier is of type `oci` or `docker`. v0.8.0 kept nothing saying the format called a component a container, so one with no identifier is not found, and its next upload stores it by name |
 | Each image's components are grouped by name | The identifier with no version, reduced the way identity reduces it |
@@ -466,6 +467,7 @@ name into the key it is matched under.
 | The findings are read and moved once for every image | Read for the places decisions are keyed on before anything moves, and moved after every image is merged, a batch of components at a time. The finding table is the largest there is and nothing indexes it by component alone, so a pass per image is a scan of it per image |
 | The other components are removed | Nothing points at them any more |
 | Each destination's name is folded | The name becomes its lower-case key and the spelling typed is kept beside it (`DESIGN-notifications.md` § Outbound HTTP). Two names one kind held that fold to one key stay two. One still in use keeps the key before a retired one, then the one already spelled as the key, then the earliest. The other takes the key followed by its own number, and that numbered key is also the name it is listed under, so retiring it by the name shown reaches it. On MySQL and MariaDB in a transaction of its own between the image version table and the merge, which asks whether the column is there before adding it, so a start after one stopped part way folds rather than failing on the column |
+| A patch repository records when its last visit ended | No visit v0.8.0 recorded has an end, so each counts as having held the pass for no time until it is visited again (`DESIGN-findings.md` § Host share) |
 
 The rules an identity, a fold key and a live key are worked out by are copied
 into the migration rather than called, so a later change to the application
@@ -492,6 +494,32 @@ upgrade notes say to give it longer or to run it before deploying.
 Findings a rebuild closed before the upgrade stay closed. They are history: a
 row is closed, never deleted, and joining them would rewrite when each one
 opened.
+
+The claims and references move after the images, in the steps below. On MySQL
+and MariaDB the table and columns are made in one transaction, the rows are moved
+in a second, and the copies are removed in a third. Each steps over what a
+stopped attempt already did.
+
+| Step | What it does |
+|---|---|
+| The statement text table is made, and `suppression` and `vex_statement` gain the reference to it | By v0.9.0's declarations. A column added holds a null and is added where the table stands, on SQLite too. A table already holding the column is stepped over |
+| Each piece of reasoning is stored once | Every build claim and supplier statement giving reasoning points at the one copy of its words, cut the way v0.9.0 cuts them. Read a page of rows at a time, by identifier: the copies being removed are what made these tables large |
+| Every build claim is keyed again | On its reasoning beside what it says, with the issue's identifier and the justification cut as v0.9.0 writes them, and for a claim taken from a published statement the version it repeats from that statement. Only a row whose key or a value it is worked out from moves is written |
+| A supplier statement's justification and the versions it names are cut to their columns' width | As v0.9.0 writes them. SQLite held them at any length, and a claim taken from a statement is keyed on them, so one cut on the claim and whole on the statement would close and reopen on the first scan |
+| Every reference is keyed on its address as given | v0.8.0 keyed it on the address in capitals, cut to an index key's width. No two keys of one issue collide on the way: two references v0.8.0 held apart differ in capitals or past the cut, and so differ as given |
+| The copy each claim row carried is removed | SQLite rebuilds both tables from their declarations; the others drop the column. A table whose column is already gone is stepped over, and so is the move above |
+
+| Rule | |
+|---|---|
+| A claim's reference to its reasoning has no foreign key | Stored reasoning is never deleted, so the reference cannot dangle |
+| The ways reasoning is cut and each key is worked out are copied into the migration | The same reason as the image merge's copies |
+
+| Check, on each of the four engines | What it holds |
+|---|---|
+| A v0.8.0 build with claims sharing one explanation, a claim giving none, a claim whose identifier is longer than an indexed name, two supplier statements giving the first explanation, and two references | Upgraded, each explanation is stored once and every row giving it points at that copy, the first scan restating every claim writes nothing, each reference is keyed on its address as given, and each declaration describes the table the migrations built |
+| The same on SQLite, with a statement whose justification and version are longer than an indexed name, and a claim taken from it | The statement and the claim hold the same justification and version, each cut to the width |
+| The same on MySQL and MariaDB, the rows' move stopped part way | The next start steps over the table and columns already made and leaves what an upgrade that did not stop leaves |
+| The same on MySQL and MariaDB, stopped between the two removals, and after both | The next start moves and removes only what remains, and leaves what an upgrade that did not stop leaves |
 
 ### Release records
 
@@ -793,14 +821,15 @@ would report it on the day one starts.
 | MariaDB | a thousand rounds, returning what it has, with a warning | `max_recursive_iterations` of a million |
 | PostgreSQL, SQLite | nothing | nothing |
 
-The walks down a build's graph carry no depth, so their rounds are the length of
-the longest chain in the build, and a chain past a thousand is a legal document.
+Every walk of a build's graph carries no depth, down or up, so its rounds are
+the length of the longest chain in the build, and a chain past a thousand is a
+legal document.
 Short of the setting, MySQL fails the count beneath the tree's root and MariaDB
 answers it short without saying so. A walk adds a component once, so no walk
 takes more rounds than a build has components, which a million is past. Set on
 the connection, named per engine because each refuses the other's name, and left
-alone where the database URL sets it. A test walks a chain of 1,100 on all four,
-and fails on those two without the setting.
+alone where the database URL sets it. A test walks a chain of 1,100 down and up
+on all four, and fails on those two without the setting.
 
 ## Absence and failure
 
@@ -1181,14 +1210,15 @@ A cut is made on a character boundary, never at a byte offset.
 | Rule | Reason |
 |---|---|
 | A value shortened to fit a width is cut between characters | A byte offset lands inside a multi-byte character about two times in three, and what is left is not valid UTF-8 |
-| The write is refused by three engines of four | PostgreSQL refuses invalid UTF-8 outright, MySQL and MariaDB refuse it in strict mode, and SQLite stores it — which is the engine the quick loop runs |
+| The query builder writes text as valid UTF-8 | It writes every value into the statement text, character by character: an invalid byte becomes U+FFFD and a NUL is dropped. A cut inside a character is stored with a replacement character where its last character was |
+| Text another program wrote is stored however it is encoded | A scanner's standard error and git's account of what a remote said carry whatever bytes they carry. Each engine refuses an invalid byte or a NUL handed to it as a parameter — PostgreSQL always, MySQL and MariaDB in strict mode — and none is handed one, because the builder sends none |
 | The two directions are separate operations | Keeping the head leaves the partial character at the end and keeping the tail leaves it at the front, so one of them trims backward and the other forward |
 | Both live in one place | Every site wrote its own slice, and the ones that were correct were written by people who had already been bitten. The cut is one fact, so it is written once and called |
 
-What it costs where it is missing is the failure that reports nothing: the
-value being shortened is usually a message saying why something else failed, so
-the refused write is the one recording a failure, and the operator is left with
-neither.
+A test on each of the four engines ends a scan run with a failure, a caution
+and versions carrying invalid bytes and a NUL, and records a patch repository's
+failure quoting a remote error in invalid bytes: each is stored, valid, with
+the text around the bytes kept, and the repository waits its day.
 
 A lookup key is cut in characters, which is how its column is declared; a
 value bounded for a byte budget is cut in bytes. Both cut on a character

@@ -190,7 +190,7 @@ func NewStore(db *bun.DB) *Store {
 }
 
 // NewStoreCarrying returns a store whose documents carry at most most
-// statements, for a test that wants the refusal rather than the document.
+// statements. Zero or less is the ceiling a document is built to hold.
 func NewStoreCarrying(db *bun.DB, most int) *Store {
 	s := NewStore(db)
 	s.most = most
@@ -796,13 +796,14 @@ func (s *Store) disclaimed(ctx context.Context, targetID int64,
 	if err := s.db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
 		Join(`JOIN "vex_statement" AS "ss" ON ss.id = f.stated_by`).
+		Join(finding.WordsJoin("ss")).
 		ColumnExpr(`f.id AS "id"`).
 		ColumnExpr(`f.closed_at AS "closed_at"`).
 		ColumnExpr(`ss.publisher AS "publisher"`).
 		ColumnExpr(`COALESCE(ss.within, ss.component) AS "product"`).
 		ColumnExpr(`COALESCE(ss.within_about, ss.about) AS "version"`).
 		ColumnExpr(`COALESCE(ss.justification, '') AS "justification"`).
-		ColumnExpr(`COALESCE(ss.statement, '') AS "statement"`).
+		ColumnExpr(finding.WordsColumn+` AS "statement"`).
 		ColumnExpr(`ss.document AS "document"`).
 		Where(where, args...).
 		Scan(ctx, &read); err != nil {

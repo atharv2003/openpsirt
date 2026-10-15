@@ -323,6 +323,10 @@ else, so a kernel CVE whose upstream record lists eight `git.kernel.org` commits
 showed one tracker link and no patches. References from every identifier an
 issue answers to are kept, deduplicated against the matched record's own.
 
+| Rule | |
+|---|---|
+| Two references are one where their addresses are the same as given, apart from surrounding space | An address is case-sensitive past its host, and two patch links commonly agree for longer than an index key is wide. The key is a digest of the whole address |
+
 ## Index responses
 
 A bare name is not enough for a dependency of a dependency. Where an ecosystem
@@ -443,18 +447,38 @@ as each finishes, and sleeps once none has a commit due.
 
 | Order | Reason |
 |---|---|
+| A repository whose host has not had its share of the pass, before any whose host has | § Host share |
 | A repository whose copy is on this disk and that has commits never looked up | Bringing a held copy up to date is a small fetch, and every lookup after it costs a fraction of a second |
 | Then the one holding the most urgent commit never looked up | Urgency is the worst rating among the issues linking to the commit, then the score behind it |
 | Then the most urgent commit due again | A commit is due again a week after it was looked up |
 | Never a host an administrator excluded, and not for a day after a failed visit | A host having a bad hour and a repository that is gone look the same from here. The host is read from the stored address, which is kept whole, rather than from the host column, which is cut to the width of a name and can lose the suffix an exclusion names |
+
+### Host share
+
+A host's share of the pass is three hours of visits in the last day: as long as
+one fetch may take. The links a pass follows come from the scanner's vulnerability
+data, whose references anybody publishing an advisory writes, and a repository
+that answers slowly holds the one pass for as long as a fetch is allowed.
+
+| Rule | Reason |
+|---|---|
+| A visit's time is from when it began to when it ended, however it ended | A visit that fails at the fetch limit held the pass for the whole of it |
+| A host's time is the sum over its repositories' last visits that ended within the day | A repository records its last visit and no other. The links that claim the pass are many repositories each visited once, which this counts |
+| A host past its share is planned after every host that is not | Its repositories wait while any other host has a commit due, and are taken whenever none has |
+| Among hosts past their share, the one that has had least goes first | Two slow hosts share what is left between them |
+| Within those, the order above is unchanged | Urgency still decides between repositories on one host |
+| No host is exempt by name | A host serving many linked repositories, github.com among them, is held to the same share and visited as often as the pass has nothing else due |
+
+The report's positions are worked out by the same rule, from the same rows,
+so any replica answers them.
 
 A visit fetches the repository's branches, writes git's commit-graph index,
 and looks up every due commit in it, most urgent first.
 
 | How a visit ends | Recorded |
 |---|---|
-| Every due commit looked up | The moment it finished and the size of the copy |
-| The repository could not be fetched or read | What stopped it, in the repository's own words. Retried a day after the visit began |
+| Every due commit looked up | The moment it finished, as reached and as ended, and the size of the copy |
+| The repository could not be fetched or read | What stopped it, in the repository's own words, and the moment it ended. Retried a day after the visit began |
 | The lease was lost, or the process is shutting down | Nothing. The repository is left as it was before the visit began, a failure from an earlier visit included |
 | This deployment failed: the database or the lease | Nothing, and the failure is logged. A dropped connection is not the repository's fault, and recorded as one it would put the repository out of reach for a day |
 
@@ -1114,6 +1138,15 @@ A statement naming several packages becomes several claims, one per subject.
 Claims are held over intervals, so re-sending them writes nothing; withdrawing
 one closes it rather than deleting it, because what a release argued is a
 question asked years later.
+
+| Stored claim | |
+|---|---|
+| A statement's reasoning is stored once, and each of its claims points at it | One statement naming five thousand components gives one explanation five thousand times. Two documents giving the same words share the copy. Every reader of a claim's words joins them: a finding's claim, the carried patches, the disposition register and the VEX document |
+| The reasoning is cut to the bound a markdown field typed here is held to, and kept | One over-long explanation is no reason to refuse the scan or the document carrying it. The cut lands on a character. A NUL is dropped and invalid UTF-8 replaced before the words are keyed, which is what the query builder does on the way to the engine, so the words keyed are the words stored |
+| The issue's identifier and the justification are cut to an indexed name's width | Every claim of a statement repeats them |
+
+A supplier's statement is stored the same way (`DESIGN-triage.md` § Evidence
+from publishers).
 
 A covered finding is kept, never dropped. This is why claims are applied here
 rather than upstream: a finding that never arrived is indistinguishable from a
@@ -1843,6 +1876,7 @@ question next year should find the answer rather than the question.
 
 | Limit | Detail |
 |---|---|
+| A host's share bounds time, not disk | One arriving copy may grow to the whole quota and remove every other copy to make room. The share stops a host taking the pass again within the day; the copies it removed are fetched again as their commits fall due |
 | Incomplete upgrades are stated as inequality, not ordering | Saying that a version moved and is still not the one that fixes it needs no comparison, and the fixed-in field is free text and is sometimes a list. An ordering exists per ecosystem and refuses the rest — `DESIGN-remediation.md` § Version ordering holds it — and it ranks a set of candidates rather than deciding what a finding says |
 | The inverse is not detected | A component at or past the named fix while the scanner still reports the issue means the scanner and the fix data disagree. Deciding that needs an ordering for the ecosystem in hand, which exists for some of them, so it is not asked at all rather than asked where it happens to be answerable |
 | A component nothing leads to still has a place — itself | It ships, and an incomplete graph is normal |

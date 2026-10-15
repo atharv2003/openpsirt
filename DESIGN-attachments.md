@@ -188,6 +188,7 @@ size limit. A log or an archive is not an inline image and is redirected.
 |---|---|
 | Content type | Chosen by this deployment, never the uploaded one |
 | Disposition | `Content-Disposition: attachment` |
+| File name | The uploaded name without its directory, control characters or format characters, quotes, backslashes and slashes replaced, cut to 120 bytes. A right-to-left override before `fdp.exe` shows a program as a document |
 | Inline display | A small allowlist of raster image types only. A vector image is a document with a scripting engine |
 
 The signed URL carries these as response overrides rather than whatever was
@@ -202,6 +203,14 @@ stored, so both survive the redirect.
 | Never deleted while anything references it | Removal is an explicit administrative redaction, recorded, leaving the reference and a tombstone |
 | Unattached uploads are reaped | A file attached to an abandoned form is bytes nothing will ever reach |
 | One object per attachment, never content-addressed | Deduplicating by digest would let a redaction blank a file somebody else relies on. The digest is kept beside the row, so a redaction can state what it removed once the bytes are gone |
+
+The request is admitted before its form is read. The person is authorized to
+attach to the issue or the report, in the words the handler refuses in, and the
+request is bounded at the maximum file size plus a megabyte for the form around
+the file. A request declaring more is refused unread, and one that does not
+declare its length is cut off at the bound. An upload takes a place among the
+uploads one server reads at once, which `DESIGN-ingest.md` § Request handling
+describes.
 
 Both bounds are checked twice: before anything is carried, so an upload that
 cannot be kept is refused rather than transferred and discarded; and inside the

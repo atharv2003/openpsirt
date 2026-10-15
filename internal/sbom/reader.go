@@ -6,8 +6,8 @@ package sbom
 import (
 	"io"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/nexthop-ai/openpsirt/internal/bound"
 	"github.com/nexthop-ai/openpsirt/internal/graph"
 	"github.com/nexthop-ai/openpsirt/internal/refusal"
 )
@@ -151,6 +151,15 @@ type reader struct {
 	// third states it as an element, and there can be more than one because
 	// a document may carry an inventory element beside its own.
 	spdx3DocumentRefs map[string]bool
+	// spdx3Documents are the document elements as they were read. A file
+	// that inlines a document it imported carries that document's element
+	// too, and which one is the file's own is settled once every element is
+	// in hand.
+	spdx3Documents []spdx3Element
+	// spdx3Sboms are the inventory elements as they were read, settled with
+	// the documents: an inventory element an imported document carries names
+	// that document's roots.
+	spdx3Sboms []spdx3Element
 	// spdx3Describes are the describes relationships as they were read, kept
 	// until the walk is over. Which element is the document is itself stated
 	// by an element, in no fixed position, so whether a relationship came
@@ -575,6 +584,19 @@ func (c *reader) resolveUpstream() {
 	}
 }
 
+// printable drops the control characters from what identifies a component:
+// its name, its version, its identifiers and what it was built from. Dropped
+// before the component is checked, so a name of nothing else is a component
+// with no name.
+func printable(d *graph.Described) {
+	d.Name = graph.Printable(d.Name)
+	d.Version = graph.Printable(d.Version)
+	d.Purl = graph.Printable(d.Purl)
+	d.CPE = graph.Printable(d.CPE)
+	d.UpstreamName = graph.Printable(d.UpstreamName)
+	d.UpstreamVersion = graph.Printable(d.UpstreamVersion)
+}
+
 // into reads one string into dst.
 func (c *reader) into(dst *string) error {
 	value, err := c.b.str()
@@ -590,10 +612,13 @@ func (c *reader) into(dst *string) error {
 // Everything in a scan file was written by somebody else, and an error is one
 // of the few places it reaches a person. A name the length of the file would
 // make a log unreadable and a response unbounded.
+//
+// The cut walks the first characters of the string and no further: a field the
+// size of the upload is quoted from without being copied.
 func trim(s string) string {
 	const most = 120
-	if utf8.RuneCountInString(s) <= most {
-		return s
+	if cut := bound.HeadRunes(s, most); len(cut) < len(s) {
+		return cut + "…"
 	}
-	return string([]rune(s)[:most]) + "…"
+	return s
 }

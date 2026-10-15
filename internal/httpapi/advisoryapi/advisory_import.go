@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/nexthop-ai/openpsirt/internal/attach"
 	"github.com/nexthop-ai/openpsirt/internal/catalog"
 	"github.com/nexthop-ai/openpsirt/internal/finding"
 	"github.com/nexthop-ai/openpsirt/internal/httpapi/core"
@@ -57,7 +59,9 @@ func registerAdvisoryImport(api huma.API, in core.Deps) {
 			"readable. It is matched on the name the publisher gave it, so everything else " +
 			"that publisher has issued stays standing — which is the difference from a VEX " +
 			"document, where a publisher's whole statement set is replaced at once.\n\n" +
-			"A VEX document is refused here and taken by the VEX endpoint instead.",
+			"A VEX document is refused here and taken by the VEX endpoint instead." +
+			"\n\nAnswers 503 with `Retry-After` when the deployment is already reading as many " +
+			"uploads as it takes at once; send again after that many seconds.",
 		Tags: []string{"Ingest"}, DefaultStatus: http.StatusCreated,
 		// A published document is somebody else's output arriving over a link
 		// we do not control, exactly as a scan file is, and this is the first
@@ -65,7 +69,8 @@ func registerAdvisoryImport(api huma.API, in core.Deps) {
 		// it is not consulted for multipart at all — so the whole body is
 		// spooled to disk before any of this endpoint's own checks run.
 		MaxBodyBytes: core.MaxUpload(in.Limits),
-		Middlewares:  huma.Middlewares{core.BoundedForm(api, core.MaxUpload(in.Limits))},
+		Middlewares: huma.Middlewares{core.BoundedForm(api, in,
+			core.Admission{Limit: core.Fixed(core.MaxUpload(in.Limits))})},
 	}, core.DeploymentWide, ""), func(ctx context.Context, input *struct {
 		Product string `path:"product"`
 		RawBody huma.MultipartFormFiles[advisoryParts]
@@ -104,7 +109,11 @@ func registerAdvisoryImport(api huma.API, in core.Deps) {
 		//
 		// Taken from the document rather than from the request, because a
 		// security advisory names its publisher and its own identifier and is
-		// not a conforming advisory without them.
+		// not a conforming advisory without them. Both are shown wherever the
+		// evidence is, so they are held without the characters that reorder
+		// or hide text.
+		advisory.Publisher = strings.TrimSpace(attach.Visible(advisory.Publisher))
+		advisory.Identifier = strings.TrimSpace(attach.Visible(advisory.Identifier))
 		if utf8.RuneCountInString(advisory.Publisher) > finding.MostPublisher {
 			return nil, huma.Error422UnprocessableEntity(fmt.Sprintf(
 				"who published it is longer than the %d characters this records",
@@ -120,7 +129,7 @@ func registerAdvisoryImport(api huma.API, in core.Deps) {
 			Source:     finding.FromAdvisory,
 			Identifier: advisory.Identifier,
 			Publisher:  advisory.Publisher,
-			Document:   file.Filename,
+			Document:   documentName(file.Filename),
 			Digest:     digest,
 		}, advisory.Claims, "Advisory "+advisory.Identifier+" from "+advisory.Publisher)
 		if err != nil {

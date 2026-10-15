@@ -2967,7 +2967,7 @@ export interface paths {
          *
          *     The content type is decided here from the bytes and is never the one that was uploaded. Everything outside a small allowlist of raster images is served as an attachment download whatever it is.
          *
-         *     Refused when the file is larger than this deployment accepts, when it has no room left, or when it would take you past your own share of the store; all three limits are settings. A deployment that has configured no store holds no attachments and says so.
+         *     Refused when the file is larger than this deployment accepts, when it has no room left, or when it would take you past your own share of the store; all three limits are settings. A deployment that has configured no store holds no attachments and says so. Answers 503 with `Retry-After` when the deployment is already reading as many uploads as it takes at once.
          *
          *     An upload nothing refers to is removed after a day, so a file attached and then abandoned does not accumulate. Send `evidence=true` where the file hangs off the issue itself — a test case that proves the flaw — rather than off text you are about to write: it is then listed at once and never swept, because the issue is what points at it.
          *
@@ -3685,7 +3685,7 @@ export interface paths {
          *
          *     The content type is decided here from the bytes and is never the one that was uploaded. Everything outside a small allowlist of raster images is served as an attachment download whatever it is.
          *
-         *     Refused when the file is larger than this deployment accepts, when it has no room left, or when it would take you past your own share of the store; all three limits are settings.
+         *     Refused when the file is larger than this deployment accepts, when it has no room left, or when it would take you past your own share of the store; all three limits are settings. Answers 503 with `Retry-After` when the deployment is already reading as many uploads as it takes at once.
          *
          *     Requires: private-triage on the product
          */
@@ -4689,6 +4689,8 @@ export interface paths {
          *
          *     Returns 202 before the documents are parsed. A success here means they were accepted for processing, not that they were valid. Poll `GET .../scans` to find out whether they parsed and what the scan found.
          *
+         *     Answers 503 with `Retry-After` when the deployment is already reading as many uploads as it takes at once; send again after that many seconds.
+         *
          *     Requires: public-triage or private-triage on the product. A pipeline key covering this product, branch and variant sends without any of these, and is how a build sends.
          */
         post: operations["upload-scan"];
@@ -4865,6 +4867,8 @@ export interface paths {
          *
          *     A VEX document is refused here and taken by the VEX endpoint instead.
          *
+         *     Answers 503 with `Retry-After` when the deployment is already reading as many uploads as it takes at once; send again after that many seconds.
+         *
          *     Requires: administrator
          */
         post: operations["upload-supplier-advisory"];
@@ -5014,6 +5018,8 @@ export interface paths {
          *     OpenVEX and CSAF-VEX both read. The two say the same thing in different shapes — one puts the status on a statement, the other in which list a product identifier appears in — and both become the same claim here, because what a publisher is saying does not depend on which file they wrote it in. Which of the two a document is decides itself; anything else is refused with a sentence rather than half-read.
          *
          *     A CSAF security advisory is refused here and taken by the supplier-advisory endpoint instead. It is a document about somebody's own flaws, one per issue, and what a later upload of it replaces is the advisory of the same name rather than everything that publisher has said.
+         *
+         *     Answers 503 with `Retry-After` when the deployment is already reading as many uploads as it takes at once; send again after that many seconds.
          *
          *     Requires: administrator
          */

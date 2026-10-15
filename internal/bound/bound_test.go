@@ -11,9 +11,8 @@ import (
 
 func TestACutInsideACharacterLeavesValidText(t *testing.T) {
 	// The euro sign is three bytes, so a bound that is not a multiple of
-	// three falls inside one. What survives has to be something an engine
-	// will store: PostgreSQL refuses invalid UTF-8 and so do MySQL and
-	// MariaDB in strict mode.
+	// three falls inside one. What survives is valid text, so it is stored as
+	// it is rather than with a replacement character where the cut fell.
 	text := strings.Repeat("€", 10)
 	for most := 1; most <= len(text); most++ {
 		head := Head(text, most)
@@ -97,5 +96,30 @@ func TestABadByteEarlyOnDoesNotSwallowWhatFollowsIt(t *testing.T) {
 	split := "\xff" + strings.Repeat("a", 47) + "€"
 	if got := Head(split, 50); got != split[:48] {
 		t.Fatalf("the split character was not cut: %q", got)
+	}
+}
+
+func TestACutInsideAFourByteCharacterLeavesValidText(t *testing.T) {
+	// A four-byte character leaves three of its bytes behind a cut, which
+	// is the furthest the trim goes back.
+	text := strings.Repeat("😀", 10)
+	for most := 1; most <= len(text); most++ {
+		head := Head(text, most)
+		if !utf8.ValidString(head) || len(head) != most/4*4 {
+			t.Fatalf("Head(%d) = %q", most, head)
+		}
+		tail := Tail(text, most)
+		if !utf8.ValidString(tail) || len(tail) != most/4*4 {
+			t.Fatalf("Tail(%d) = %q", most, tail)
+		}
+	}
+}
+
+func TestACharacterBoundOfNoneKeepsNothing(t *testing.T) {
+	if got := HeadRunes("abc", 0); got != "" {
+		t.Fatalf("HeadRunes = %q", got)
+	}
+	if got := HeadRunes("abc", -1); got != "" {
+		t.Fatalf("HeadRunes = %q", got)
 	}
 }

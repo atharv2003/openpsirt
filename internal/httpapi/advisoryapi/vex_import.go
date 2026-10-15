@@ -17,6 +17,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/nexthop-ai/openpsirt/internal/access"
+	"github.com/nexthop-ai/openpsirt/internal/attach"
 	"github.com/nexthop-ai/openpsirt/internal/catalog"
 	"github.com/nexthop-ai/openpsirt/internal/finding"
 	"github.com/nexthop-ai/openpsirt/internal/httpapi/core"
@@ -70,6 +71,10 @@ func (c *counting) Read(p []byte) (int, error) {
 // Read one byte past the limit, so a document over it is refused as too large
 // rather than cut off and reported as malformed — and so the digest recorded
 // is over what arrived rather than over the part that fitted.
+//
+// The parser reads to the end of the file: whitespace after the document is
+// read and anything else is refused. So a document it takes has passed
+// through the digest whole.
 func uploaded(in core.Deps, file huma.FormFile, read func(io.Reader) error) (string, error) {
 	most := in.Limits.OrDefault().MaxBytes
 	digest := sha256.New()
@@ -83,23 +88,6 @@ func uploaded(in core.Deps, file huma.FormFile, read func(io.Reader) error) (str
 	}
 	if err != nil {
 		return "", core.Asked(in.Logger, err)
-	}
-	// Whatever the parser left, read past the digest exactly once. The digest
-	// is the whole document by definition, and a reader that answered early
-	// would otherwise record a hash of the part it read.
-	//
-	// Drained into nothing, because the reader above already tees into the
-	// digest: copying into it here hashes every drained byte a second time, so
-	// a document with anything after the closing brace — a trailing newline is
-	// enough — records a digest that is not the document's, and the digest is
-	// what says whether a publisher has revised what an approval was granted
-	// against.
-	if _, err := io.Copy(io.Discard, counted); err != nil {
-		return "", huma.Error400BadRequest("that document could not be read")
-	}
-	if counted.n > most {
-		return "", huma.Error413RequestEntityTooLarge(fmt.Sprintf(
-			"that document is larger than the %d bytes this deployment reads", most))
 	}
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
@@ -130,7 +118,9 @@ func registerVexImport(api huma.API, in core.Deps) {
 			"A CSAF security advisory is refused here and taken by the supplier-advisory " +
 			"endpoint instead. It is a document about somebody's own flaws, one per issue, " +
 			"and what a later upload of it replaces is the advisory of the same name rather " +
-			"than everything that publisher has said.",
+			"than everything that publisher has said." +
+			"\n\nAnswers 503 with `Retry-After` when the deployment is already reading as many " +
+			"uploads as it takes at once; send again after that many seconds.",
 		Tags: []string{"Ingest"}, DefaultStatus: http.StatusCreated,
 		// A published document is somebody else's output arriving over a link
 		// we do not control, exactly as a scan file is, and this is the first
@@ -138,7 +128,8 @@ func registerVexImport(api huma.API, in core.Deps) {
 		// it is not consulted for multipart at all — so the whole body is
 		// spooled to disk before any of this endpoint's own checks run.
 		MaxBodyBytes: core.MaxUpload(in.Limits),
-		Middlewares:  huma.Middlewares{core.BoundedForm(api, core.MaxUpload(in.Limits))},
+		Middlewares: huma.Middlewares{core.BoundedForm(api, in,
+			core.Admission{Limit: core.Fixed(core.MaxUpload(in.Limits))})},
 	}, core.DeploymentWide, ""), func(ctx context.Context, input *struct {
 		Product   string `path:"product"`
 		Publisher string `query:"publisher" maxLength:"191" doc:"The publisher, where the document does not name itself. At most 191 characters"`
@@ -179,9 +170,12 @@ func registerVexImport(api huma.API, in core.Deps) {
 		// The fallback is the name the client gave the file it uploaded, so
 		// the bound has to hold there too — that is the path with nothing
 		// else guarding it.
-		publisher := strings.TrimSpace(input.Publisher)
+		//
+		// Either way it is shown wherever the evidence is, so it is held
+		// without the characters that reorder or hide text.
+		publisher := strings.TrimSpace(attach.Visible(input.Publisher))
 		if publisher == "" {
-			publisher = strings.TrimSpace(file.Filename)
+			publisher = strings.TrimSpace(attach.Visible(file.Filename))
 		}
 		if utf8.RuneCountInString(publisher) > finding.MostPublisher {
 			return nil, huma.Error422UnprocessableEntity(fmt.Sprintf(
@@ -191,7 +185,7 @@ func registerVexImport(api huma.API, in core.Deps) {
 		recorded, superseded, err := recordSupplied(ctx, in, by, product.ID, finding.Supplied{
 			Source:    finding.FromVex,
 			Publisher: publisher,
-			Document:  file.Filename,
+			Document:  documentName(file.Filename),
 			Digest:    digest,
 		}, said, "VEX statements from "+publisher)
 		if err != nil {
@@ -242,4 +236,14 @@ func recordSupplied(ctx context.Context, in core.Deps, by access.Subject, produc
 		return 0, 0, err
 	}
 	return recorded, superseded, nil
+}
+
+// documentName is the file name a document is recorded under: the client's,
+// made safe and bounded the way an attachment's is, and empty where the client
+// gave none. It is stored on every statement the document makes.
+func documentName(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return ""
+	}
+	return attach.SafeName(name)
 }

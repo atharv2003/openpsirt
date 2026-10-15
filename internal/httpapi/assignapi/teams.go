@@ -6,6 +6,7 @@ package assignapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -29,9 +30,9 @@ type TeamBody struct {
 
 // TeamRecordBody declares a team, and optionally who is on it.
 type TeamRecordBody struct {
-	Name        string   `json:"name" minLength:"1" doc:"The team's name"`
-	DisplayName string   `json:"display_name,omitempty" doc:"The display spelling. Defaults to the name"`
-	Members     []string `json:"members,omitempty" doc:"The members, by sign-in identity. Everybody named must already have been recorded"`
+	Name        string   `json:"name" minLength:"1" maxLength:"191" doc:"The team's name"`
+	DisplayName string   `json:"display_name,omitempty" maxLength:"191" doc:"The display spelling. Defaults to the name"`
+	Members     []string `json:"members,omitempty" maxItems:"500" doc:"The members, by sign-in identity. Everybody named must already have been recorded"`
 }
 
 func registerTeams(api huma.API, a core.Administering) {
@@ -140,6 +141,10 @@ func registerTeams(api huma.API, a core.Administering) {
 					nil, trail.Said("declared", true)); err != nil {
 					return core.NotRecorded(a.Logger, err)
 				}
+			}
+			if len(in.Body.Members) > access.MostTeamMembers {
+				return huma.Error422UnprocessableEntity(fmt.Sprintf(
+					"a team is declared with at most %d members at once", access.MostTeamMembers))
 			}
 			for _, identity := range in.Body.Members {
 				person, err := store.ByIdentity(ctx, identity)

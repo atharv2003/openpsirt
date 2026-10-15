@@ -4,6 +4,7 @@
 package sbom
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/nexthop-ai/openpsirt/internal/graph"
@@ -119,6 +120,10 @@ type spdx3Element struct {
 	// written in place rather than referred to.
 	createdInline string
 
+	// imports are the identifiers a document names as brought in from
+	// another document.
+	imports []string
+
 	// A relationship's own fields.
 	from  string
 	to    []string
@@ -230,6 +235,8 @@ func (c *reader) spdx3Element() (spdx3Element, error) {
 				e.rootElements = append(e.rootElements, ref)
 				return nil
 			})
+		case "import":
+			return c.spdx3Imports(&e)
 		case "from":
 			return c.into(&e.from)
 		case "relationshipType":
@@ -253,6 +260,109 @@ func (c *reader) spdx3Element() (spdx3Element, error) {
 		}
 	})
 	return e, err
+}
+
+// spdx3Imports reads the identifiers a document states it brought in from
+// another, each charged against the component bound as a root element is.
+func (c *reader) spdx3Imports(e *spdx3Element) error {
+	return c.b.array(func() error {
+		if err := c.count(); err != nil {
+			return err
+		}
+		return c.b.object(func(key string) error {
+			if key != "externalSpdxId" {
+				return c.b.skip()
+			}
+			var ref string
+			if err := c.into(&ref); err != nil {
+				return err
+			}
+			e.imports = append(e.imports, ref)
+			return nil
+		})
+	})
+}
+
+// spdx3Document settles which document element is the file's own, and takes
+// its identifier, its creation information and its roots.
+//
+// One element is the file's own. Where a file inlines a document it imported,
+// the file's own is the one naming the other in its imports, and the
+// imported one is named by it: its time does not move between builds and its
+// roots are another product's. Several elements none of which is left as the
+// only unnamed one leave the document unsettled, and the file is refused
+// rather than read as whichever came last. An inventory element the imported
+// document carries is set aside with it.
+func (c *reader) spdx3Document() error {
+	if len(c.spdx3Documents) == 0 {
+		for _, one := range c.spdx3Sboms {
+			c.spdx3Inventory(one)
+		}
+		return nil
+	}
+	named := map[string]bool{}
+	for _, one := range c.spdx3Documents {
+		for _, ref := range one.imports {
+			named[ref] = true
+		}
+	}
+	var own []spdx3Element
+	for _, one := range c.spdx3Documents {
+		if !named[one.id] {
+			own = append(own, one)
+		}
+	}
+	if len(own) != 1 {
+		return refusal.Errorf("scan file states %d SpdxDocument elements, and their imports "+
+			"do not settle which one is this document", len(c.spdx3Documents))
+	}
+	e := own[0]
+	c.doc.Serial = e.id
+	c.spdx3DocumentCreation = e.creationInfo
+	c.spdx3DocumentCreated = e.createdInline
+	c.spdx3DocumentRefs[e.id] = true
+	if !c.headerOnly {
+		c.rootRefs = append(c.rootRefs, e.rootElements...)
+	}
+
+	// An inventory element is an imported document's where an import names
+	// it, where an imported document names it as a root, or where every root
+	// it names is an imported document's root and none is this document's.
+	theirs, ours := map[string]bool{}, map[string]bool{}
+	for _, ref := range e.rootElements {
+		ours[ref] = true
+	}
+	for _, one := range c.spdx3Documents {
+		if one.id == e.id {
+			continue
+		}
+		for _, ref := range one.rootElements {
+			if !ours[ref] {
+				theirs[ref] = true
+			}
+		}
+	}
+	for _, one := range c.spdx3Sboms {
+		if named[one.id] || theirs[one.id] {
+			continue
+		}
+		if len(one.rootElements) > 0 && !slices.ContainsFunc(one.rootElements, func(ref string) bool {
+			return !theirs[ref]
+		}) {
+			continue
+		}
+		c.spdx3Inventory(one)
+	}
+	return nil
+}
+
+// spdx3Inventory takes an inventory element as this document's: its roots are
+// the build's, and a relationship it states can name them.
+func (c *reader) spdx3Inventory(e spdx3Element) {
+	c.spdx3DocumentRefs[e.id] = true
+	if !c.headerOnly {
+		c.rootRefs = append(c.rootRefs, e.rootElements...)
+	}
 }
 
 // spdx3ExternalIdentifiers reads the identifiers an element carries beside its
@@ -293,21 +403,10 @@ func (c *reader) spdx3Record(e spdx3Element) error {
 	case spdx3Creation:
 		return c.spdx3Created(e)
 	case spdx3Document:
-		c.doc.Serial = e.id
-		c.spdx3DocumentCreation = e.creationInfo
-		c.spdx3DocumentCreated = e.createdInline
-		c.spdx3DocumentRefs[e.id] = true
-		if c.headerOnly {
-			return nil
-		}
-		c.rootRefs = append(c.rootRefs, e.rootElements...)
+		c.spdx3Documents = append(c.spdx3Documents, e)
 		return nil
 	case spdx3Sbom:
-		c.spdx3DocumentRefs[e.id] = true
-		if c.headerOnly {
-			return nil
-		}
-		c.rootRefs = append(c.rootRefs, e.rootElements...)
+		c.spdx3Sboms = append(c.spdx3Sboms, e)
 		return nil
 	case spdx3File:
 		if err := c.refile(); err != nil {
@@ -405,6 +504,7 @@ func (c *reader) spdx3Package(e spdx3Element) error {
 		// name (IsImage).
 		Container: e.purpose == "container",
 	}
+	printable(&described)
 	if err := described.Valid(); err != nil {
 		return refusal.Errorf("%w, so it cannot be tracked", err)
 	}

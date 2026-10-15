@@ -112,6 +112,7 @@ refuse it.
 
 | Order | Step | Placement reason |
 |---|---|---|
+| 0 | Admission, before the form is read | The form streams to a temporary file as it is read, so the sender is authorized for the target, a declared length past the request bound is refused, and a place is held among the uploads this server reads at once, all before the first byte of it. Step 1 is asked again by the handler, which is the second statement of the rule rather than the only one |
 | 1 | Is the target declared, and may this sender file against it? | One query, naming which of product, stream or variant is missing. First, because how far behind the deployment is is not something an unauthorized sender may measure |
 | 2 | Is the backlog too deep? | The cheapest refusal once the sender is known. Deciding afterwards means storing tens of megabytes and discarding them, on a deployment already behind |
 | 3 | What does the inventory say about itself, and what does the submission hash to? | One pass over the inventory answers what it says about itself and hashes it; the claim documents are hashed beside it. Every hash covers the bytes that arrived, not a value the sender supplied |
@@ -124,7 +125,8 @@ refuse it.
 | Bad request | The build time is ahead of this deployment's clock |
 | Conflict | Something newer, or something with the same build time, is already held |
 | Unprocessable | The inventory could not be read at all |
-| Service unavailable | Too much is already waiting to be read |
+| Payload too large | The request is larger than twice the document bound, refused unread where it declares its length |
+| Service unavailable | Too much is already waiting to be read, or this server is already reading as many uploads as `upload.max-concurrent` allows. The second carries a time to retry after |
 
 Already held is a success, because the ordinary case is a retry after a timeout
 that had in fact succeeded.
@@ -133,6 +135,9 @@ that had in fact succeeded.
 |---|---|
 | The label on a part is not trusted | What a part is gets decided by reading it. A build pushing a file with an ordinary command-line client labels it as opaque bytes |
 | A large part is not held in memory | Parts above a few kilobytes are spilled to a temporary file for the length of the request. The deployment therefore needs a writable temporary path despite a read-only root filesystem, which the packaging provides |
+| The temporary path holds at most `upload.max-concurrent` of the largest requests | The setting bounds how many uploads one server reads at once, across the scan, attachment and import routes, and a place is held until the request is answered, because the spilled files are removed only then. Four at the shipped values, each up to 512 MiB for a scan |
+| The places are one pool for the server, shared by every sender, with no share per sender or per route | The pool is what bounds the temporary path, and that bound is per server. A sender holds a place only after it is authorized, and only until the request's read deadline, so one sender holding every place is a credential somebody issued, sending slowly on purpose |
+| An upload a sender may not make spills nothing | A pipeline key for one product, or a person holding no role on it, is refused before the form is read, in the words the handler refuses in. A product the sender may not see answers as one nobody declared |
 
 ## The arrival decision
 
@@ -244,12 +249,14 @@ million edges between them.
 | Rule | Reason |
 |---|---|
 | The depth bound is why the document is walked rather than decoded | Decoding has no depth limit anyone can set, so a file nested far enough to exhaust the process would be discovered by running out of memory. Nesting is bounded everywhere, including inside the parts nothing reads |
+| A document of exactly the size bound is read | The reader asks for one byte past the bound before refusing, so the end of the file is told apart from more of it |
 | An oversized document is refused as oversized | Truncating it and letting the reader fail reports a malformed file, which sends whoever sees the message looking at their build instead of at the limit. This holds for a third party's VEX document as well, which was read to the limit and handed on: over-sized became malformed, and the digest recorded was over the part that fitted |
 | The component bound is charged where a component is read, not where one is recorded | Charged at the recording, the header pass — which records nothing — counted none of them, so a document putting its components inside the root component's own nested array was walked in full during a read that happens inside the upload request, with only the size bound saying how many there could be. The same document read whole was refused. A bound that holds on one of two paths through the same parser is a bound somebody routes around |
 | The header pass holds nothing it walked past | Charging the walk is what stops a document nobody could have meant; holding nothing is what keeps the pass cheap for the documents that are fine, and this pass runs inside the upload request, so what it holds is held per concurrent upload. It was charging and holding: the count was the fix and the retention was not |
 | A suppression document's product identifiers are charged against the component bound | The claim bound counts claims, and one claim names any number of products — so a document holding a single statement that lists millions of identifiers was inside every bound in force, and the map holding them was charged against nothing |
 | A CycloneDX document's license entries are charged against ten times the component bound, with a refusal of their own | Each is kept, so one component could otherwise hold as many as the byte bound allows. A real component states one to three, and the real switch images average under one. The claim bound would refuse a large image that makes no claim, naming the wrong setting |
 | The claim bound is spent across a scan's documents rather than per document | Every other bound is per document, and a scan carries as many as a build attaches. Passed whole to each, a producer sending fifty each inside the limit made this hold fifty times what the limit allows |
+| The claim bound counts the claims a document returns | A CSAF vulnerability returns one claim per status its products are listed under, so a count of vulnerabilities lets one document return several times the bound and overspend what a scan's other documents have left |
 | How many documents arrive with one scan is bounded too | It is what makes every per-document bound mean something: without it they are multiplied by a number nothing decides |
 
 | Rule | Reason |
@@ -291,6 +298,7 @@ and one reader is what the seam was for.
 | **An element announces what it is in a field that may arrive after the fields it governs** | An element is read into one neutral shape and interpreted when it closes. That is what a component read from either other format already does, and it holds one element rather than a document, so the walk stays bounded |
 | **The header is inside the contents** | A document's creation record is one entry of the same array its packages are in. The header read therefore walks the whole graph and builds nothing from it, which is as cheap as this format allows rather than as cheap as the others are |
 | **A document carries several creation records** | Anything it imported brought its own. The one the document points at is the document's; where it points at nothing, none stands in and the upload is dated when it arrives. An imported document's time does not move between builds, so standing it in would have every later scan of that target refused as not newer |
+| **A file carries several document elements** | A file inlining a document it imported carries that document's element too. The file's own is the one element no other names in its imports, and its identifier, creation record and roots are the document's. Several elements the imports leave unsettled are refused, because the last one read is an accident of order. An inventory element is the imported document's, and names none of the build's roots, where an import names it, where the imported document names it as a root, or where every root it names is the imported document's and none is the file's own |
 | **A creation record may be written in place** | The format lets an element carry its creation record as an object where it would otherwise point at one. Written on the document, its time is the document's; written on any other element, it dates nothing unless it carries an identifier, and then it is the record every reference to that identifier names. Its version is checked as a referred-to record's is |
 | **One relationship states a list of ends** | The edge bound is charged per end rather than per relationship, as each is read |
 | **An element does not say what it is until it has been read** | Every entry is charged against the component bound on the way in, because what a bound stops is the walk; the ones that turn out to be paths hand that charge back and take the file bound instead, and a relationship hands it back for the edge bound its ends were charged against. A relationship stating no end is charged nothing there and keeps its component charge. So the walk is bounded throughout and the bounds are still sized the way they differ |
@@ -482,6 +490,7 @@ they fill in. A document that is valid and sparse is not a broken one.
 | An edge end is the format's word for nothing | Read as nothing. "Contains nothing" is a statement a producer makes, and reading it literally puts an identifier nothing describes into the count that says the graph has a hole in it |
 | A relationship naming what a build is about, stated by anything other than the document | Left out. Taken as a root claim, any element could make itself the build's root and re-parent the whole inventory under it |
 | The third version's version written with the second's prefix, `SPDX-3.0.1` | Read as `3.0.1`. The format states a bare semantic version; a producer carrying the second version's habit over writes the prefix, and it names the format the reader already is. A fourth major version with the prefix is still refused |
+| A control character in a component's name, version, package identifier or what it was built from, written or escaped | Dropped before the component is identified. Names and versions are joined into keys with control characters as separators, so one carrying a separator reads as another component, or two version pairs share one key. A name of control characters alone is a component with no name |
 | Unread fields | Ignored. A producer carrying more than is read is the ordinary case |
 
 Two things a document states twice are resolved once it has closed rather than
@@ -502,6 +511,7 @@ stable build to build, so a change says the producer changed.
 | Two components sharing one identifier | Every edge naming it is ambiguous |
 | A build time nothing can read | The build time orders scans against each other |
 | Past any of the bounds | A broken or hostile file has to fail rather than exhaust the process |
+| Anything but whitespace after the top-level value, in an inventory, a suppression document or an advisory | Two documents written one after the other read as the first, and an inventory missing what the second held reads as a product that shrank |
 
 Reading is all or nothing. A partial inventory is indistinguishable from a
 product that shrank, and acting on one closes findings that are still somebody's
@@ -621,6 +631,7 @@ other: a statement that acme-fw 4.2 is not affected leaves a finding on acme-fw
 |---|---|
 | The version is part of the claim's identity where one is stated outside the package identifier | A claim about 4.2 and one about 5.0 are two claims. A version inside the identifier is already part of the identity through it and is not stored again. A claim stating no version keys as it did before a version was stored. A claim stating its version only as a branch has a new identity, so each such claim closes and reopens once, on the first scan after the upgrade |
 | The carried patches read names the version beside the subject | "acme-fw 4.2". A status shown without the version reads as a claim about whatever ships |
+| The reasoning is part of the claim's identity where the claim gives one | A build that changes only its explanation closes the claim it made and opens the new one, so the carried patches keep both. A claim giving none keys as it did before. The v0.9.0 upgrade keys every stored claim this way, so none closes and reopens on the first scan after it |
 
 A claim that matched nothing is reported, not dropped. A build's judgment that
 went nowhere means a finding it already answered comes back as noise. The
@@ -883,6 +894,8 @@ which file they wrote it in.
 | An OpenVEX product with subcomponents is kept beside each subcomponent | The subcomponents are what the statement is about and the product is what they ship inside, so a statement about zlib inside a product is not a statement about every zlib |
 | A CSAF *advisory* is refused here and read by the supplier-advisory path | Each is read under what the document around the claims means, and what a later upload of it replaces differs |
 | The reader is the one the build's own suppressions go through | One parser rather than one per distribution's format keeps the hostile-input surface to a size somebody can reason about |
+| A document is digested as it streams, and one past the size bound is refused for its size before any parse error is reported | The reader reads to the end of the file, so a document it takes has passed the digest whole, and a document cut off at the bound fails as malformed when its size is the honest answer |
+| Who published a document, and an advisory's own name, are held without control or format characters, whether the request, the uploaded file's name or the document gave them | Both are shown wherever the evidence is, and a right-to-left override in either reads reversed there |
 | Uploading again from the same publisher sets aside what they no longer say rather than deleting it | What an approval was granted on the strength of has to stay readable. The document's digest is kept with every statement, so a revision can be noticed |
 | The same document uploaded again writes nothing where it reads as what stands, and replaces what stands where it reads differently | The digest is of the bytes. A reader that derives a different name or target from the same bytes has changed what the statements say, and uploading again is how rows stored under the earlier reading are brought up to date |
 | A statement is stored against the package's decoded name, without namespace, version, qualifiers or subpath | `pkg:deb/debian/frr?arch=amd64` is a statement about `frr` |
@@ -1094,10 +1107,19 @@ beside the scanner's data and read whole (REQ-12, REQ-31).
 
 | Bound | |
 |---|---|
-| The download | 8 GiB, against 622 MB on 2026-10-07 |
+| The download | 8 GiB, against 622 MB on 2026-10-07, and removed when it passes the bound |
 | The archive inside it | 8 GiB, written to disk before it is read, and removed once it is |
-| One record | 16 MiB |
+| Files in an archive | Four million, counted by walking the archive's directory before the archive is opened, because opening it holds every entry in memory. The count is of entries walked, never the count the directory states |
+| One record in an archive | 16 MiB |
 | Records in a snapshot | A million |
+| One record in a snapshot | 4 MiB, encoded as the snapshot writes it |
+| A snapshot | 128 MiB decompressed, against 534 KB compressed on 2026-10-07. The bound is on what reading it holds in memory, and a bundle carried in is a file from outside |
+
+| Rule | Reason |
+|---|---|
+| Writing a snapshot refuses what reading one refuses, a snapshot with no moment included | A snapshot no scan can read stalls every scan, and the fetcher, finding it unreadable, fetches and writes it again every hour |
+| What an archive keeps is counted against the snapshot's bounds as it is read | What it keeps is held in memory until it is written |
+| A build past a bound fails before the rename | The snapshot held stays the last one that could be read, and the failure is logged |
 
 ## Analyzer findings
 
