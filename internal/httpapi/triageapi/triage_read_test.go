@@ -414,10 +414,16 @@ func TestWhatAppliesToAFindingIsReadableWithItsHistory(t *testing.T) {
 				} `json:"decision"`
 				Reasoning string `json:"reasoning"`
 			} `json:"standing"`
+			Previously []struct{} `json:"previously"`
 		}
 		httpapitest.Read(t, r, "triager", path, &after)
 		if after.Standing == nil {
 			t.Fatal("an agreed decision does not read as standing where it was made")
+		}
+		// The one claim now stands, so nothing was decided here before it.
+		if len(after.Previously) != 0 {
+			t.Errorf("the standing decision is listed again under previously: %d rows",
+				len(after.Previously))
 		}
 		if after.Standing.Decision.Outcome != "not-applicable" || after.Standing.Reasoning == "" {
 			t.Errorf("what stands here reads as %+v", after.Standing)
@@ -1223,6 +1229,26 @@ func TestADecisionNeedingNobodyReadsBackWithoutAWait(t *testing.T) {
 		if detail.Decision.State != "proposed" || detail.Decision.NeedsApproval {
 			t.Errorf("an affected answer reads back as %+v, want proposed and waiting on nobody",
 				detail.Decision)
+		}
+	})
+}
+
+func TestABuildNamedTwiceInAnotherSpellingIsRefused(t *testing.T) {
+	// A build name is matched without regard to capitals, so "Master" beside
+	// the path's "master" is the same build named twice.
+	httpapitest.TwoReach(t, func(t *testing.T, r *httpapitest.Reach) {
+		r.Scanned(t)
+		at := "/v1/products/mine/streams/master/variants/broadcom" +
+			"/findings/CVE-2026-9999/components/libnl-3-200/decision"
+		got := httpapitest.AsPerson(t, r, "triager", http.MethodPost, at,
+			`{"outcome":"not-applicable","justification":"vulnerable_code_not_in_execute_path",`+
+				`"reasoning":"The parser is never reached.",`+
+				`"also":[{"stream":"Master","variant":" broadcom"}]}`)
+		if got.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("a build named twice answered %d: %s", got.Code, got.Body.String())
+		}
+		if !strings.Contains(got.Body.String(), "named twice") {
+			t.Errorf("the refusal does not say the build is named twice: %s", got.Body.String())
 		}
 	})
 }

@@ -655,14 +655,18 @@ deferrals are a year nobody approved. The time counted is what each deferral
 asked for, not what it has spent.
 
 Every deferral counts for as long as it actually held: from when it was asked
-for to the date it returns on, cut short where it was taken back before that
-date.
+for to the date it returns on, cut short where it was taken back or lapsed
+before that date. Where two deferrals of a place held at once, the time is
+counted once.
 
 | Rule | |
 |---|---|
 | A deferral that was **taken back** counts for the part that ran | A withdrawal shortens the time a finding spent hidden and does not erase it. Erased, the threshold was defeated by withdrawing and deferring again — each span under the line, the running total back to zero every time, and a place hidden indefinitely with nobody ever agreeing to it. Withdrawing needs nobody, so the whole loop is one person's |
+| A deferral that **lapsed** counts for the part that ran | A lapse ends its effect the way a withdrawal does: the row stops applying when the versions it was keyed on move |
+| Overlapping deferrals count **once** | One claim keyed at two versions writes two rows over one stretch, and a re-affirmed deferral carries its date into the new claim. Either way the place was hidden once, and summing the rows doubles the total the threshold measures |
 | One taken back **before it held** counts for nothing | Correcting a mistake is not avoiding the work, and counting it would make the two read alike |
 | A deferral asking for a date **already past** counts for nothing | It asks for nothing, and it is refused at submission besides. Counting it as a negative would let a back-dated request subtract from what a finding has already been put off for |
+| The threshold is a whole number of days, refused otherwise | A deferral is dated in days and the decision form is told the threshold in days. A threshold already stored between two days is read as the later whole day, by the gate and by the form alike, so the form never calls a deferral standing on its own that the gate sends to a second person |
 
 Whether a claim needs a second person is worked out where it is written. As a
 field on the proposal, answered before the transaction opens and taken on
@@ -1352,7 +1356,7 @@ the product was read, names no supplier's product and closes nothing.
 | A finding on the product itself stays evidence, a cycle in the graph putting it beneath itself included | A statement naming a package alone cannot tell the supplier's own build from a rebuild of its source |
 | A statement naming a package of an ecosystem alone closes nothing | A distribution's package identifier is shared by its own build and by a rebuild of its source |
 | The product is matched exactly, at the version the statement names | A statement about one release says nothing about the next, so a version change reopens the finding. A statement naming no version is about every release, past and future, and stays evidence |
-| The product is matched by the package identifier the statement names, or by the component's own name, and never by what the component was built from. A generic identifier is matched against the component's identifier as well as its name | A fork of the supplier's source carries the supplier's name as what it was built from, and a build of the supplier's source is not the supplier's product |
+| The product is matched by the package identifier the statement names, or by the component's own name, and never by what the component was built from. A generic identifier is matched against the component's identifier as well as its name, and a namespace it carries is compared as a source-tree claim compares one | A fork of the supplier's source carries the supplier's name as what it was built from, and a build of the supplier's source is not the supplier's product |
 | Only `not_affected` closes, whatever its justification | Each justification is the supplier speaking about its own product. A statement that something will not be fixed is affected and judged minor, and stays a prefilled will-not-fix |
 | The product has to be a component of the build | A build of the supplier's source is not the supplier's product. A distribution names a platform, which no build here contains, so its statements close nothing |
 | The build's own patch and the CVE record are asked first | Both say the code is not vulnerable here, which is the stronger answer |
@@ -1512,7 +1516,9 @@ promoting one.
 | Rule | |
 |---|---|
 | What is in use is narrowed to findings the asker may read | A tag carries no visibility of its own, and free text typed while triaging an embargo says what the embargo is about: "waiting on the reporter" beside an undisclosed issue is the disclosure |
-| At the grain somebody looks at | One issue, in one component, in one product. Not per place — a kernel flaw at sixty places is one thing somebody is tagging — and not per build, because a tag is about the work rather than a release |
+| At the grain somebody looks at | One issue, in one fold, in one product: the unit a judgment covers and the finding screen shows. Not per place — a kernel flaw at sixty places is one thing somebody is tagging — and not per build, because a tag is about the work rather than a release |
+| Put on, read and taken off across the fold | Putting one on writes it on every package of the fold the product holds the issue at. The finding screen, a list row and the filter read the words on any package of the fold, once each, so a package that joins the fold later carries them. Taking one off through any package takes it off them all |
+| Each package's word at that package's visibility | Putting one on and taking one off reach the packages whose findings of the issue the caller may triage. A word is read where its own package carries a finding of the issue in the product that the reader may see; the filter asks for one at the row's visibility. A word typed on an undisclosed package is not shown through a disclosed one |
 | Matched without regard to capitals and shown as it was typed | Showing the folded form back would read as the tool having rewritten what somebody wrote. Tagging what already carries the tag succeeds and keeps the first spelling |
 | Tagging is triage | A tag changes what a filtered list answers. Somebody who may only read sees the tags and is not offered the control, because a control offered and then refused teaches people to distrust the ones that work |
 | On the row, not only on the finding | The tags come back with each group, read for the whole page in one statement, and each is itself a filter |

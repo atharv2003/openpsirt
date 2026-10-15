@@ -421,7 +421,7 @@ about the commit in its repository.
 | Recorded per commit | |
 |---|---|
 | When it was last looked up | Null is never, which is what a visit takes first |
-| Whether the copy held it | A commit in an unmerged pull request, or one a history rewrite dropped, is linked and on no branch |
+| Whether the copy resolved it to one commit | A commit in an unmerged pull request, or one a history rewrite dropped, is linked and on no branch. An abbreviation more than one object in the copy shares resolves to none, and is recorded as not held: the two are shown alike, as not found |
 | How many branches held it, and the names of up to a hundred | A mainline commit is on every branch cut since it landed. The count stays whole; a name wider than the column is counted and not kept, because a cut name is another branch |
 
 | Recorded per repository | |
@@ -644,7 +644,7 @@ exception agree rather than contradict.
 | Surface | What it does |
 |---|---|
 | A filter on the findings list | The only way to ask about the deferral class at all. Asked of the component's incoming edges in the build, so one reached from two consumers scoped differently answers to both words — a place is a pair of columns, and no engine here compares a pair against a set the same way |
-| An evidence line on the finding's dependency path | Beside the place it is about, in the producer's word, next to what the build's own VEX said. Which is where somebody deciding reads it |
+| An evidence line on the finding's dependency path | Beside the place it is about, in the producer's word, next to what the build's own VEX said. Which is where somebody deciding reads it. A place two edges reach under two words shows the word from the earliest scan, and of two words one scan stated, the first in byte order, so every engine and every read shows the same one |
 
 It appears nowhere else: not in the urgency ranking, not as a prefilled
 outcome on a claim, and not as a default narrowing on any list. A person deciding that a
@@ -681,7 +681,9 @@ answers change, and both how many undisclosed flaws exist and when the last was
 recorded fall out of the names alone. Six digits, so every identifier reads the
 same length. A collision is answered by drawing again inside the same
 transaction, which also stops two people recording at the same moment being
-handed the same one.
+handed the same one. A name collides where any issue answers to it, filed under
+it or holding it as an alias, compared folded: an issue re-filed under a CVE
+keeps its minted name as an alias, and that name resolves to it.
 
 The width is not what makes it safe to probe. That is the routes answering a name
 somebody holds and a name nobody holds identically (REQ-43).
@@ -740,6 +742,7 @@ contact address is published rather than at some volume of them.
 | A report says whether it was found here | The one fact that separates a flaw somebody here found from a claim that arrived. It decides the disclosure date and whether an answer is owed, and nothing else: the same fields, the same judgment and the same rulings apply to both |
 | One row per issue, not per finding | A flaw recorded against four builds is one report from one person, and four copies of their address is four places for it to be wrong |
 | **It records the product it was reported against, and that is who may read it** | Read with the right every read of a report asks, reading undisclosed work in that product, on the issue as on the report itself: one reporter has one rule. Answering them is working the report and asks for triage there. An issue's identity spans its aliases, so the moment a CVE is recorded the same issue is open in every product a scan reports it in. Keyed on the issue alone, the reporter's name, address and received date were readable by anybody holding triage rights in any of those — and acknowledging from one of them cleared the unanswered condition out of another product's queue. The unanswered list stops fanning one letter out across every product the name reaches |
+| An issue merged from issues reported in two products answers each product with its own report | Each name carried its own report. The one a reader reads and answers is the first received that they may read, so the second product reads and acknowledges its reporter, and acknowledging what nobody here may read is refused as no such report |
 | Credit preference is kept apart from the name reported under | "Anonymous" is a real answer, and so is a handle that is not the name on the mail |
 | The received date is what the embargo runs from (REQ-37) | A report that arrived a fortnight before anybody typed it in no longer puts this clock behind the reporter's. It falls back to when the record was made, and a date nobody can read is treated as one nobody gave. A report found here starts no embargo |
 | The acknowledged date records that somebody answered, rather than answering | What reaches a researcher is a mail from an address somebody already has. Acknowledging twice keeps the first date, and the condition it raises fires at once rather than after a period |
@@ -1219,6 +1222,18 @@ it is tied to it, and in no other case.
 | The entry's package identifier names the component's type, namespace and name | The same |
 | The entry carries neither, and its vendor and product are a name this knows | The components that name is listed for |
 | A distribution's or a vendor's package, by its own CPE or identifier | Nothing. Those describe the distribution's build, and its lines are in the distribution's numbering |
+| A distribution's or a vendor's entry, by upstream's CPE it carries | Nothing (REQ-31). The entry describes that writer's build, and its lines are in that build's numbering whatever CPE it carries |
+
+| An entry is another's statement where | |
+|---|---|
+| It names neither the vendor nor the product of the CPE, letters and digits compared without regard to case | A distribution's entry names itself and its release: vendor `Red Hat`, product `Red Hat Enterprise Linux 10`, carrying `gnu:grub2` |
+| It carries an operating-system CPE of another vendor | A distribution's entry names the release it was built for |
+| It names nobody, vendor and product both empty or `n/a` | Never. A record assigned on a project's behalf is written that way, and is the project's |
+
+Measured against the CVE List of 2026-10-14: of 163,913 entries carrying a
+CPE, the two signs refuse the tie for four, two of them with a line in release
+numbers. Neither is a kernel entry, so the ONIE and SONiC figures above do not
+move.
 
 | Known name | Components |
 |---|---|
@@ -1242,6 +1257,8 @@ changes on top of 6.18.55, and those changes are what a record cannot speak for.
 | A version and an inclusive upper bound | From the version up to and including the bound. A bound ending in `.*` covers every release beginning with what precedes it; `*` alone covers every release |
 | Of no stated type, or `semver` | Ordered as release numbers (`DESIGN-remediation.md` § Version ordering) |
 | A commit range | Nothing. The kernel's records carry one beside every release range, saying the same thing |
+| Typed as the commit a fix originated in, with a release number for its version | Release numbers. The kernel writes the mainline release a fix first reached that way: `7.1` up to `*`, unaffected. 15,026 of the 17,117 lines of that type in the CVE List of 2026-10-14 carry one |
+| Typed as the commit a fix originated in, with a commit for its version | A commit range |
 | Of any other type, or with status changes inside it | Not ordered. Where it states affected, nothing narrows |
 
 ### Narrowing
@@ -1696,7 +1713,7 @@ be done rather than doing it.
 | Rule | Reason |
 |---|---|
 | The scanner is given what was stored, not the file the build sent | That file is not kept for a moving line, so anything not stored can never be scanned. This is the argument for capturing a component's second identifier scheme at ingest |
-| What a later inventory adds to a stored component reaches the scanner | A qualifier, a platform enumeration or a source package the stored row lacks is filled in as the inventory is applied (`DESIGN-data-model.md` § Duplicate descriptions). Stored as first seen, a component described once without `distro` was never matched against its distribution's advisories again |
+| What a later inventory states reaches its own product's scanner | A qualifier, a platform enumeration or a source package is held on the build's node, and fills in what another build of the same product left out (`DESIGN-data-model.md` § Duplicate descriptions). Another product's statements never reach it |
 | A distribution stated as a name and a version is told to the scanner in the qualifier it reads | The scanner matches a distribution's package against that distribution's advisories only when the identifier carries `distro`. Docker Scout and BuildKit write `os_name=debian&os_version=13` instead, and one real image of 142 packages, 122 of them Debian's, matched 3 times as written and 66 times with the qualifier added. The stored identifier is left as the producer wrote it |
 | The product itself is left out of what the scanner sees | It is not a package any vulnerability database has heard of, and including it invites a match on a name that happens to collide |
 | A build holding nothing but itself is scanned without the scanner | There is nothing to ask about, and handed an inventory of no components the scanner exits with an error rather than answering none. A services-only inventory, a VEX document sent as an inventory, and a source document naming only itself arrive this way, and each read as a scanner that stopped working. The run names the scanner it would have asked, with no version and no database, because nothing was measured |

@@ -4,9 +4,13 @@
 package finding_test
 
 import (
+	"context"
 	"sort"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/uptrace/bun"
 
 	"github.com/nexthop-ai/openpsirt/internal/access"
 	"github.com/nexthop-ai/openpsirt/internal/finding"
@@ -353,6 +357,25 @@ func TestOnlyADecisionThatAppliesTakesAFindingOffTheClock(t *testing.T) {
 					because, overdue, want)
 			}
 		}
+		// The compliance rate reads a deferral the same way: one in force at
+		// the versions the place holds, before its date, is deferred; any
+		// other leaves the finding overdue.
+		rated := func(deferred bool, because string) {
+			t.Helper()
+			rates, err := f.store.Compliance(ctx, triager, f.wholeProduct(), time.Time{}, time.Time{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			held, late := 0, 0
+			for _, rate := range rates {
+				held += rate.Deferred
+				late += rate.Overdue
+			}
+			if (held == 1) != deferred || (late == 1) == deferred {
+				t.Errorf("%s: the compliance rate counts %d deferred and %d overdue, want deferred: %v",
+					because, held, late, deferred)
+			}
+		}
 		// Sending the standing claim back, which is the other way one stops
 		// applying: only a claim needing nobody can be both sent back and
 		// standing, and while it is returned nobody is relying on it.
@@ -378,8 +401,13 @@ func TestOnlyADecisionThatAppliesTakesAFindingOffTheClock(t *testing.T) {
 		onTheClock(true, "an approved claim about another version does not apply here")
 		record("approved", true, "deferred", &nextMonth, swss.Version)
 		onTheClock(false, "a deferral applies until its date")
+		rated(true, "a deferral applies until its date")
 		record("approved", true, "deferred", &yesterday, swss.Version)
 		onTheClock(true, "a deferral past its date is back on the clock")
+		rated(false, "a deferral past its date is back on the clock")
+		record("approved", true, "deferred", &nextMonth, "0.9.0")
+		onTheClock(true, "a deferral about another version does not apply here")
+		rated(false, "a deferral about another version does not apply here")
 
 		// The rule the triage store asks when it decides whether a decision
 		// applies, asked here — because it was added to that store's own copy
@@ -389,8 +417,10 @@ func TestOnlyADecisionThatAppliesTakesAFindingOffTheClock(t *testing.T) {
 		// said it applied to nothing until it was revised.
 		record("proposed", false, "deferred", &nextMonth, swss.Version)
 		onTheClock(false, "a deferral needing no agreement applies")
+		rated(true, "a deferral needing no agreement applies")
 		sendBack()
 		onTheClock(true, "a claim an approver sent back holds nothing off the clock")
+		rated(false, "a claim an approver sent back holds nothing off the clock")
 	})
 }
 
@@ -1020,6 +1050,55 @@ func TestPagingWhatIsRunningOutPlacesRowsThatDifferOnlyInBeingExploited(t *testi
 		}
 		if len(order) != 2 || !order[0] || order[1] {
 			t.Fatalf("paged one at a time the rows read exploited %v, want [true false]", order)
+		}
+	})
+}
+
+// cancelOnDeadline cancels a context once a statement writing deadlines has
+// run.
+type cancelOnDeadline struct {
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnDeadline) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context {
+	return ctx
+}
+
+func (c *cancelOnDeadline) AfterQuery(_ context.Context, event *bun.QueryEvent) {
+	if strings.HasPrefix(event.Query, "UPDATE") && strings.Contains(event.Query, "CASE") &&
+		strings.Contains(event.Query, "due_at") {
+		c.cancel()
+	}
+}
+
+// A rewrite of the deadlines stopped part way leaves no deadline on what
+// carries none. The band pass writes only what is on the clock, so the passes
+// sweeping a tag, a release past end of life, the line and a missing fix are
+// not what keeps those rows right.
+func TestARewriteStoppedPartWayLeavesNoDeadlineOnATag(t *testing.T) {
+	each(t, func(t *testing.T, f *fixture) {
+		tag := f.release(t)
+		exploited := found("CVE-2026-STOPPED", libnl)
+		exploited.Issue.Exploited = true
+		for _, target := range []int64{f.target, tag} {
+			f.shippedTo(t, target, twoConsumers())
+			if _, err := f.store.Apply(t.Context(), target, f.runOn(t, target),
+				[]finding.Reported{exploited}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if f.deadlineIn(t, f.target, "CVE-2026-STOPPED").IsZero() {
+			t.Fatal("the branch carries no deadline, so this proves nothing")
+		}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		f.db.AddQueryHook(&cancelOnDeadline{cancel: cancel})
+		if _, err := f.store.Recompute(ctx, finding.DefaultWindows()); err == nil {
+			t.Fatal("a rewrite cancelled part way finished, so this proves nothing")
+		}
+		if due := f.deadlineIn(t, tag, "CVE-2026-STOPPED"); !due.IsZero() {
+			t.Errorf("a rewrite stopped part way left a deadline on a tag, %s", due)
 		}
 	})
 }

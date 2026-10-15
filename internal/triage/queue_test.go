@@ -121,15 +121,15 @@ func TestDeferringRepeatedlyStopsBeingShort(t *testing.T) {
 		const threshold = 30 * 24 * time.Hour
 		nearly := 29 * 24 * time.Hour
 
-		asking := func() triage.Proposal {
-			until := time.Now().UTC().Add(nearly)
+		asking := func(span time.Duration) triage.Proposal {
+			until := time.Now().UTC().Add(span)
 			return triage.Proposal{
 				Place: f.at(), Outcome: triage.Deferred, DeferredUntil: &until,
 				Reasoning: "Still not this sprint.", By: f.proposer,
 			}
 		}
 
-		first := asking()
+		first := asking(nearly)
 		needs, err := f.store.NeedsApproval(ctx, first, threshold)
 		if err != nil {
 			t.Fatal(err)
@@ -141,14 +141,24 @@ func TestDeferringRepeatedlyStopsBeingShort(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// The second one asks for another twenty-nine days on a finding
-		// already put off for twenty-nine, which is fifty-eight.
-		needs, err = f.store.NeedsApproval(ctx, asking(), threshold)
+		// The second one asks for another twenty-nine days past the first,
+		// on a finding already put off for twenty-nine, which is fifty-eight.
+		needs, err = f.store.NeedsApproval(ctx, asking(2*nearly), threshold)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !needs {
 			t.Error("deferring twice for just under the threshold stayed unapproved")
+		}
+
+		// Asking again for days the first already holds puts the finding off
+		// for no longer than it is, so the stretch the two share counts once.
+		needs, err = f.store.NeedsApproval(ctx, asking(nearly/2), threshold)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if needs {
+			t.Error("a deferral inside one still in force was counted on top of it")
 		}
 	})
 }
@@ -386,6 +396,36 @@ func TestTheQueuesTotalAskedAloneIsThePagesTotal(t *testing.T) {
 		}
 		if beyond != paged || len(past) != 0 {
 			t.Errorf("a page past the end counts %d with %d rows, want %d and none", beyond, len(past), paged)
+		}
+	})
+}
+
+// A threshold stored between two days is read as the later whole day, which
+// is what the decision form is told. Read as stored, an eighteen-hour
+// deferral the form calls standing on its own went to a second person.
+func TestAPartDayThresholdIsReadAsTheWholeDayTheFormIsTold(t *testing.T) {
+	each(t, func(t *testing.T, f *fixture) {
+		ctx := t.Context()
+		if err := setting.NewStore(f.db.DB).Set(ctx, setting.DeferralThreshold, "12h"); err != nil {
+			t.Fatal(err)
+		}
+		threshold, err := triage.DeferralThreshold(ctx, f.db.DB)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if threshold != 24*time.Hour {
+			t.Fatalf("a twelve-hour threshold reads as %v, want one day", threshold)
+		}
+		until := time.Now().UTC().Add(18 * time.Hour)
+		needs, err := f.store.NeedsApproval(ctx, triage.Proposal{
+			Place: f.at(), Outcome: triage.Deferred, DeferredUntil: &until,
+			Reasoning: "Not today.", By: f.proposer,
+		}, threshold)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if needs {
+			t.Error("an eighteen-hour deferral under a one-day threshold needed a second person")
 		}
 	})
 }

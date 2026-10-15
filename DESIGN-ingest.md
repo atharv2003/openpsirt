@@ -161,7 +161,7 @@ contents. Parsing is expensive; refusing is not.
 |---|---|
 | A submission is identified by everything in it | The inventory and the suppression documents together, each hashed as it arrived and folded together in a fixed order. Identity comes from content, and the claims are content: an inventory that has not changed, arriving beside judgments that have, is a new submission and is taken. Fingerprinting the inventory alone answered success to a build whose arguments about itself were then discarded — and the judgment that went nowhere is a finding the build had already answered coming back as noise |
 | A re-send of byte-identical documents still deduplicates | The claim digests are sorted before they are folded together, so the order the parts were sent in does not decide whether a retry is recognized |
-| An upload taken and not readable is not one we hold | Otherwise the identical bytes can never be sent again, however the reason they could not be read is put right. Such a submission is taken again on the row that already describes it: one row per set of bytes, carrying what became of the live attempt at them, and the documents of the attempt that failed are replaced by the ones arriving now |
+| An upload taken and not readable is not one we hold | Otherwise the identical bytes can never be sent again, however the reason they could not be read is put right. Such a submission is taken again as a new scan: the failed row and its documents are removed and the attempt is written in their place, so there is still one row per set of bytes. A failed scan the graph already names keeps its row and identifier, and its documents are replaced |
 | Equal build times are refused, unless the inventory is the one held | Two different documents claiming one build time is a coin toss over which picture is current. The same inventory at that time with different judgments beside it is not a second picture: it is the one held, with what the build argues about it changed, which is why it was sent again. The later arrival is the one in force |
 | Ordering is by build time, not arrival | A few minutes of clock skew is tolerated, because build machines are seconds out rather than hours |
 | Two uploads of one file racing to write are answered as a file already held | Both pass the check before either writes, and the loser's insert meets the other's row. The act is run again in a fresh transaction, where the check finds the row. Read in the failed one, PostgreSQL has aborted the transaction and MySQL and MariaDB read a snapshot without the row |
@@ -248,6 +248,8 @@ them up.
 | Hazard | Guard |
 |---|---|
 | A scan reaches the reader after a newer one has been applied | An overtaken scan is not applied, and that is recorded rather than treated as a failure. Applying it would replace today's picture with yesterday's and reopen everything the newer one closed |
+| Newer means the later build time, and at one build time the later arrival | The reader asks in the order the newest scan is chosen in. A build re-sent at one build time with different judgments, whose first read failed, is applied on its retry |
+| Scan identifiers are read as time | The graph stamps every interval with the identifier of the scan that opened or closed it, so scans are applied in identifier order. A scan with a lower identifier than the one the build last applied is set aside as overtaken, and a failed submission sent again gets a new identifier. A job still waiting to read a scan that was replaced this way is set aside the same way |
 | A newer scan arrives while an older one is parsed | Asked again in the transaction that applies, after the target row is taken, as well as before the parse. A parse takes minutes, and the answer read before it describes a build that has moved |
 | The newer one may not have been read yet, and may then fail | Once a scan has failed for the last time, the newest that still stands is read again, where the build does not already show it and nothing is on its way to reading it. A scan can be read more than once, and the latest reading is what its receipt reports |
 | A read fails and its retry succeeds | The failed attempt marks the scan failed, so its receipt says so while the retry waits. The attempt that applies it makes it accepted again, clears the failure, and makes it the newest the build holds, in the transaction that applies it. The scan it overtook is not read again while a retry is to come: it would be applied first and reopen what the newer one closes |
@@ -626,6 +628,7 @@ its own name or in a header saying what it fixes.
 | A subcomponent is read only as a package identifier | Anything else names a component and no version, which would cover every version of that name and every fork of it. A product whose subcomponents are all of that kind is a claim about nothing |
 | A claim against a source tree matches a component of that name, or a fork of one | The build knows which packages came out of a tree and this deployment does not |
 | A source tree is named either way it can be named | As a bare name where the document carried no package identifier, and as a package identifier of the generic type where it carried one. The two are the same claim and are matched the same |
+| A generic identifier names its package by the last segment | A namespace before it is compared only where the component is itself a generic identifier carrying one. A distribution's namespace names the distribution rather than the source tree, and a component with no namespace says nothing either way |
 | A source tree named with a version is matched on it, against the component's own version and against what it was built from | A stated version is a version the build stated. Read as covering every version, a claim about one release suppresses a live finding on another |
 | A claim is matched at every place its component sits, within the product it names | The fan-out is ours either way. The next table holds what the product changes |
 
@@ -812,6 +815,7 @@ alphabetical list buries the one that stopped among the ones that are fine.
 |---|---|
 | A build nothing has ever been filed against is reported too, measured from declaration | A pipeline pointed at a name nobody declared is refused loudly; a build declared and never pointed at anything fails silently |
 | How long counts as quiet is a setting, shipping at a week | Long enough that a nightly build missing one night is not an alert, short enough that a pipeline switched off is noticed in the week it happened |
+| How long counts as quiet is a whole number of days, refused otherwise | The scanning screen states it in days and flags a build against that number. A value already stored between two days is read as the later whole day everywhere it is read, so the screen and the alert agree |
 | A release out of support is never reported as quiet (REQ-52) | It is still listed and still states how long it has been: "not scanned, and that is fine" and "not listed" are different answers |
 | Only a scan that could be read counts as having been heard from | A build whose upload is taken nightly and fails to parse nightly is exactly what this report is for. Counting the arrival drew it as perfectly quiet, on the one report whose subject is that silence must not look like health |
 | An upload turned away is recorded against the build, and the report says when and why | Quiet says nothing arrived. It does not say whether anybody tried, and those are different faults with different people to tell: a pipeline nobody wired up, against one failing nightly and reporting success to its own log. A refusal never becomes a scan, so without a row of its own the producer was told and the deployment was not |
@@ -851,7 +855,10 @@ waiting on it, permanently.
 What each run changed is counted when asked for rather than stored, from the
 runs the findings already point at, as issues at components rather than places.
 The count is attributed to the newest upload that run covered and omitted from
-the rest, because one fact repeated down three rows reads as three changes.
+the rest, because one fact repeated down three rows reads as three changes. Only
+an upload that was read counts as covered, by arrival order: one that failed or
+is still being read carries no run, and the count attributed to it would appear
+on no receipt.
 
 Which run produced a finding is recorded on it (REQ-13): the one that opened it
 and the one that closed it, with the scanner and vulnerability-database versions

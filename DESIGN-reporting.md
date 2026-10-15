@@ -256,6 +256,7 @@ keeps its deadline; only open rows lose one at end-of-life or below the floor.
 |---|---|
 | Deferred by decision is split from plainly late, giving three numbers rather than two | A rate counting an approved deferral as a failure punishes the deliberate act the deferral mechanism exists to make possible, and within a quarter people stop deferring and let work run late quietly instead |
 | Only a deferral in force counts as one — agreed, or short enough to stand on its own | A claim waiting for a second person is neither deferred nor an excuse for lateness, and treating it as both would let one person take their own late work off the report. The same test decides what the outcome filter answers for and when a deferral's end is announced |
+| A deferral counts until its date, and only at the versions it was made at | The test that takes a finding off the clock, narrowed to a deferral. A deferral past its date, or keyed on versions the place no longer holds, has stopped applying, so the finding is overdue rather than deferred — the same answer the running-out list and each person's overdue count give |
 | A product is required | A place identity carries no product, and a decision correlated without one would reach decisions made in every product. Every severity band comes back even where empty, because a rate table with rows missing reads as one that has been narrowed |
 | The report says what carries no deadline | A rate about dates is silent about the populations that were never due: below the product's line, in a tag, in a release out of support, and with nothing upstream to take. The third has a report of its own and is linked from here |
 | Taking a population off the clock moves the rate, and upward | A row needs a deadline to be judged at all, so one losing its deadline leaves the numerator and the denominator together — and the rows leaving are disproportionately the late ones. The figure rises with no work done, which is a correction rather than an improvement, and anybody tracking it is told why. A rate over a period spanning such a change is computed from two rules, because only open rows are re-clocked |
@@ -310,7 +311,7 @@ to and a carry that happens silently is one nobody reviews.
 
 | Group | Treatment |
 |---|---|
-| Reaches the new line by matching | Counted, never offered. A decision is a claim about a combination of code, so these have already happened |
+| Reaches the new line by matching | Counted, never offered. A decision is a claim about a combination of code, so these have already happened. A correction stands at any version, so it is counted here whatever version the new line holds |
 | Held a claim at a version this line does not have | Offered as a *proposal carrying the old reasoning*, never as a decision, because the version moved and the old conclusion is not a conclusion about the new code |
 | Deferrals | Offered separately, never carried by default. "Not this sprint" was about that sprint |
 | Past its date at a place the line holds | Counted apart from what covers nothing, because the finding there is left with no answer. A carried judgment keeps its date, so a deferral or promise whose date has gone by cannot be carried |
@@ -327,6 +328,11 @@ to and a carry that happens silently is one nobody reviews.
 Fix velocity, average time to remediate by severity, and aging buckets over a
 period. A finding records when it opened and when it closed, so how long
 something took is a subtraction rather than a second record somebody maintains.
+
+A fix is counted in issues, the unit what opened is counted in. An issue closed
+in two products is one fix, timed from its earliest opening to its last
+closing, in the strictest band any of those products gives it — the reduction
+the aging buckets make.
 
 The aging buckets are cut two ways. One number per bucket says a hundred
 things are over three months old, and neither whether any of them matters nor
@@ -406,6 +412,7 @@ had.
 | Bounded, and it says so | At most the most recent few thousand claims in the window, with the answer stating how many and whether the ceiling was reached |
 | Throughput is per person, counted where the work happened | A claim belongs to the window it was proposed in, and an agreement to the window it was given in |
 | Throughput counts claims | Made, agreed to and withdrawn alike. A claim writes a row per place and is one piece of work, so counting rows mixes units and disagrees with a person's own record |
+| The waits and the send-backs count claims too | One wait per claim and severity band, from the earliest finding its places opened at and the moment it was first proposed. A send-back is one claim coming back, however many places it covers |
 | Send-backs are counted for the deployment, not per person | The record holds that a claim came back and not who sent it. Attributing it by finding the comment written at that moment would be a guess presented as a figure |
 | It narrows to one product, or to one team's people | Without a scope there are no per-team figures, so a manager asking how their own people are doing reads the deployment's numbers with their name on them |
 | A team narrows the two waits by who **proposed**, and its throughput by who did each piece of work | A claim belongs to whoever argued it, which is the rule the record of judgments dates by — narrowed by the approver, a team's time to agree would be about claims its people agreed to for somebody else. Throughput is a row per person, so it is narrowed by the person the row is about |
@@ -419,8 +426,11 @@ cumulative threshold refuses a *further* deferral past a point, one item at a
 time; what it cannot show is the shape across everything, and one item deferred
 three times is a judgment where forty of them is a policy nobody wrote down.
 
-Counted over the judgments rather than the findings they cover. A withdrawn
-deferral is not time anything spent put off.
+Counted over the claims rather than the findings they cover: how often is how
+many claims put the place off, and how long is the time it was put off for,
+counted the way the deferral threshold counts it (`DESIGN-triage.md` § The
+deferral threshold). A withdrawn or lapsed deferral counts for the part that
+ran, and stretches that overlap count once.
 
 ## Subtree trends
 
@@ -495,6 +505,7 @@ of its own, and the catalog reaches it through the release comparison entry.
 | Rule | Reason |
 |---|---|
 | A still-present row says how far it has been decided, what was decided and when it is due | A list of what is still there with no way to tell an approved not-applicable from something nobody has looked at is not a list anybody can sign. Those are opposite answers to the question a release sign-off asks |
+| A standing decision is one in force: agreed, or made by somebody whose claim needed nobody | The test the agreed count uses, so every place counted as agreed contributes its outcome, and a row never states one place's outcome over a place that stands on another |
 | The outcome is stated only where every standing decision over the row's places reaches the same one | A component argued away at one place and deferred at another is two claims, and stating either over the row would be a claim nobody made. The same rule the VEX document publishes under |
 | Agreement is about the outcome, and the reason is stated only where one claim answered the row | Two claims can argue a component away for different recognized reasons and still agree it does not apply; counted as disagreement, the column goes blank on a row every place of which has been argued away. Which of the two reasons it was is what the row cannot say |
 | The claims behind a row are told apart by their identifiers, never by their words | A justification is a long-text column on two of the four engines, which compare a bounded prefix for grouping. Told apart by the text, two engines could disagree about whether a row has one answer or two |
@@ -519,6 +530,8 @@ assembled differently every time.
 | Every address in it goes through the rule an address stored beside a claim goes through, and names `http`, `https` or `mailto` | It is a document somebody forwards, and a scheme a reader's machine acts on is not something to hand them. Inside angle brackets anything but an absolute address opens markup, and a space, an ASCII control character or a bracket ends the address and makes the rest of the line markdown, so an address carrying one is left out |
 | Everything else in it that did not pass the submission policy is escaped where it is written | The identifier, description, severity and aliases come from feeds, the component, version and fixed-in version from scan files, and product and person names are not markdown. A reasoning passed the policy when it was typed and is written as it was |
 | It is bounded, and says when the list is a page of a longer one | An issue at a widely vendored component carries hundreds of judgments, and what this is for is being read |
+| Over a page, it says how many judgments stand and how many are recorded | The list carries withdrawn and lapsed judgments too, and only a judgment in force stands |
+| The issue screen's count of products is taken with its total, before the limit, over what the reader may see | A figure taken off a capped page answers a different question from the one it looks like |
 
 ## The exception report
 

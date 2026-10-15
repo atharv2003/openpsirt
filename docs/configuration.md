@@ -818,10 +818,10 @@ is removed the next time the pass reaches it, along with the summary and the
 project address. All of it came from sending the name. Nothing else is
 affected and no upgrade step is needed.
 
-Read what it held back, and what no index knew. The report is at
+Read what it held back, and what no index knew or answered. The report is at
 `/v1/upstream/unanswered` and on the System screen. Held-back names say what
-the default is costing; names no public index has heard of are private modules
-and vendored forks, and they are the candidates to promote into
+the default is costing; names no public index knew or answered are mostly
+private modules and vendored forks, and they are the candidates to promote into
 `OPENPSIRT_UPSTREAM_INTERNAL` so they stop being asked about at all.
 
 ## Outbound exclusions
@@ -1172,4 +1172,8 @@ v0.5.0's schema in one step and carries none of the upgrades before it.
 | A team name or display spelling past 191 characters is refused when a team is declared. v0.8.0 stored one on SQLite and failed on the other engines | Nothing for an existing team. A script declaring teams keeps names within 191 characters |
 | A claim in a build is keyed on its explanation. A build that changes only the explanation closes the claim and opens a new one. v0.8.0 kept the first explanation and wrote nothing | Nothing. The upgrade keys every stored claim on its explanation, so nothing closes on the first scan after it |
 | A component's name, version and package identifier are held without control characters. A stored component with one in any of them is a different component on the next scan | Nothing. Its findings close and reopen once, on the next scan of each build holding it, and judgments beneath it are asked again |
-
+| A build's scanner is given the distribution, the source package and the other package-identifier qualifiers that builds of its own product stated for a component. v0.8.0 filled them onto the component row every product shares, from whichever product stated them first | State each component's distribution and source package in every build's inventory. On a branch's first scan after the upgrade, a component its own product never described that way loses the matches another product's description gave it, and those findings close as unexplained. A tag is not scanned from a new inventory, and keeps the description the upgrade copied onto its nodes, which on v0.8.0 may be another product's |
+| Compliance, cumulative deferral, the triage measures and time to fix are worked out again. A deferral counts for the time it held, with overlaps once; a send-back and a wait count once per claim; an issue fixed in two products is one fix | Nothing. A figure read before the upgrade may differ from the same period read after it |
+| Every day and moment the API answers is in UTC. v0.8.0 answered some in the database server's zone | Nothing where the database server runs in UTC. Otherwise a due date or a disclosure date near midnight reads one day off from what v0.8.0 answered |
+| A CSAF document states the base vector inside the vector held, in the specification's order. v0.8.0 published the vector as held, metrics outside the base set included | Nothing. An advisory v0.8.0 issued from such a vector reads as changed since it went out; issue it again to send the corrected document |
+| `triage.deferral-threshold` and `scanning.quiet-after` are whole numbers of days, and a part-day value is refused when set | Nothing. A value v0.8.0 stored between two days is read as the later whole day everywhere: `12h` is one day |

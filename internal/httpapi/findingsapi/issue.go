@@ -121,7 +121,7 @@ func registerIssue(api huma.API, in core.Deps) {
 			return out, nil
 		}
 		store := finding.NewStore(in.DB.DB)
-		rows, total, err := store.Everywhere(ctx, subject, id, input.Limit)
+		rows, total, products, err := store.Everywhere(ctx, subject, id, input.Limit)
 		if err != nil {
 			return nil, core.WentWrong(in.Logger, "where this issue sits could not be read", err)
 		}
@@ -162,9 +162,7 @@ func registerIssue(api huma.API, in core.Deps) {
 			})
 		}
 		out.Body.Items = make([]SightingBody, 0, len(rows))
-		products := map[string]bool{}
 		for _, row := range rows {
-			products[row.Product] = true
 			body := SightingBody{
 				Product: row.Product, ProductName: row.ProductName,
 				Stream: row.Stream, Variant: row.Variant,
@@ -173,12 +171,12 @@ func registerIssue(api huma.API, in core.Deps) {
 				Undisclosed: row.Undisclosed, Recorded: row.Recorded, FixedIn: row.FixedIn,
 			}
 			if row.DueAt != nil {
-				body.Due = row.DueAt.Format(time.DateOnly)
+				body.Due = row.DueAt.UTC().Format(time.DateOnly)
 			}
 			out.Body.Items = append(out.Body.Items, body)
 		}
 		out.Body.Total = total
-		out.Body.Products = len(products)
+		out.Body.Products = products
 		return out, nil
 	})
 }

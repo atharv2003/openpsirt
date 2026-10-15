@@ -157,13 +157,21 @@ it opens, and there is no floor for a slow pipeline.
 | The issue keeps the earliest day any report states | Stored on the issue, and only ever moved earlier, by a statement of its own. Two reports stating different days leave the earlier whichever arrives first |
 | A scan with no listing day learns exploitation at its own start | The moment every issue a database held before the day was read counts from |
 | A listing day filled or moved earlier re-clocks the issue | Every open exploited finding of the issue counting from a later moment is moved onto the day, in every build, and its deadline worked out again. Once per issue: after it, nothing counts from later |
-| A finding with no deadline keeps none when re-clocked | A tag, a release past end of life and a missing fix are off the clock whatever the moment is |
+| A finding with no deadline keeps none when re-clocked | A tag, a release past end of life and a missing fix are off the clock whatever the moment is. A rating moving, a record of being attacked and an issue becoming exploited each re-clock only what sits on a release that moves and is in support |
+| A recount reasons at the store's clock | One moment per recount, read from the clock every other write reads, so a fix date is weighed the same way by a recount and by the scan beside it |
 
 The same rule governs every writer. A scan counts it per finding, and an edited
 window rewrites every open deadline as three passes, one per moment, each over
 the rows for which that moment is the latest. A fix dated later than the
 moment it is weighed at has not arrived: a scan weighs it at the run's start
 and the rewrite at the time of the edit.
+
+The rewrite writes a deadline only where one belongs: a release that moves and
+is in support, a band the line admits or an issue this product was attacked
+through, and a fix to take. A rewrite stopped part way, by an error or a
+shutdown, leaves every row it reached right and every other row as it was. The
+sweeps that follow take the clock off what was written before a release went out
+of support, a line moved or upstream answered.
 
 A finding with no deadline states which reason applies:
 
@@ -269,6 +277,11 @@ and both ends are drawn.
 Both ends key their rows on the fold, so an upgrade reads the same from either
 direction.
 
+| Ordering | |
+|---|---|
+| The bundle list breaks its last tie on the fold | The fold is the last column a bundle is grouped on, so two bundles equal on every other key keep one order across pages |
+| One source at two versions in one build lists the earlier version first | By the ecosystem's version ordering where the fold has one, and by text where it has none |
+
 The version in hand and the version being moved to are both stored with the
 commitment. They are read off the findings that are still open, and landing the
 upgrade closes them — so a plan deriving them went blank on an upgrade exactly
@@ -310,10 +323,11 @@ name to a public index.
 |---|---|
 | An index that lists every version is read with the ecosystem's own ordering | Maven Central's metadata names a "release" and it is whatever was published last: measured on log4j-core, 3.0.0-beta3 while 2.26.1 was the newest release. An ordering is what says 2.25.1 is after 2.9.1 |
 | A pre-release is not what somebody is behind | Telling somebody they are behind a release candidate is not a claim to act on. It is offered only where a package has published nothing else |
+| A Maven version marked preview, pre, ea, eap or dev is a pre-release | Maven orders those words above the release as words it does not know, and publishers use them for versions ahead of one. The ordering is left as Maven has it; only the question of whether a version is a release reads them |
 | An unlisted NuGet version is passed over | Its owner withdrew it from what anybody choosing a version is offered, and nuget.org dates it to 1900 |
 | A paged NuGet registration is read from its newest page back, at most four pages | Pages run oldest to newest, so the answer is usually on the last. The bound is for a package whose newest pages hold only pre-releases, which would otherwise cost a request per page back to its first release |
 | Where the bound stops the walk with no release found, there is no answer | A release may sit on a page that was not read, so the newest pre-release is not offered. The package is recorded as asked with no version |
-| A page is read only from the registration it came from | Its address is what the answer says it is. An index naming a page anywhere else is not followed |
+| A page is read only from the registration it came from | Its address is what the answer says it is. An index naming a page anywhere else, or an address carrying a dot segment, is not followed |
 | A Maven name that would move the request is not asked | A group or an artifact that is empty, `.` or `..` names a different place in the repository rather than a package. Refused as unaskable, which records it |
 
 What comes back is classified, because the classes want opposite treatment.
@@ -341,7 +355,7 @@ that did not come back both answer the version alone.
 |---|---|
 | A package is asked about once a pass, however many of its versions are stored | A component is one version and the question is about the package, so every version in the pass's window takes the one answer |
 | A PyPI name is asked for as PyPI spells it | Lower case, each run of hyphens, underscores and dots one hyphen. Asked any other way the index redirects, and the client follows no redirect |
-| A name the Maven or NuGet asker refuses before sending is reported as unreadable | It was never sent, so "no index knows it" would put a name nobody asked about on the list somebody holds back from |
+| A name the Maven or NuGet asker refuses before sending is reported as unreadable | It was never sent, so "not known, or refused" would put a name nobody asked about on the list somebody holds back from |
 
 ### Names held back
 
@@ -356,7 +370,7 @@ So a name this deployment calls its own is never sent. Three sources, unioned:
 | Source | What it yields |
 |---|---|
 | The namespace this deployment publishes under | The organization in the three spellings the ecosystems use: the host, the host reversed, which is what a Maven group and a Java package are, and each label short of the top-level domain. Already required for CSAF and VEX and already meaning "who we are", so a deployment that publishes anything has said this once |
-| What each build declared itself to be | The account, scope or group that identifier is published under. A root is the product this deployment builds, so who publishes it is this deployment by construction. Taken from the scan record rather than from the stored component, because the component standing for the product is stored by its name alone — a version on it would give the product a new identity every night |
+| What each build declared itself to be | The account, scope or group that identifier is published under: the segment beside the name, and for a Go module path the account after its host, whatever major-version suffix, module subdirectory or forge group follows it. A root is the product this deployment builds, so who publishes it is this deployment by construction. Taken from the scan record rather than from the stored component, because the component standing for the product is stored by its name alone — a version on it would give the product a new identity every night |
 | What the deployment stated | Whatever else an operator named, for what the other two cannot reach |
 
 | Rule | Reason |
@@ -377,15 +391,15 @@ So a name this deployment calls its own is never sent. Three sources, unioned:
 ### Unanswered components
 
 Two questions that are one report, because they are asked together: what was
-held back says what the default is costing, and what no public index has heard
-of is the list an operator reads to decide what else should be held back. A
+held back says what the default is costing, and what no public index knew or
+answered is the list an operator reads to decide what else should be held back. A
 name promoted from the second appears in the first afterwards, which is how
 somebody knows the promotion worked.
 
 | Why there is no answer | |
 |---|---|
 | It is ours | Never sent. The names it was matched against travel with the report, so a row can be checked rather than taken on trust |
-| No index knows it | Sent, and nothing had heard of it. A private module and a vendored fork both look like this, and neither is a fault |
+| Not known, or refused | Sent, and no version came back: the index had not heard of it, or refused it in a way it will repeat. A private module and a vendored fork both look like this, and neither is a fault. A refusal is recorded exactly as an unknown name is, so the two are one row |
 | The identifier cannot be read | Nothing can turn it into a request. Kept apart from the one above because it is a fault in a document this deployment accepted rather than a fact about the world, and reading it as "no index knows this" would put it on the list of names somebody is about to hold back, where it means nothing |
 
 The classification is derived rather than stored. A held-back name and one no
@@ -460,6 +474,7 @@ Three states, derived on every read and set by nobody.
 | Rule | Reason |
 |---|---|
 | The date is on the commitment, and the claim that argued for it is a citation | What somebody decided and what a release is waiting on are one fact. Changing it goes through the claim, so the two cannot come to disagree |
+| Only the claim that made a commitment withdraws it | A promise naming fewer builds withdraws its own commitments on the rest and keeps those another claim made, whose decisions still stand on them. A second claim promising a build already committed is refused, naming the claim that stands, even where it states the same version and date: its decisions would rest on a date only the first claim moves |
 | There is no "replanned" | Re-promising writes a new date and the standing promise is the one read. A state nothing can distinguish from another is a word rather than a fact |
 | Where several promises stand over one component in one build, one of them is reported whole | A promise naming a version before one naming none, then the latest date, then the later claim. Its date and its version are read together: the latest date beside the lowest version string pairs two promises nobody made |
 | A lapsed promise returns the upgrade, not its findings | One item, to whoever is carrying it — reported as a party only where one party holds all of what is still open under it. Answering the findings again one at a time is what the bulk promise was made instead of |
@@ -642,7 +657,7 @@ somebody deciding whether to act.
 | Element | What fills it | |
 |---|---|---|
 | References | The issue's write-up and everywhere else a report points, each address once, and last the address this document is published at | On the document rather than on the vulnerability. The document is about one flaw, so the two lists would hold the same addresses, and the profile requires the document's. Its own address is stated only where the deployment has said where its documents are reachable, because a reader's tooling follows a self reference and one pointing at nothing is worse than none — and it is built from the same rule the directory writes the file under, so the two cannot name different files |
-| Scores | The version 3 rating, scored here from its vector, stated for every release the flaw is or was in. A release known not affected carries none | Worked out from the vector rather than read beside it: a stored number and a stored vector that disagree have nothing to say which was meant. The standard's score object has a field for version 2 and version 3, and version 4 arrives with the standard's next version — so an issue rated under both states its version 3 rating, and one rated under version 4 alone states none rather than a number in the wrong place. The ratings a report stated are asked newest first, then the vector a flaw assessed here was given |
+| Scores | The version 3 rating, scored here from its vector, stated for every release the flaw is or was in. A release known not affected carries none | Worked out from the vector rather than read beside it: a stored number and a stored vector that disagree have nothing to say which was meant. The standard's score object has a field for version 2 and version 3, and version 4 arrives with the standard's next version — so an issue rated under both states its version 3 rating, and one rated under version 4 alone states none rather than a number in the wrong place. The ratings a report stated are asked newest first, then the vector a flaw assessed here was given. The vector stated is the base vector inside the one held: metrics outside the base set are accepted and not checked, and a validator refuses a metric name or value the specification does not define |
 | Acknowledgments | The credit the reporter asked to be named by | The credit alone. Reporting under a name gives it so somebody can reply, not so it can be published, and "anonymous" is a real answer to the question the credit field asks |
 | Remediations | Stated for the releases that still carry the flaw, and the details name the releases that are fixed. A release known not affected is named in neither. A release every open place of which stands under approved decisions that it will not be fixed takes `no_fix_planned` instead, and a `mitigation` carrying what stops the flaw where the decision named it, never the reasoning. It is not offered the fixed releases: beside "no fix is planned" for the same release, a vendor fix reads as the two contradicting each other, and moving to another line is the reader's decision rather than a remediation of this one | That is who a remediation is for: the standard defines the product identifiers as what the item applies to, and a vendor fix as one for the affected product. Pointed at the releases already fixed, the customer who has to act reads an advisory with no remediation for them. "Update to a release in which this flaw is fixed" is that instruction with the answer left out, so the details name them, by the names the product tree gives them and in the order it gives them — not the earliest, which would mean ordering release names, and an ordering that answers confidently for a pair it cannot order is worse than none. Nothing about planned work: a commitment is one build's internal plan, and the same sentence in a published advisory is a promise to a customer about a date |
 | Flags | The reason of the decision a release known not affected stands under, one flag per reason naming its releases | The five reasons a decision records are the standard's five flag labels, so nothing is translated |

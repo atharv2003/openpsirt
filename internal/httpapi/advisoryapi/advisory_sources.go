@@ -77,8 +77,8 @@ func registerAdvisorySources(api huma.API, in core.Deps) {
 		out.Body.Items = make([]AdvisorySourceBody, 0, len(rows))
 		for _, row := range rows {
 			out.Body.Items = append(out.Body.Items, AdvisorySourceBody{
-				Name: row.Display, URL: row.URL, Tried: row.FetchedAt,
-				Read: row.ReachedAt, CaughtUpTo: row.CaughtUpTo, Because: row.Failed,
+				Name: row.Display, URL: row.URL, Tried: core.InUTC(row.FetchedAt),
+				Read: core.InUTC(row.ReachedAt), CaughtUpTo: core.InUTC(row.CaughtUpTo), Because: row.Failed,
 			})
 		}
 		return out, nil
@@ -211,14 +211,17 @@ func registerAdvisorySources(api huma.API, in core.Deps) {
 			// Mapped before the trail row, which would otherwise record a
 			// withdrawal that did not happen — and the pass goes on reaching
 			// out to a publisher somebody believes it has stopped reading.
-			switch err := supplier.NewStore(tx).Retire(ctx, by, product.ID, input.Name); {
+			row, err := supplier.NewStore(tx).Retire(ctx, by, product.ID, input.Name)
+			switch {
 			case errors.Is(err, access.ErrNothingMatched):
 				return huma.Error404NotFound("no supplier is read from under that name")
 			case err != nil:
 				return core.Asked(in.Logger, err)
 			}
+			// Named as adding it was, from the row: the name is matched
+			// without regard to capitals, and the trail spells it one way.
 			if err := core.Noted(ctx, tx, trail.Setting,
-				"advisory source · "+product.Name+" · "+input.Name,
+				"advisory source · "+product.Name+" · "+row.Display,
 				trail.Said("in use", true), nil); err != nil {
 				return core.NotRecorded(in.Logger, err)
 			}

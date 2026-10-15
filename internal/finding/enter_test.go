@@ -600,9 +600,10 @@ func TestAFlawReportIsReadableOnlyWhereItWasMade(t *testing.T) {
 		if hidden != nil {
 			t.Errorf("a reporter's address was readable from another product: %+v", hidden)
 		}
-		// And they cannot answer the reporter either.
-		if err := f.store.Acknowledge(ctx, stranger, issue); err != nil {
-			t.Fatal(err)
+		// And they cannot answer the reporter either: to them there is no
+		// report to answer.
+		if err := f.store.Acknowledge(ctx, stranger, issue); !errors.Is(err, finding.ErrNoSuchReport) {
+			t.Errorf("answering a report somebody cannot read was told %v, want no such report", err)
 		}
 		again, err := f.store.ReportFor(ctx, who, issue)
 		if err != nil {
@@ -786,6 +787,179 @@ func TestRecordingIsBoundedByWhatItWritesRatherThanByWhatWasAsked(t *testing.T) 
 			Summary: "The management socket accepts a request nobody authenticated.",
 		}); err != nil {
 			t.Errorf("recording one place under a cap of one was refused: %v", err)
+		}
+	})
+}
+
+// Two issues reported in two products and merged carry a report each. Each
+// product reads and answers its own, whichever was received first.
+func TestEachProductAnswersItsOwnReportUnderAMergedIssue(t *testing.T) {
+	each(t, func(t *testing.T, f *fixture) {
+		ctx := t.Context()
+		f.shipped(t, twoConsumers())
+		elsewhere := f.inAnotherProduct(t, "hedgehog")
+		f.shippedTo(t, elsewhere, twoConsumers())
+		other := f.productOf(t, elsewhere)
+		person, err := access.NewStore(f.db.DB).Ensure(ctx, "somebody@example.com", "Them", nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		both := access.NewPerson(person.ID, "somebody@example.com", false, map[int64][]access.Role{
+			f.productID: {access.PublicTriage, access.PrivateTriage},
+			other:       {access.PublicTriage, access.PrivateTriage},
+		}, 0)
+		entered := func(target int64, contact string) string {
+			t.Helper()
+			rows, _, err := f.store.Enter(ctx, both, finding.Entering{
+				TargetIDs: []int64{target}, Component: swss.Name, Severity: "high",
+				Summary: "The management socket accepts a request nobody authenticated.",
+				Told:    finding.Told{ReportedBy: "A. Researcher", Contact: contact},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var name string
+			if err := f.db.DB.NewSelect().TableExpr(`"vulnerability"`).Column("identifier").
+				Where("id = ?", rows[0].VulnerabilityID).Scan(ctx, &name); err != nil {
+				t.Fatal(err)
+			}
+			return name
+		}
+		first := entered(f.target, "first@example.org")
+		second := entered(elsewhere, "second@example.org")
+		if _, err := finding.NewVulnerabilities(f.db.DB).Intern(ctx, []finding.Named{
+			{Identifier: first, Aliases: []string{second}},
+		}); err != nil {
+			t.Fatalf("merge the two: %v", err)
+		}
+		kept := f.issueID(t, first)
+
+		there := access.NewPerson(person.ID, "somebody@example.com", false, map[int64][]access.Role{
+			other: {access.PublicTriage, access.PrivateTriage},
+		}, 0)
+		told, err := f.store.ReportFor(ctx, there, kept)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if told == nil || told.Contact != "second@example.org" {
+			t.Fatalf("the second product reads %+v, want its own report", told)
+		}
+		if err := f.store.Acknowledge(ctx, there, kept); err != nil {
+			t.Fatal(err)
+		}
+		if told, err = f.store.ReportFor(ctx, there, kept); err != nil {
+			t.Fatal(err)
+		} else if told.AcknowledgedAt == nil {
+			t.Error("the second product answered its reporter and nothing was recorded")
+		}
+
+		// Somebody handling both products' reports answers the one still
+		// unanswered, which here is the first product's.
+		if err := f.store.Acknowledge(ctx, both, kept); err != nil {
+			t.Fatal(err)
+		}
+		mine := access.NewPerson(person.ID, "somebody@example.com", false, map[int64][]access.Role{
+			f.productID: {access.PublicTriage, access.PrivateTriage},
+		}, 0)
+		if told, err = f.store.ReportFor(ctx, mine, kept); err != nil {
+			t.Fatal(err)
+		} else if told == nil || told.Contact != "first@example.org" || told.AcknowledgedAt == nil {
+			t.Errorf("somebody handling both products answered and the first product's report reads %+v", told)
+		}
+	})
+}
+
+// A name minted for a flaw stays spoken for after the issue is re-filed under a
+// CVE, when the minted name survives only as an alias. Drawn again, it would be
+// resolved to the old issue and the new flaw interned into it.
+func TestAMintedNameKeptOnlyAsAnAliasIsNotDrawnAgain(t *testing.T) {
+	each(t, func(t *testing.T, f *fixture) {
+		ctx := t.Context()
+		f.shipped(t, twoConsumers())
+		who := f.planner(t, access.PublicTriage, access.PrivateTriage)
+		entering := finding.Entering{
+			TargetIDs: []int64{f.target}, Component: swss.Name, Severity: "high",
+			Summary: "The management socket accepts a request nobody authenticated.",
+		}
+		first, _, err := finding.NewStoreDrawing(f.db.DB, 481907).Enter(ctx, who, entering)
+		if err != nil {
+			t.Fatal(err)
+		}
+		issue := first[0].VulnerabilityID
+		if err := finding.NewVulnerabilities(f.db.DB).
+			AlsoKnownAs(ctx, who, issue, "CVE-2026-48190"); err != nil {
+			t.Fatal(err)
+		}
+		var filed string
+		if err := f.db.DB.NewSelect().TableExpr(`"vulnerability"`).Column("identifier").
+			Where("id = ?", issue).Scan(ctx, &filed); err != nil {
+			t.Fatal(err)
+		}
+		if filed != "CVE-2026-48190" {
+			t.Fatalf("the issue is filed under %s, want the CVE, so this proves nothing", filed)
+		}
+
+		entering.Summary = "A different flaw in the same component."
+		second, _, err := finding.NewStoreDrawing(f.db.DB, 481907, 123).Enter(ctx, who, entering)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if second[0].VulnerabilityID == issue {
+			t.Error("a second flaw was recorded into the first one's issue under its minted name")
+		}
+	})
+}
+
+// Eight names in a row already spoken for is not luck, and the draw stops and
+// says so rather than looping.
+func TestDrawingOnlyNamesSpokenForStopsAndSaysSo(t *testing.T) {
+	each(t, func(t *testing.T, f *fixture) {
+		ctx := t.Context()
+		f.shipped(t, twoConsumers())
+		who := f.planner(t, access.PublicTriage, access.PrivateTriage)
+		entering := finding.Entering{
+			TargetIDs: []int64{f.target}, Component: swss.Name, Severity: "high",
+			Summary: "The management socket accepts a request nobody authenticated.",
+		}
+		if _, _, err := finding.NewStoreDrawing(f.db.DB, 7).Enter(ctx, who, entering); err != nil {
+			t.Fatal(err)
+		}
+		entering.Summary = "A different flaw in the same component."
+		_, _, err := finding.NewStoreDrawing(f.db.DB, 7).Enter(ctx, who, entering)
+		if err == nil || !strings.Contains(err.Error(), "nearly all taken") {
+			t.Errorf("drawing nothing but a name in use answered %v, want the draw refused", err)
+		}
+	})
+}
+
+// A tag carries no deadline, so a flaw recorded on one is written off the
+// clock, as a recount leaves it, while the same flaw on a moving line is due.
+func TestAFlawRecordedOnATagCarriesNoDeadline(t *testing.T) {
+	each(t, func(t *testing.T, f *fixture) {
+		ctx := t.Context()
+		f.shipped(t, through(libnl))
+		cut := f.anotherBuild(t, "v2")
+		f.shippedTo(t, cut, through(libnl))
+
+		rows, _, err := f.store.Enter(ctx, f.planner(t, access.PublicTriage, access.PrivateTriage),
+			finding.Entering{
+				TargetIDs: []int64{f.target, cut},
+				Component: libnl.Name, Severity: "high",
+				Summary: "The parser accepts a message it should refuse.",
+			})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 2 {
+			t.Fatalf("recorded %d findings, want one per build", len(rows))
+		}
+		for _, row := range rows {
+			switch {
+			case row.TargetID == cut && row.DueAt != nil:
+				t.Errorf("the flaw recorded on a tag is due %v, want no deadline", row.DueAt)
+			case row.TargetID == f.target && row.DueAt == nil:
+				t.Error("the flaw recorded on a moving line carries no deadline")
+			}
 		}
 	})
 }

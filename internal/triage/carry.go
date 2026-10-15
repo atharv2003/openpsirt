@@ -442,10 +442,12 @@ func (s *Store) WouldCarry(ctx context.Context, subject access.Subject,
 		if !mayDecideOn(subject, productID, row.VulnerabilityID, access.AsVisibility(row.Landing)) {
 			continue
 		}
-		if row.Was == row.Now && row.ConsumerWas == row.ConsumerNow {
-			// The versions match, so it reaches the new line by matching.
-			// Offering it would ask somebody to agree to something that has
-			// already happened.
+		if Outcome(row.Outcome).StandsAtAnyVersion() ||
+			(row.Was == row.Now && row.ConsumerWas == row.ConsumerNow) {
+			// The versions match, or the outcome stands at any version, so it
+			// reaches the new line by matching. Offering it would ask somebody
+			// to agree to something that has already happened, and carrying a
+			// correction is refused as the place already decided.
 			carried.Applying++
 			continue
 		}
@@ -525,8 +527,8 @@ func (s *Store) deferredSoFarAt(ctx context.Context, productID int64, places []a
 		Where(finding.FiledUnderAny(filed.DecisionIssue), bun.List(issues)).
 		Where("de.place_identity IN (?)", bun.List(identities)).
 		Where("claim.outcome = ?", Deferred).
-		// Withdrawn ones for the span they were in force, as the threshold
-		// counts them.
+		// Withdrawn and lapsed ones for the span they were in force, as the
+		// threshold counts them.
 		Where("claim.deferred_until IS NOT NULL").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read how long these have been put off: %w", err)
 	}
@@ -540,17 +542,21 @@ func (s *Store) deferredSoFarAt(ctx context.Context, productID int64, places []a
 	if err != nil {
 		return nil, err
 	}
+	held := spans[at]{}
 	for _, deferral := range deferrals {
 		deferral.VulnerabilityID = issueOf[deferral.VulnerabilityID]
 		key := at{deferral.VulnerabilityID, deferral.PlaceIdentity}
 		// The pair of lists matches more combinations than were asked for, so
 		// what was not asked for is dropped here.
-		if !wanted[key] || deferral.Claim == nil || deferral.Claim.DeferredUntil == nil {
+		if !wanted[key] {
 			continue
 		}
-		if span := heldFor(deferral); span > 0 {
-			total[key] += span
+		if one, ok := heldDeferral(deferral); ok {
+			held[key] = append(held[key], one)
 		}
+	}
+	for key := range held {
+		total[key] = held.total(key)
 	}
 	return total, nil
 }

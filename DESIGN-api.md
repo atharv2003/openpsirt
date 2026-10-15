@@ -378,6 +378,11 @@ The line in the description is rendered from that same value rather than written
 beside it. Two hand-written copies disagree within a month, and a wrong
 permission is worse than the silence it replaced.
 
+The line states the scope and the roles both. A scope the middleware enforces
+whatever roles are held — yourself, any signed-in person, the deployment's own
+records — is said after the roles, so a pipeline key holding every role listed
+is not told it may call an operation only a person may.
+
 A declaration states which of two kinds of rule it is:
 
 | Kind | Behavior |
@@ -425,7 +430,9 @@ renderer's to apply. The rules are in `DESIGN-text.md`.
 
 A moment is stated in UTC, in RFC 3339, in a response and in its file alike. A
 driver hands back a time in the process's own zone, so a moment is converted
-before it is written rather than formatted behind a literal `Z`.
+before it is written rather than formatted behind a literal `Z`. A day is the
+UTC day of its moment, in a response, a report and an export alike, and a field
+answered as a time is converted to UTC before it is answered.
 
 ## Addresses and labels
 

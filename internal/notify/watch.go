@@ -360,7 +360,7 @@ func (w *Watch) tidy(ctx context.Context) (int64, error) {
 // scanned are two numbers that can disagree, and the one nobody is looking at
 // would be the one that drifts.
 func (w *Watch) quietBuilds(ctx context.Context) ([]Holds, error) {
-	after, err := setting.NewStore(w.db).Duration(ctx, setting.QuietAfter, setting.DefaultQuietAfter)
+	after, err := setting.NewStore(w.db).Days(ctx, setting.QuietAfter, setting.DefaultQuietAfter)
 	if err != nil {
 		return nil, fmt.Errorf("read how long counts as quiet: %w", err)
 	}
@@ -554,12 +554,12 @@ func (w *Watch) holdingAbsent(ctx context.Context) ([]Holds, error) {
 			items = "item"
 		}
 		days := int(time.Since(row.CreatedAt).Hours() / 24)
-		body := fmt.Sprintf("%s was added %d days ago, has never signed in, and has %d %s "+
-			"assigned.", who, days, row.Holding, items)
+		body := fmt.Sprintf("%s was added %s ago, has never signed in, and has %d %s "+
+			"assigned.", who, plainly(days), row.Holding, items)
 		if row.LastSeenAt != nil {
 			days = int(time.Since(*row.LastSeenAt).Hours() / 24)
-			body = fmt.Sprintf("%s has not signed in for %d days and has %d %s assigned.",
-				who, days, row.Holding, items)
+			body = fmt.Sprintf("%s has not signed in for %s and has %d %s assigned.",
+				who, plainly(days), row.Holding, items)
 		}
 		holding = append(holding, Holds{
 			// Keyed on the person rather than on the sentence, so the number
