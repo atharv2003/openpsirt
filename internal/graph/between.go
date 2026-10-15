@@ -20,6 +20,14 @@ import (
 // or removed, which is a claim about two builds made from one of them.
 var ErrNoInventory = refusal.New("no inventory has been read for that build")
 
+// shipsTo refuses a subject who may not read what a build shipped.
+//
+// What a build sent rather than what is open against it, so the visibility a
+// finding carries narrows no part of it: the rule catalog.ReadsBuild holds.
+func (s *Store) shipsTo(ctx context.Context, subject access.Subject, targetID int64) error {
+	return catalog.ReadsBuild(ctx, s.db, subject, targetID)
+}
+
 // Between is every name two builds' inventories differ on, as each stands now.
 //
 // The builds are any two a subject reaches: two releases, two platforms of one
@@ -33,16 +41,11 @@ var ErrNoInventory = refusal.New("no inventory has been read for that build")
 func (s *Store) Between(ctx context.Context, subject access.Subject, fromID, toID int64,
 	only ChangeKind, limit, offset int) ([]Change, int, error) {
 
-	names := catalog.NewStore(s.db)
+	// What two builds shipped, rather than what is open against either, so
+	// the question is whether this subject reaches each build at all.
 	for _, targetID := range []int64{fromID, toID} {
-		productID, err := names.ProductOf(ctx, targetID)
-		if err != nil {
+		if err := s.shipsTo(ctx, subject, targetID); err != nil {
 			return nil, 0, err
-		}
-		// What two builds shipped, rather than what is open against either,
-		// so the question is whether this subject reaches each build at all.
-		if !subject.Sees(productID) {
-			return nil, 0, access.Denied(fmt.Sprintf("read what product %d contains", productID))
 		}
 	}
 

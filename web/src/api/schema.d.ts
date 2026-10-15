@@ -390,9 +390,9 @@ export interface paths {
         post?: never;
         /**
          * Undo a bulk approval
-         * @description Withdraws every approval recorded under this batch name, returning those decisions to the review queue. The decisions themselves stand — only the approvals are undone. Returns how many were affected.
+         * @description Withdraws every approval you recorded under this batch name, returning those decisions to the review queue. The decisions themselves stand — only the approvals are undone. Returns how many were affected.
          *
-         *     Only decisions you may reach are touched.
+         *     Only decisions you may reach are touched, and only agreements you gave: another reviewer's batch of the same name stands.
          *
          *     Requires: approver or public-triage or private-triage on the product. What you hold decides what comes back rather than whether you may ask. A batch is one reviewer's afternoon and may span products, so it is undone as far as you reach and no further.
          */
@@ -2117,6 +2117,10 @@ export interface paths {
          *     Use it after changing sign-in provider. An identifier belongs to the provider that issued it, so every account pinned to the old one is refused once a new one is configured: the name matches and the identifier does not.
          *
          *     It re-opens the window a pinned identifier closes, in which whoever arrives under that username is taken to be its holder. Do it when you expect them to sign in.
+         *
+         *     The window lasts as long as the claim-window setting says.
+         *
+         *     Needs a signed-in administrator: a personal token is refused with 403, because whoever arrives next under the username is taken to be its holder.
          *
          *     Somebody with no identifier pinned answers 404 and records nothing.
          *
@@ -4671,7 +4675,7 @@ export interface paths {
          * List uploaded scans and their status
          * @description Returns uploads newest first, each with its state: `reading` (accepted, not yet parsed), `scanning` (parsed, vulnerability scan pending), `scanned` (complete), or `failed` with the reason.
          *
-         *     Because uploads return 202 before parsing, this is how a build pipeline finds out whether its SBOM was usable. An API key sees only the uploads it sent itself.
+         *     Because uploads return 202 before parsing, this is how a build pipeline finds out whether its SBOM was usable. An API key sees every upload on a build it may upload to, whichever key sent it.
          *
          *     Requires: any recognized credential. Answers only what you may see.
          */
@@ -7671,7 +7675,7 @@ export interface components {
             proposed_by: string;
             /** @description Their display name, where it differs from their identity */
             proposed_by_name?: string;
-            /** @description The justification as it currently stands, in markdown */
+            /** @description The justification as it currently stands, in markdown. Empty where you may read only some of the places the claim covers */
             reasoning: string;
         };
         DecisionsOutputBody: {
@@ -7877,7 +7881,7 @@ export interface components {
             proposed_by: string;
             /** @description Their display name, where it differs from their identity */
             proposed_by_name?: string;
-            /** @description The reasoning as it last stood, in markdown, offered back rather than thrown away */
+            /** @description The reasoning as it last stood, in markdown, offered back rather than thrown away. Empty where you may read only some of the places the claim covers */
             reasoning: string;
         };
         "Edit-commentRequest": {
@@ -7915,6 +7919,7 @@ export interface components {
             outcome: "affected" | "not-applicable" | "mismatched" | "deferred" | "wont-fix" | "already-fixed" | "upgrade-needed" | "patch-needed";
             /** @description The product it was decided in */
             product: string;
+            /** @description The reasoning, in markdown. Empty where you may read only some of the places the claim covers */
             reasoning: string;
         };
         EmbargoedBody: {
@@ -8218,7 +8223,7 @@ export interface components {
             told?: components["schemas"]["NoticeBody"][] | null;
             /**
              * Format: int64
-             * @description Decisions this returned to the review queue: a claim that the issue does not apply, and a claim over many issues that set this one aside or put it off
+             * @description Decisions you may read that this returned to the review queue: a claim that the issue does not apply, and a claim over many issues that set this one aside or put it off
              */
             undone?: number;
             /** @description The issue this is about */
@@ -8905,7 +8910,7 @@ export interface components {
             product_name?: string;
             proposed_at: string;
             proposed_by: string;
-            /** @description The words the standing agreement was given for. Editing them withdraws the agreement, so this and what was agreed to cannot drift apart */
+            /** @description The words the standing agreement was given for. Editing them withdraws the agreement, so this and what was agreed to cannot drift apart. Empty where you may read only some of the places the claim covers */
             reasoning: string;
             /** @description Whether it applies now. A judgment can be approved and no longer standing — the code moved out from under it */
             standing: boolean;
@@ -9765,7 +9770,7 @@ export interface components {
              */
             sent_back: number;
             since: string;
-            /** @description Each person's throughput, most first */
+            /** @description Each person's throughput, most first. Empty when a team is asked about by anybody but an administrator, because the rows would name its members */
             throughput: components["schemas"]["WorkedBody"][] | null;
             /** @description The wait for a second person, per severity */
             time_to_agree: components["schemas"]["SpreadBody"][] | null;
@@ -9978,7 +9983,7 @@ export interface components {
             window?: string;
             /**
              * Format: int64
-             * @description The window this notice answers, where whoever recorded it named one. A retired window's name may be declared again, so this is what tells the two apart
+             * @description The window this notice answers, where whoever recorded it named one and the caller may read it. A retired window's name may be declared again, so this is what tells the two apart
              */
             window_id?: number;
         };
@@ -10085,7 +10090,7 @@ export interface components {
             undisclosed: boolean;
             /**
              * Format: int64
-             * @description Decisions this returned to the review queue: a claim that the issue does not apply, and a claim over many issues that set this one aside or put it off
+             * @description Decisions you may read that this returned to the review queue: a claim that the issue does not apply, and a claim over many issues that set this one aside or put it off
              */
             undone?: number;
             /** @description The issue this is about */
@@ -11994,6 +11999,7 @@ export interface components {
             issues: number;
             /** @enum {string} */
             justification?: "component_not_present" | "vulnerable_code_not_present" | "vulnerable_code_not_in_execute_path" | "vulnerable_code_cannot_be_controlled_by_adversary" | "inline_mitigations_already_exist";
+            /** @description The reasoning, in markdown. Empty where you may read only some of the places the claim covers */
             reasoning: string;
         };
         SittingBody: {
@@ -15383,7 +15389,7 @@ export interface operations {
                 days?: number;
                 /** @description Limit to judgments made in one product, by name */
                 product?: string;
-                /** @description Limit to judgments this team's members proposed, and to what they themselves agreed to and withdrew, by team name */
+                /** @description Limit to judgments this team's members proposed, and to what they themselves agreed to and withdrew, by team name. Only an administrator is given the per-person rows */
                 team?: string;
             };
             header?: never;

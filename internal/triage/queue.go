@@ -156,10 +156,18 @@ func (s *Store) waitingClaims(subject access.Subject, filter QueueFilter) *bun.S
 	// Mine asks for the reader's own claims waiting on somebody else, in the
 	// same statement, so the count and the page cannot disagree about which
 	// question was asked.
+	//
+	// Otherwise the claims the second-person rule lets the reader agree to:
+	// none of whose rows they proposed and none of whose reasoning they wrote.
+	// Offered one they may not agree to, Approve refuses it for a reason the
+	// list never showed.
 	if filter.Mine {
 		q = q.Where("de.proposed_by = ?", subject.ID)
 	} else {
-		q = q.Where("de.proposed_by <> ?", subject.ID)
+		q = q.Where(`NOT EXISTS (SELECT 1 FROM "decision" AS "own"
+			WHERE "own"."claim_id" = de.claim_id AND "own"."proposed_by" = ?)`, subject.ID).
+			Where(`NOT EXISTS (SELECT 1 FROM "claim_revision" AS "wrote"
+			WHERE "wrote"."claim_id" = de.claim_id AND "wrote"."written_by" = ?)`, subject.ID)
 	}
 	outOfReach, args := notApprovableWhere(subject, `"other"`)
 	return s.reachableClaims(q, outOfReach, args)
@@ -539,8 +547,17 @@ func (s *Store) outliersFor(ctx context.Context, subject access.Subject, claims 
 		Where("id IN (?)", bun.List(issueIDs)).Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read the issues a bulk claim covers: %w", err)
 	}
+	// A flaw recorded where this reader may not read it wrote its summary
+	// onto the issue row every product shares.
+	withheld, err := finding.RecordedOutOfReach(ctx, s.db, subject, issueIDs)
+	if err != nil {
+		return nil, err
+	}
 	byIssue := make(map[int64]finding.Vulnerability, len(issues))
 	for _, issue := range issues {
+		if withheld[issue.ID] {
+			issue.Description = ""
+		}
 		byIssue[issue.ID] = issue
 	}
 	rated, err := finding.RatingsIn(ctx, s.db, productIDs, issueIDs)
@@ -715,13 +732,19 @@ func clip(text string, n int) string {
 }
 
 // ReasoningFor returns the reasoning each decision currently rests on, keyed
-// by decision.
+// by decision, leaving out the reasoning of a claim that holds a row this
+// subject may not read.
 //
 // Read through the claim, which is where the words are: a row of a claim rests
 // on the claim's argument, and asking per row is asking the same question
-// once per place.
-func (s *Store) ReasoningFor(ctx context.Context, decisions []Decision) (map[int64]string, error) {
-	return s.currentReasoning(ctx, decisions)
+// once per place. The argument is about every place of the claim, so a reader
+// of only part of it is not given it.
+func (s *Store) ReasoningFor(ctx context.Context, subject access.Subject, decisions []Decision) (map[int64]string, error) {
+	reasoning, err := s.currentReasoning(ctx, decisions)
+	if err != nil {
+		return nil, err
+	}
+	return reasoning, s.withholdPartReasoning(ctx, subject, decisions, reasoning)
 }
 
 func (s *Store) currentReasoning(ctx context.Context, decisions []Decision) (map[int64]string, error) {

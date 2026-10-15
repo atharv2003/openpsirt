@@ -187,6 +187,7 @@ deployment with one person cannot approve anything.
 | Rule | |
 |---|---|
 | An approval names one revision of the reasoning, not the decision | A second pair of eyes read particular words. An approval floating free of them would still stand after somebody rewrote them, and nothing would report it |
+| Nobody who proposed any row of a claim or wrote any of its reasoning agrees to it | Asked by both writes that make a row stand on an agreement: one given now, and one carried by a re-affirmation (REQ-24) |
 | **The row count is the control, so an engine that cannot report it refuses** | The rows move only while the approved revision is still what the claim rests on, and that condition is checked by counting what moved. Read as optional, the check was skipped on any driver that does not answer — after the approval row was already written |
 | The reasoning is revised, never overwritten; every revision is readable | |
 | Editing the reasoning takes back the approval | The item returns to the queue marked as previously approved rather than as a fresh proposal |
@@ -254,6 +255,7 @@ holds the ones nobody has agreed to yet.
 |---|---|
 | Each list carries the reasoning and the names with the row | A list where seeing why means opening every entry is a list nobody reads before acting. A row saying product 4, issue 91 is two more requests to understand, fifty times a page |
 | Undoing a bulk approval narrows to what the person undoing may reach | A batch is one reviewer's afternoon and may span products |
+| Undoing a bulk approval takes back only the agreements the person undoing gave | A batch is named by whoever gives it, so two reviewers may each hold one of the same name. Undoing one is not a way to withdraw another reviewer's agreement |
 | A claim it reaches only part of is left alone whole | The agreement is one row keyed on the claim, so taking it back takes it back for every row. Returning only the part they reach leaves the rest standing as approved under an agreement the record says was withdrawn, which is the state the approval record exists to make impossible |
 | What an undo reports is what returned to waiting | A decision another agreement still stands on, and one that has ended, is left where it is, so the number of candidates is not the number that moved |
 | Who may read it is the finding's own visibility | The decision, its revisions, the approvals, who acted, and the comments — comments in rather than carved out, because disclosure makes the record mean all three together |
@@ -286,6 +288,7 @@ what became of it, what it wrote, and what it covers now.
 | The state on it is the claim's, never a representative row's | A row's state standing in for the claim's is how one row approved beside forty-three sent back read as approved |
 | What it covers is worked out when it is asked for | A claim reaches by matching, so a build appearing afterwards is covered with nobody acting. What somebody consented to covering is stored with their approval, and is the different question |
 | Refused whole or answered whole | Shown half, a reader would be told about words whose other half is about a finding they may not see |
+| A list showing the rows a reader may read leaves off the reasoning of a claim they may read only part of | The record of judgments, the list of decisions, one decision read alone, and the earlier, similar and elsewhere judgments beside a finding each show a row its reader may read. The reasoning on it is about every place of the claim, so it is shown only where they may read them all |
 | A case grant reaches it | Somebody brought into one issue is offered its decisions by every list they can reach, and a claim offered and then refused reads as a fault rather than as a rule |
 | The counts are narrowed to findings the reader may see | A claim somebody may read can match findings they may not, and a count is the leak even where no row is shown |
 
@@ -578,7 +581,7 @@ by its reason, and a claim waiting for two reasons is in both.
 
 | Reason | Holds | Shown to | Answered by |
 |---|---|---|---|
-| **Approval** | A claim awaiting a second person, and nothing sent back | Whoever may approve every row of it, never its proposer | Approving, sending back, or setting rows aside |
+| **Approval** | A claim awaiting a second person, and nothing sent back | Whoever may approve every row of it, never somebody who proposed any row of it or wrote any of its reasoning | Approving, sending back, or setting rows aside |
 | **Expired deferral** | A deferral, proposed or agreed, whose date has passed | Whoever may decide on every row of it, the proposer included | A new decision |
 | **Missed fix date** | A promised upgrade or patch, proposed or agreed, whose date has passed | Whoever may decide on every row of it, the proposer included | Moving the promise to a new version or date, or a new decision |
 
@@ -709,6 +712,7 @@ A product may record that it was exploited through an issue.
 | Rows set aside from a bulk act are still a bulk act | Setting rows aside makes a claim of its own, followed back to where it began. Otherwise the rule ends one step from where it started |
 | An approver may set the attacked issue aside and agree to the rest | The refusal is asked of the rows being agreed to. One attacked issue does not make a selection of hundreds unanswerable, and what is set aside meets the rule again with its author |
 | A record arriving over either kind of claim is kept, and returns the claim to the queue | A fact cannot be refused and a judgment can. It loses its agreement; a bulk act always needs one. The claim itself stands for somebody to answer again, and whoever wrote it is told |
+| The count of rows returned is of the rows whoever recorded it may read | Every agreement the record contradicts is taken back whatever its visibility. A count of the rest says how much undisclosed work stood on the issue |
 | Agreeing to either kind of claim is refused too | Approving writes no decision row, so it meets nothing the write path checks. A claim proposed before the record arrived and agreed to afterwards is what hides the finding, which is the state the refusal exists to prevent |
 | Refused where a decision is written rather than at each entry point | A claim at a finding, a bulk act, a re-affirmation, an extension carried to another issue and a decision carried across builds all reach one place. Checked at the entry points, the paths nobody checked are the ways round the rule |
 | At the finding, only the claim that the issue does not apply | A claim that the scanner matched the wrong thing is about identity, and the outcomes that promise work or put it off are not contradicted by an attack. Made one finding at a time, each is a judgment somebody made about that finding |
@@ -1215,6 +1219,7 @@ above.
 | A count of re-affirmations deliberately does not trigger it | That would fire on nothing having changed |
 | What may be carried is read from the row, not from what a caller supplied | A caller holding a stale copy would carry an agreement since withdrawn; a caller inventing one would carry an agreement that never existed. A withdrawn decision keeps its approval rows, so without this a version bump would undo a withdrawal |
 | All of it is one transaction | Written as three steps, a process stopping in the middle leaves a claim standing that nobody agreed to and that no review queue shows |
+| Only a decision that lapsed is re-affirmed, with nothing decided at its place since | The rule the list of what is yours to re-affirm holds, asked again of the one decision named. A decision still standing re-made at another version carried its agreement there, and no second person saw the new place |
 | The carried agreement is guarded on the revision | An agreement is an agreement to particular words |
 
 ### Re-affirmation across claims
@@ -1556,7 +1561,8 @@ reasoning at all.
 | A dated judgment carries what it said | A deferral keeps its date, and a patch promise keeps its date. Quietly moving a date forward would be the tool making the judgment it is asking for, and a promise without its date is refused on every write path. The total a deferral has already run for is shown beside it, because that is what agreeing to it again agrees to |
 | **A judgment whose date has gone by is not offered** | It carries its date rather than having it moved forward, so carrying one that has run out writes a claim finished the moment it lands. Offering it is offering something the act behind the button turns down |
 | **A promised upgrade is not carried** | An upgrade covers a component in the releases it names and records what each release is waiting on. A claim carried onto one place writes neither, so the new line would hold a promise its own list of pending upgrades never shows. Planned from the component, naming the new line, it writes both |
-| What is carried is checked like anything else written | The place it builds records whether the new line is a tag, so a dated judgment carried onto a release built once is refused as it is when proposed there |
+| What is carried is checked like anything else written | The place it builds records whether the new line is a tag, so a dated judgment carried onto a release built once is refused as it is when proposed there. Who may write it is asked at the visibility the place has on the new line |
+| A place the carrier may not argue about on the new line is neither offered nor counted | The new line's visibility there may be undisclosed where the old line's was not. A judgment carried onto it would be written on work its carrier may not argue about, and a count of such places says what the new line holds |
 | Bounded, and written in one transaction | Carrying six judgments is one act, and half of it landing is a line nobody can tell from one somebody chose that way |
 
 ## Not built

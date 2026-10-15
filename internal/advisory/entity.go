@@ -16,6 +16,7 @@ import (
 	"github.com/nexthop-ai/openpsirt/internal/bound"
 	"github.com/nexthop-ai/openpsirt/internal/catalog"
 	"github.com/nexthop-ai/openpsirt/internal/database"
+	"github.com/nexthop-ai/openpsirt/internal/filed"
 	"github.com/nexthop-ai/openpsirt/internal/finding"
 	"github.com/nexthop-ai/openpsirt/internal/markdown"
 	"github.com/nexthop-ai/openpsirt/internal/publisher"
@@ -222,7 +223,7 @@ func (s *Store) byName(ctx context.Context, subject access.Subject,
 	if err := s.db.NewSelect().
 		TableExpr(`"advisory_issue" AS "ac"`).
 		ColumnExpr(`COUNT(*) AS "live"`).
-		ColumnExpr(`SUM(CASE WHEN ac.product_id IN (?) THEN 0 ELSE 1 END) AS "beyond"`,
+		ColumnExpr(`SUM(CASE WHEN ac.product_id NOT IN (?) THEN 1 ELSE 0 END) AS "beyond"`,
 			bun.List(seen(subject))).
 		Where("ac.advisory_id = ?", row.ID).
 		Where("ac.removed_at IS NULL").
@@ -259,8 +260,10 @@ func (s *Store) byName(ctx context.Context, subject access.Subject,
 // statement can bind.
 //
 // A person holding every product is answered with nothing, which a binder
-// renders as a null — and a product identifier is never in a list of one null,
-// so a clause asking for the covers outside what they hold finds none. A
+// renders as a null. A product identifier compared against a list of one null
+// is neither in it nor out of it, so the list is safe only in a clause that
+// counts what is NOT IN it: that clause then finds no cover outside what they
+// hold. A clause counting what is IN it finds every cover outside. A
 // person holding no product is given a sentinel no identifier takes, because
 // a statement asking for a list needs something to bind and an empty one is
 // not it.
@@ -337,7 +340,7 @@ func (s *Store) Add(ctx context.Context, subject access.Subject,
 		err := tx.NewSelect().Model(&held).
 			Where("advisory_id = ?", row.ID).
 			Where("product_id = ?", named.ID).
-			Where(finding.FiledUnder("vulnerability_id"), issue.ID).
+			Where(finding.FiledUnder(filed.Issue), issue.ID).
 			Limit(1).Scan(ctx)
 		switch {
 		case err != nil && !database.IsNoRows(err):
@@ -430,7 +433,7 @@ func (s *Store) Drop(ctx context.Context, subject access.Subject,
 			Set("removed_by = ?", subject.ID).
 			Where("advisory_id = ?", row.ID).
 			Where("product_id = ?", named.ID).
-			Where(finding.FiledUnder("vulnerability_id"), issue.ID).
+			Where(finding.FiledUnder(filed.Issue), issue.ID).
 			Where("removed_at IS NULL").
 			Exec(ctx)
 		if err != nil {

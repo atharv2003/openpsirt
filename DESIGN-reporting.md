@@ -378,6 +378,7 @@ a manager has to answer without any of the others.
 | Counted in claims, with the places beside them | A claim is one person's act. Counted by its rows, this would measure how far a component fans out through an image, and the component every image vendors would be the answer every quarter. Both, because ten claims over ten places and one claim over a thousand are different afternoons |
 | What came out of them is part of the answer | Forty arguments that dismissed forty and forty that promised forty upgrades are different quarters, and a report carrying only the volume says they are the same |
 | What a judgment was about is reached through the findings at its place | A decision names a place rather than a component. A judgment about something since removed still names what it was about, which is what a report about where the time went has to keep |
+| Those findings are the judgment's own product's, and ones the reader may read | A place is a pair of names with no product in it, so it matches the same pair in every product, and a component name read off a finding the reader may not read is the disclosure |
 | Dated by when a judgment was proposed | The work happened when it was argued; dating it by its agreement moves it out of the period whenever an approval came late, which is the ordinary case. The same rule the record dates by |
 | It takes the same period and the same scope the other reports do | One product or one team, so a manager reads their own quarter rather than the deployment's. The team is picked on the sheet, from the teams that exist |
 | It pages, and its total counts every row before the limit | A total taken off the page reads a list cut at the limit as complete, and with no offset the rows past the largest page could not be read at all |
@@ -408,6 +409,7 @@ had.
 | It narrows to one product, or to one team's people | Without a scope there are no per-team figures, so a manager asking how their own people are doing reads the deployment's numbers with their name on them |
 | A team narrows the two waits by who **proposed**, and its throughput by who did each piece of work | A claim belongs to whoever argued it, which is the rule the record of judgments dates by — narrowed by the approver, a team's time to agree would be about claims its people agreed to for somebody else. Throughput is a row per person, so it is narrowed by the person the row is about |
 | A team with nobody on it measures nothing | A narrowing that silently widens to the deployment is the one mistake a narrowing must not make |
+| Asked about a team, only an administrator is given the per-person rows | Rows narrowed to a team name its members, and membership is an administrator's to know (DESIGN-access § Teams). Anybody else is given the team's totals |
 
 ## Repeated deferrals
 
@@ -512,6 +514,7 @@ assembled differently every time.
 | Markdown, served as markdown | The same reason the release note is: the point of it is that it goes straight into a reply |
 | Nothing of yours affected is a document, not a refusal | "Are you affected by this" could be answered yes and never no, and the second is the answer an inquiry is usually asking for |
 | An identifier nobody has seen and one that sits only in products you cannot read produce the same document | Told apart, the pair says which issues this deployment holds, one guess at a time |
+| The description, the other names and the addresses are left out where a flaw recorded here about the issue sits where the reader may not read it | The issue row is shared, and a recorded flaw writes its summary, minted name and addresses onto it. `DESIGN-findings.md` § Recorded words on a shared issue holds the rule every reader asks |
 | Every address in it goes through the rule an address stored beside a claim goes through, and names `http`, `https` or `mailto` | It is a document somebody forwards, and a scheme a reader's machine acts on is not something to hand them. Inside angle brackets anything but an absolute address opens markup |
 | Everything else in it that did not pass the submission policy is escaped where it is written | The identifier, description, severity and aliases come from feeds, the component, version and fixed-in version from scan files, and product and person names are not markdown. A reasoning passed the policy when it was typed and is written as it was |
 | It is bounded, and says when the list is a page of a longer one | An issue at a widely vendored component carries hundreds of judgments, and what this is for is being read |

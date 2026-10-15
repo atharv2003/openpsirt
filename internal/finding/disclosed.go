@@ -13,6 +13,7 @@ import (
 
 	"github.com/nexthop-ai/openpsirt/internal/access"
 	"github.com/nexthop-ai/openpsirt/internal/database"
+	"github.com/nexthop-ai/openpsirt/internal/filed"
 	"github.com/nexthop-ai/openpsirt/internal/markdown"
 	"github.com/nexthop-ai/openpsirt/internal/refusal"
 	"github.com/nexthop-ai/openpsirt/internal/setting"
@@ -97,7 +98,7 @@ func (s *Store) Disclose(ctx context.Context, subject access.Subject,
 			// was waiting leaves the queue with nothing left to disclose.
 			waiting, err := tx.NewSelect().Model((*Movement)(nil)).
 				Where("product_id = ?", productID).
-				Where(FiledUnder("vulnerability_id"), vulnerabilityID).
+				Where(FiledUnder(filed.Issue), vulnerabilityID).
 				Where("act = ?", Disclosure).
 				Where("needs_approval = ?", true).
 				Where("approved_at IS NULL").
@@ -122,6 +123,25 @@ func (s *Store) Disclose(ctx context.Context, subject access.Subject,
 		return nil, err
 	}
 	return out, nil
+}
+
+// AnyUndisclosed reports whether any place of this issue in this product is
+// undisclosed, open or closed, whoever is asking.
+//
+// Asked where a statement about the whole issue is made from it, such as the
+// distribution label an advisory carries: one undisclosed place makes the
+// issue embargoed there, whichever place a reader happens to see first.
+func AnyUndisclosed(ctx context.Context, db bun.IDB, productID, vulnerabilityID int64) (bool, error) {
+	held, err := db.NewSelect().
+		TableExpr(`"finding" AS "f"`).
+		Where(HeldAs("f.vulnerability_id"), vulnerabilityID).
+		Where(inThisProductAs("f.target_id"), productID).
+		Where("f.visibility = ?", access.Private).
+		Exists(ctx)
+	if err != nil {
+		return false, fmt.Errorf("read whether this issue is undisclosed: %w", err)
+	}
+	return held, nil
 }
 
 // undisclosedHere reads whether anything of this issue in this product is
@@ -190,7 +210,7 @@ func makePublic(ctx context.Context, db bun.IDB, productID, vulnerabilityID int6
 		Where(`"product_id" = ?`, productID).
 		// Every decision about the issue, including those filed under an
 		// issue that merged into it.
-		Where(FiledUnder(`"vulnerability_id"`), vulnerabilityID).
+		Where(FiledUnder(filed.Issue), vulnerabilityID).
 		Where(`"visibility" = ?`, access.Private).
 		Exec(ctx); err != nil {
 		return fmt.Errorf("disclose the decisions: %w", err)

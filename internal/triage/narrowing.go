@@ -4,7 +4,9 @@
 package triage
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/uptrace/bun"
@@ -60,14 +62,25 @@ func mayApprove(subject access.Subject, productID int64, visibility access.Visib
 		subject.Reads(visibility, productID), mayDecide(subject, productID, visibility))
 }
 
-// mayTakePart reports whether a subject may add to a decision rather than only
-// read it — writing a comment, or changing their own.
+// mayTakePartOn reports whether a subject may add to a decision about one named
+// issue rather than only read it — writing a comment, or changing their own.
 //
 // Taking part asks for triage or the approver capability; reading asks only for
-// the finding's visibility. Named separately from readable so that widening
-// who may read never widens who may comment.
-func mayTakePart(subject access.Subject, productID int64, visibility access.Visibility) bool {
-	return mayApprove(subject, productID, visibility) || mayDecide(subject, productID, visibility)
+// the finding's visibility. Named separately from readableOn so that widening
+// who may read never widens who may comment. Arguing widens by a case grant
+// and agreeing does not.
+func mayTakePartOn(subject access.Subject, productID, vulnerabilityID int64,
+	visibility access.Visibility) bool {
+
+	return mayApprove(subject, productID, visibility) ||
+		mayDecideOn(subject, productID, vulnerabilityID, visibility)
+}
+
+// mayApproveOn is mayApprove in the shape of a rule about one named issue. The
+// issue is not asked: approval stays with the pool that reads the product, so
+// two collaborators cannot be the two people a dismissal asks for.
+func mayApproveOn(subject access.Subject, productID, _ int64, visibility access.Visibility) bool {
+	return mayApprove(subject, productID, visibility)
 }
 
 // readable reports whether a subject may see what was decided.
@@ -184,7 +197,10 @@ func onlyDecidable(query *bun.SelectQuery, subject access.Subject) *bun.SelectQu
 	}
 	products, all := subject.Products()
 	if all {
-		return query
+		if unnarrowedMay(subject, mayDecide) {
+			return query
+		}
+		return query.Where("1 = 0")
 	}
 	both, public, private := access.Split(products, func(v access.Visibility, id int64) bool {
 		return mayDecide(subject, id, v)
@@ -264,7 +280,10 @@ func narrowedBy(query *bun.SelectQuery, subject access.Subject, column string,
 	}
 	products, all := subject.Products()
 	if all {
-		return query
+		if unnarrowedMay(subject, allowed) {
+			return query
+		}
+		return query.Where("1 = 0")
 	}
 
 	both, public, private := access.Split(products, func(v access.Visibility, id int64) bool {
@@ -277,6 +296,63 @@ func narrowedBy(query *bun.SelectQuery, subject access.Subject, column string,
 	return query.Where(where, args...)
 }
 
+// unnarrowedMay reports whether the deployment's own subject passes a rule. It
+// reads everything and holds no role, so a reading rule lets every row through
+// and a rule about triaging or agreeing lets none.
+func unnarrowedMay(subject access.Subject,
+	allowed func(access.Subject, int64, access.Visibility) bool) bool {
+
+	return allowed(subject, 0, access.Public) && allowed(subject, 0, access.Private)
+}
+
+// partlyHidden is which of these claims hold a row this subject may not read.
+//
+// A claim is one argument over every place it was made at, and its reasoning
+// is written about all of them. A list showing the rows a reader may read
+// leaves that reasoning off a claim they may read only part of: shown half,
+// they would read words whose other half is about a finding they may not see,
+// which is the rule claimRows holds for a claim read by its identifier.
+func (s *Store) partlyHidden(ctx context.Context, subject access.Subject,
+	claims []int64) (map[int64]bool, error) {
+
+	hidden := map[int64]bool{}
+	if len(claims) == 0 {
+		return hidden, nil
+	}
+	out, args := notReadableWhere(subject, "dn")
+	var ids []int64
+	if err := s.db.NewSelect().TableExpr(`"decision" AS "dn"`).
+		ColumnExpr("DISTINCT dn.claim_id").
+		Where("dn.claim_id IN (?)", bun.List(claims)).
+		Where(out, args...).
+		Scan(ctx, &ids); err != nil {
+		return nil, fmt.Errorf("read which claims reach past what you may read: %w", err)
+	}
+	for _, id := range ids {
+		hidden[id] = true
+	}
+	return hidden, nil
+}
+
+// notReadableWhere is the condition a decision row meets where the subject may
+// not read it, cases included — the complement of readableBy.
+func notReadableWhere(subject access.Subject, column string) (string, []any) {
+	if subject.Kind != access.Person {
+		return "1 = 1", nil
+	}
+	products, all := subject.Products()
+	if all {
+		return "1 = 0", nil
+	}
+	both, public, private := access.Split(products, func(v access.Visibility, id int64) bool {
+		return readable(subject, id, v)
+	})
+	where, args := access.VisibleWhere(column+".product_id", column+".visibility", both, public, private)
+	where, args = orBrought(subject, where, args, column+".product_id", column+".vulnerability_id")
+	// Neither column is ever null, so negating it is exact.
+	return "NOT (" + where + ")", args
+}
+
 // notApprovableWhere is the condition a decision row meets where the subject
 // may not agree to it — the complement of approvableBy, for asking whether a
 // claim has any row outside what the reader may act on.
@@ -286,7 +362,10 @@ func notApprovableWhere(subject access.Subject, column string) (string, []any) {
 	}
 	products, all := subject.Products()
 	if all {
-		return "1 = 0", nil
+		if unnarrowedMay(subject, mayApprove) {
+			return "1 = 0", nil
+		}
+		return "1 = 1", nil
 	}
 	both, public, private := access.Split(products, func(v access.Visibility, id int64) bool {
 		return mayApprove(subject, id, v)
@@ -306,7 +385,10 @@ func notDecidableWhere(subject access.Subject, column string) (string, []any) {
 	}
 	products, all := subject.Products()
 	if all {
-		return "1 = 0", nil
+		if unnarrowedMay(subject, mayDecide) {
+			return "1 = 0", nil
+		}
+		return "1 = 1", nil
 	}
 	both, public, private := access.Split(products, func(v access.Visibility, id int64) bool {
 		return mayDecide(subject, id, v)

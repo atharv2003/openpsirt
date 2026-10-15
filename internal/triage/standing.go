@@ -12,6 +12,7 @@ import (
 
 	"github.com/nexthop-ai/openpsirt/internal/access"
 	"github.com/nexthop-ai/openpsirt/internal/database"
+	"github.com/nexthop-ai/openpsirt/internal/filed"
 	"github.com/nexthop-ai/openpsirt/internal/finding"
 )
 
@@ -81,7 +82,7 @@ func (s *Store) StandingAt(ctx context.Context, subject access.Subject, productI
 	// is shown: the outcome, the justification, the dates.
 	if err := readableBy(s.db.NewSelect().Model(&rows).Relation("Claim"), subject, "de").
 		Where("de.product_id = ?", productID).
-		Where(finding.FiledUnder("de.vulnerability_id"), issueID).
+		Where(finding.FiledUnder(filed.DecisionIssue), issueID).
 		Where("de.live_key IN (?)", bun.List(keys)).
 		Order("de.id ASC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read what stands here: %w", err)
@@ -215,7 +216,7 @@ func (s *Store) EarlierAt(ctx context.Context, subject access.Subject, productID
 	// With the argument each row applied, which is what is offered back.
 	if err := readableBy(s.db.NewSelect().Model(&rows).Relation("Claim"), subject, "de").
 		Where("de.product_id = ?", productID).
-		Where(finding.FiledUnder("de.vulnerability_id"), issueID).
+		Where(finding.FiledUnder(filed.DecisionIssue), issueID).
 		Where("de.place_identity IN (?)", bun.List(places)).
 		Where("de.state IN (?, ?)", Withdrawn, LapsedState).
 		// Bounded, newest first. This is the whole history of what was
@@ -230,6 +231,9 @@ func (s *Store) EarlierAt(ctx context.Context, subject access.Subject, productID
 	}
 	reasoning, err := s.currentReasoning(ctx, rows)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.withholdPartReasoning(ctx, subject, rows, reasoning); err != nil {
 		return nil, err
 	}
 	var approvals []Approval
@@ -280,7 +284,7 @@ func (s *Store) SimilarAt(ctx context.Context, subject access.Subject, productID
 	var rows []Decision
 	if err := readableBy(s.db.NewSelect().Model(&rows).Relation("Claim"), subject, "de").
 		Where("de.product_id = ?", productID).
-		Where("NOT ("+finding.FiledUnder("de.vulnerability_id")+")", issueID).
+		Where("NOT ("+finding.FiledUnder(filed.DecisionIssue)+")", issueID).
 		Where("de.place_identity IN (?)", bun.List(places)).
 		Where("claim.outcome = ?", NotApplicable).
 		Where("de.state = ?", Approved).
@@ -348,6 +352,9 @@ func (s *Store) SimilarAt(ctx context.Context, subject access.Subject, productID
 	if err != nil {
 		return nil, err
 	}
+	if err := s.withholdPartReasoning(ctx, subject, heads, reasoning); err != nil {
+		return nil, err
+	}
 
 	out := make([]Similar, 0, len(order))
 	for _, id := range order {
@@ -408,7 +415,7 @@ func (s *Store) DecidedElsewhere(ctx context.Context, subject access.Subject, pr
 	var rows []Decision
 	if err := readableBy(s.db.NewSelect().Model(&rows).Relation("Claim"), subject, "de").
 		Where("de.product_id <> ?", productID).
-		Where(finding.FiledUnder("de.vulnerability_id"), issueID).
+		Where(finding.FiledUnder(filed.DecisionIssue), issueID).
 		Where("de.place_identity IN (?)", bun.List(places)).
 		Where("de.state = ?", Approved).
 		Where("de.live_key IS NOT NULL").
@@ -440,6 +447,9 @@ func (s *Store) DecidedElsewhere(ctx context.Context, subject access.Subject, pr
 	}
 	reasoning, err := s.currentReasoning(ctx, picked)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.withholdPartReasoning(ctx, subject, picked, reasoning); err != nil {
 		return nil, err
 	}
 

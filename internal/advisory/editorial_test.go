@@ -10,6 +10,7 @@ import (
 
 	"github.com/nexthop-ai/openpsirt/internal/access"
 	"github.com/nexthop-ai/openpsirt/internal/advisory"
+	"github.com/nexthop-ai/openpsirt/internal/finding"
 )
 
 // standingOn is the agreements standing on what the advisory says now.
@@ -149,6 +150,29 @@ func TestWhoeverWroteWhatAnAdvisorySaysMayNotAgreeToIt(t *testing.T) {
 		}
 		if _, err := f.store.Approve(ctx, f.approver, named); err != nil {
 			t.Errorf("somebody who wrote neither could not agree: %v", err)
+		}
+	})
+}
+
+// A change to what an advisory covers opens an edition that carries the title
+// forward, written by whoever made the change. The title's author still wrote
+// the words standing, and may not agree to them.
+func TestTheAuthorOfACarriedTitleMayNotAgreeToIt(t *testing.T) {
+	each(t, func(t *testing.T, f *fixture) {
+		ctx := t.Context()
+		identifier := f.recorded(t, f.master)
+		named := f.covering(t, [2]string{"sonic", identifier})
+		if _, _, err := f.store.Retitle(ctx, f.approver, named,
+			"Authentication bypass in the recovery console"); err != nil {
+			t.Fatalf("retitling as the second person: %v", err)
+		}
+		// The minter names a second flaw, which opens an edition of theirs
+		// carrying the second person's title.
+		if _, err := f.store.Add(ctx, f.who, named, "sonic", f.recorded(t, f.tagged)); err != nil {
+			t.Fatalf("naming a second flaw: %v", err)
+		}
+		if _, err := f.store.Approve(ctx, f.approver, named); !errors.Is(err, advisory.ErrSamePerson) {
+			t.Errorf("the author of a carried title agreeing to it answered %v", err)
 		}
 	})
 }
@@ -507,6 +531,62 @@ func TestAnIssueTakenOffBeforeAnIssuanceIsNotNamedByIt(t *testing.T) {
 			if got != asked.want {
 				t.Errorf("whether a document named %s answered %v, want %v", asked.what, got, asked.want)
 			}
+		}
+	})
+}
+
+// An issue disclosed at one place and undisclosed at another is embargoed in
+// the product, whichever place was recorded first. The label is decided from
+// every place, and a reader who may see only the disclosed half is refused the
+// document rather than told a label that says the other half exists.
+func TestAnIssueWithAnUndisclosedPlaceIsLabelledByIt(t *testing.T) {
+	each(t, func(t *testing.T, f *fixture) {
+		ctx := t.Context()
+		identifier := f.disclosed(t, f.master)
+		// The same issue at a second release, recorded later and undisclosed.
+		var first finding.Finding
+		if err := f.db.DB.NewSelect().Model(&first).
+			Where("f.target_id = ?", f.master).Where("f.kind = ?", finding.Entered).
+			Limit(1).Scan(ctx); err != nil {
+			t.Fatal(err)
+		}
+		second := first
+		second.ID, second.TargetID = 0, f.tagged
+		second.Visibility = access.Private
+		second.OpenedAt = first.OpenedAt.Add(time.Hour)
+		if _, err := f.db.DB.NewInsert().Model(&second).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+		named := f.covering(t, [2]string{"sonic", identifier})
+
+		doc, err := f.store.ForAdvisory(ctx, f.who, issuer, named)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if label := doc.Document.Distribution.TLP.Label; label != "RED" {
+			t.Errorf("an issue with an undisclosed place is labelled %q", label)
+		}
+
+		disclosedOnly := access.NewPerson(f.second.ID, f.second.Identity, false,
+			map[int64][]access.Role{f.product: {access.PublicRead, access.PublicTriage}}, 0)
+		if _, err := f.store.ForAdvisory(ctx, disclosedOnly, issuer, named); !errors.Is(err, advisory.ErrNoSuchAdvisory) {
+			t.Errorf("a reader of the disclosed half alone generated the document: %v", err)
+		}
+		// Listed or opened by name and then refused its document, the pair
+		// would say an undisclosed place exists, so all three refuse together.
+		if _, _, err := f.store.Covers(ctx, disclosedOnly, named); !errors.Is(err, advisory.ErrNoSuchAdvisory) {
+			t.Errorf("a reader of the disclosed half alone opened the advisory by name: %v", err)
+		}
+		listed, total, err := f.store.List(ctx, disclosedOnly, advisory.Covering{}, 50, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 0 || len(listed) != 0 {
+			t.Errorf("a reader of the disclosed half alone was listed %d advisories", total)
+		}
+		// A reader of both halves is listed it.
+		if _, total, err := f.store.List(ctx, f.who, advisory.Covering{}, 50, 0); err != nil || total == 0 {
+			t.Errorf("a reader of both halves was listed %d advisories: %v", total, err)
 		}
 	})
 }

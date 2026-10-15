@@ -114,6 +114,35 @@ func TestAPersonPageCarriesWhatTheyHoldAndWhatTheyWereTold(t *testing.T) {
 	})
 }
 
+// A role held across every product is on the person page, first, as it is on
+// the people list. Left out, somebody holding the broadest grant there is reads
+// as holding nothing, and beside a capability as reaching no product.
+func TestAPersonPageCarriesARoleHeldEverywhere(t *testing.T) {
+	httpapitest.TwoReach(t, func(t *testing.T, r *httpapitest.Reach) {
+		if got := httpapitest.AsPerson(t, r, "admin", http.MethodPost, "/v1/people",
+			`{"identity":"security-team","holds":[{"role":"private-triage","everywhere":true},`+
+				`{"product":"mine","role":"approver"}]}`); got.Code != http.StatusCreated {
+			t.Fatalf("recording somebody answered %d: %s", got.Code, got.Body.String())
+		}
+		var page struct {
+			Holds []struct {
+				Everywhere bool   `json:"everywhere"`
+				Product    string `json:"product"`
+				Role       string `json:"role"`
+			} `json:"holds"`
+			SeesNothing bool `json:"sees_nothing"`
+		}
+		httpapitest.Read(t, r, "admin", "/v1/people/security-team", &page)
+		if len(page.Holds) != 2 || !page.Holds[0].Everywhere ||
+			page.Holds[0].Role != "private-triage" || page.Holds[0].Product != "" {
+			t.Errorf("a role held everywhere reads as %+v", page.Holds)
+		}
+		if page.SeesNothing {
+			t.Error("somebody triaging every product reads as reaching none")
+		}
+	})
+}
+
 // An auditor reads a person's page without their part in the triage record. It
 // is counted over every product, which the audit grant does not reach, so the
 // block is left out rather than sent as zeros that say the person decided
@@ -177,8 +206,8 @@ func TestLeavingIsRecordedAndCannotLockOutWhoeverRecordsIt(t *testing.T) {
 
 		// And they are out, at once, on the path a browser uses.
 		gone := r.Body(t, "triager", http.MethodGet, "/v1/findings")
-		if gone.Code == http.StatusOK {
-			t.Error("somebody who has left still reads findings")
+		if gone.Code != http.StatusUnauthorized {
+			t.Errorf("somebody who has left reading findings answered %d, want 401", gone.Code)
 		}
 
 		// Not a deletion: they are still a person, and still named by the

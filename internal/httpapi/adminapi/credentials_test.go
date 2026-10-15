@@ -247,3 +247,96 @@ func TestAWithdrawnKeysNameIsGivenToANewKey(t *testing.T) {
 		}
 	})
 }
+
+// An administrator lists every personal token with whose it is, which is the
+// field the list exists to show: a stale token is otherwise found only when
+// somebody leaves.
+func TestAnAdministratorListsEveryTokenWithItsOwner(t *testing.T) {
+	httpapitest.TwoReach(t, func(t *testing.T, r *httpapitest.Reach) {
+		for _, mint := range []struct{ who, body string }{
+			{"private", `{"name":"laptop","lifetime":"24h"}`},
+			{"triager", `{"name":"ci","lifetime":"24h","product":"mine","holds":["public-triage"]}`},
+			{"triager", `{"name":"old","lifetime":"24h"}`},
+		} {
+			if got := httpapitest.AsPerson(t, r, mint.who, http.MethodPost, "/v1/tokens",
+				mint.body); got.Code != http.StatusCreated {
+				t.Fatalf("minting %s answered %d: %s", mint.body, got.Code, got.Body.String())
+			}
+		}
+		if got := httpapitest.AsPerson(t, r, "triager", http.MethodDelete,
+			"/v1/tokens/old", ""); got.Code != http.StatusNoContent {
+			t.Fatalf("withdrawing a token answered %d: %s", got.Code, got.Body.String())
+		}
+
+		got := httpapitest.AsPerson(t, r, "admin", http.MethodGet, "/v1/people/tokens", "")
+		if got.Code != http.StatusOK {
+			t.Fatalf("listing every token answered %d: %s", got.Code, got.Body.String())
+		}
+		if strings.Contains(got.Body.String(), `"secret"`) {
+			t.Errorf("the list carries a secret: %s", got.Body.String())
+		}
+		var listed struct {
+			Items []struct {
+				Name      string   `json:"name"`
+				Owner     string   `json:"owner"`
+				Product   string   `json:"product"`
+				Holds     []string `json:"holds"`
+				Withdrawn bool     `json:"withdrawn"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(got.Body.Bytes(), &listed); err != nil {
+			t.Fatalf("decode: %v (%s)", err, got.Body.String())
+		}
+		byName := map[string]int{}
+		for at, each := range listed.Items {
+			byName[each.Name] = at
+		}
+		if len(listed.Items) != 3 {
+			t.Fatalf("the list holds %+v, want every token minted", listed.Items)
+		}
+		laptop, ci, old := listed.Items[byName["laptop"]], listed.Items[byName["ci"]],
+			listed.Items[byName["old"]]
+		if laptop.Owner != "private" || laptop.Product != "" || len(laptop.Holds) != 0 {
+			t.Errorf("an unnarrowed token reads as %+v", laptop)
+		}
+		if ci.Owner != "triager" || ci.Product != "mine" ||
+			len(ci.Holds) != 1 || ci.Holds[0] != "public-triage" {
+			t.Errorf("a narrowed token reads as %+v", ci)
+		}
+		if old.Owner != "triager" || !old.Withdrawn {
+			t.Errorf("a withdrawn token reads as %+v", old)
+		}
+
+		httpapitest.RefusedWith(t, httpapitest.AsPerson(t, r, "triager", http.MethodGet,
+			"/v1/people/tokens", ""), http.StatusForbidden)
+	})
+}
+
+// A token's roles narrow what its owner holds. An empty list and a list of
+// roles nobody holds each mint a token reaching nothing, so both are refused,
+// and nothing is minted.
+func TestATokenCarryingNoRoleItsOwnerHoldsIsRefused(t *testing.T) {
+	httpapitest.TwoReach(t, func(t *testing.T, r *httpapitest.Reach) {
+		for _, c := range []struct{ what, body, says string }{
+			{"an empty list of roles", `{"name":"nothing","lifetime":"24h","holds":[]}`,
+				"carrying no role"},
+			{"roles the owner does not hold", `{"name":"elsewhere","lifetime":"24h","holds":["public-read"]}`,
+				"hold none of those roles"},
+		} {
+			got := httpapitest.AsPerson(t, r, "triager", http.MethodPost, "/v1/tokens", c.body)
+			httpapitest.RefusedWith(t, got, http.StatusUnprocessableEntity)
+			if !strings.Contains(got.Body.String(), c.says) {
+				t.Errorf("%s was refused as %s", c.what, got.Body.String())
+			}
+		}
+		var listed struct {
+			Items []struct {
+				Name string `json:"name"`
+			} `json:"items"`
+		}
+		httpapitest.Read(t, r, "triager", "/v1/tokens", &listed)
+		if len(listed.Items) != 0 {
+			t.Errorf("a refused token was minted: %+v", listed.Items)
+		}
+	})
+}
