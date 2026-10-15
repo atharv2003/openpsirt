@@ -466,7 +466,11 @@ Turning a rule on is a bulk write. One rule naming a source package sweeps
 thousands of existing unowned issues across every place each sits at, so the
 bound is counted on rows written rather than on the request. The sweep is queued
 work in bounded batches, and a batch that fills its bound queues itself again
-rather than looping in the worker.
+rather than looping in the worker. The next batch is queued before the batch's
+own job is settled, and a failure to queue it fails the job, which is then tried
+again: settled first, a failure to queue stops the sweep with the job recorded as
+having succeeded. A batch run twice places only what nobody holds. The batch
+size is read before a job is claimed, so a failure to read it holds nothing.
 
 A batch is full when it has read a batch's worth, not when it has written one.
 The page is bounded on rows read and the write re-checks the holder at the
@@ -778,6 +782,7 @@ miss the case this exists for and refuse the one it does not care about.
 | A bound identity whose issuer is no longer configured stops the process | One provider at a time is a rule across time, not at one instant (REQ-41). Nothing at sign-in can distinguish a reinterpreted identifier from an ordinary arrival, so the refusal is at startup, where an operator sees it |
 | A row bound before the provider was recorded reads as the one configured now | There is nothing else it could mean, and refusing every one of them would lock out a deployment that never changed provider |
 | A row nobody has bound names no provider | Unbinding clears the identifier and the provider that issued it together. Left behind, a withdrawn binding still reads as a binding nobody withdrew, so unbinding everybody would not be enough to let the new provider start |
+| A match that could not be read is a fault on every way in, answered 500 and logged as an error | Answered as "not authorized", an outage turns every arrival away as though nothing granted them anything, and the log reads as a run of strangers |
 
 ### The way in without the provider
 

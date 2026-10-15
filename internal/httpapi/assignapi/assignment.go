@@ -425,7 +425,8 @@ func registerAssignmentReading(api huma.API, in core.Deps) {
 		if input.Identity != "me" {
 			rights := access.NewStore(in.DB.DB)
 			person, err := rights.ByIdentity(ctx, input.Identity)
-			if err != nil {
+			switch {
+			case errors.Is(err, access.ErrNoSuchPerson):
 				// A name nobody holds answers exactly as a name somebody holds
 				// whose work this caller cannot see: an empty list. Refusing
 				// instead would answer "does this person have an account here"
@@ -435,7 +436,10 @@ func registerAssignmentReading(api huma.API, in core.Deps) {
 				// anyway, so nothing is lost by answering it for a name that
 				// reaches nobody.
 				holders = []int64{core.Nobody}
-			} else {
+			case err != nil:
+				// A read that could not be made is not that answer.
+				return nil, core.WentWrong(in.Logger, "that person could not be looked up", err)
+			default:
 				teams, err := rights.TeamsOf(ctx, person.ID)
 				if err != nil {
 					return nil, core.WentWrong(in.Logger,
@@ -625,7 +629,15 @@ func locateFinding(ctx context.Context, in core.Deps, subject access.Subject,
 // work.
 func seenBy(ctx context.Context, in core.Deps, identity string, productID int64, undisclosed bool) bool {
 	them, err := access.NewStore(in.DB.DB).Resolve(ctx, identity)
-	if err != nil {
+	switch {
+	case errors.Is(err, access.ErrDenied):
+		// Somebody granted nothing, or nobody: there is no one to tell.
+		return false
+	case err != nil:
+		// A read that failed drops the notice, and says so: a notification
+		// that could not be sent is logged rather than failing the act.
+		in.Log().ErrorContext(ctx, "could not say that work was assigned",
+			"person", identity, "error", err)
 		return false
 	}
 	if undisclosed {

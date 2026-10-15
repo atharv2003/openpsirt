@@ -3749,7 +3749,7 @@ export interface paths {
          *
          *     It places only work nobody holds. A human assignment always wins, and adding a rule never takes something out of somebody's hands.
          *
-         *     Applying it to what is open is queued rather than done here. The reply says the rule was recorded, not that the sweep has finished.
+         *     Applying it to what is open is queued rather than done here. The reply says the rule was recorded, not that the sweep has finished. Where the queue is full the rule is not recorded and the answer is 503: send it again later.
          *
          *     Requires: assigner on the product. A rule hands work to somebody, continuously, on behalf of whoever wrote it.
          */
@@ -4571,7 +4571,7 @@ export interface paths {
          *
          *     The release is the newest one cut from this branch, built the same way, that has been scanned here — a branch built for one chip beside a release built for another compares two different pieces of software and reads as a regression somebody then goes looking for.
          *
-         *     Both sides come from scans already collected, so this asks nothing new of a build pipeline. Where there is nothing to compare against, `shipped` is absent and `why` says what is missing rather than reporting zeroes, because a release that shipped clean and a release nobody scanned are not the same answer.
+         *     Both sides come from scans already collected, so this asks nothing new of a build pipeline. Where there is nothing to compare against, `shipped` is absent and `why` says what is missing rather than reporting zeroes, because a release that shipped clean and a release nobody scanned are not the same answer. A build nothing has scanned, declared and never built or with every upload refused, answers with zeroes, no `last_scanned_at`, and `why` saying nothing has been scanned there yet.
          *
          *     Counted as issues at components at or above the deployment's line, which `floor` names.
          *
@@ -7808,6 +7808,8 @@ export interface components {
             stated?: components["schemas"]["StatedBody"];
             /** @description The CVE record lines stating this version is unaffected. Only on a row closed as unaffected */
             unaffected?: components["schemas"]["RecordLineBody"][] | null;
+            /** @description Whether the CVE record lines this row was closed by were recorded and cannot be read back */
+            unaffected_unreadable?: boolean;
             version?: string;
             vulnerability: string;
         };
@@ -10919,7 +10921,7 @@ export interface components {
             floor?: string;
             now: components["schemas"]["BuildCountsBody"];
             shipped?: components["schemas"]["BuildCountsBody"];
-            /** @description The missing half, where there is nothing to compare against */
+            /** @description The missing half, where there is nothing to compare against, or that nothing has been scanned here yet */
             why?: string;
         };
         "Reaffirm-claimRequest": {

@@ -212,7 +212,7 @@ The caller states whether a job commits with the rows it is about.
 | Mode | Used for | Failure mode it prevents |
 |---|---|---|
 | Commit with the rows | Work describing something the same transaction wrote, such as an upload | A job committed alone can be claimed before its rows exist; rows committed without their job are work nobody picks up |
-| Queue afterwards | Work that merely follows a write, such as sweeping routing rules after a rule is recorded | None. A failure to queue is logged rather than returned, because the rule is recorded either way and an error would invite a retry that records it twice |
+| Queue on its own | Work no write of the same act describes: a build the periodic pass finds due, the next batch of a routing sweep, an overtaken scan read again | None needed. Nothing was written beside it, so a failure to queue is returned to whatever asked and leaves no rows waiting on a job |
 
 Every write the queue makes of its own — queueing, claiming, renewing,
 finishing, failing, setting aside, putting back, and taking or handing back a
@@ -223,7 +223,7 @@ own.
 |---|---|
 | A cluster refuses at commit, not at the statement | See `DESIGN-database.md` § Retryable transactions. A write outside a transaction cannot be retried at all: the failure arrives where there is nothing left to go again |
 | Finishing is the write where it costs most | Reported up rather than retried, a job that finished is recorded by its caller as failed and handed out again. The work runs twice, which on an ingest looks like real change |
-| A finish whose commit was refused asks the row rather than assuming | A second attempt covers both "somebody else holds it now" and "the commit succeeded and the answer never arrived". Work that is finished is finished, and reporting a lost claim for it would record a failure against a job that succeeded |
+| An ending whose commit was refused asks the row rather than assuming | A second attempt covers both "somebody else holds it now" and "the commit succeeded and the answer never arrived". A finish reads as done; a failure and a postponement read as unclaimed, with their own reason; a job put back reads as no longer set aside, where an earlier attempt matched it. Reporting a lost claim for an ending that landed has the caller record a takeover that did not happen, and reporting a job as not set aside after it was put back tells an operator their act did nothing |
 | A lease take that is refused would read as losing a race | A replica told it lost a race it never ran stops sweeping, with nothing logged, on every replica at once |
 | The moment a write compares against is read inside each attempt | A retry runs after a pause. A claim judging staleness by the moment before the first attempt misses a job that went stale during it, and a lease taken again runs short by the pause |
 

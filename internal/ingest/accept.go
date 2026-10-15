@@ -393,7 +393,8 @@ func (s *Store) byContent(ctx context.Context, targetID int64, hash string) (*Sc
 func (s *Store) ByID(ctx context.Context, id int64) (*Scan, error) {
 	var scan Scan
 	if err := s.db.NewSelect().Model(&scan).Where("id = ?", id).Scan(ctx); err != nil {
-		return nil, fmt.Errorf("%w: %d: %w", ErrNoScan, id, err)
+		return nil, database.FromRead(err, fmt.Errorf("%w: %d", ErrNoScan, id),
+			fmt.Sprintf("read scan %d", id))
 	}
 	return &scan, nil
 }
@@ -413,7 +414,7 @@ func (s *Store) MarkFailed(ctx context.Context, id int64, cause error) error {
 	reason := ""
 	switch {
 	case cause == nil:
-	case refusal.In(cause) && !database.FromEngine(cause):
+	case database.Publishable(cause):
 		reason = cause.Error()
 	default:
 		reason = "the scan could not be applied"

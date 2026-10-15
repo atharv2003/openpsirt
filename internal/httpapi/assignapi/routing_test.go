@@ -14,6 +14,7 @@ import (
 	"github.com/nexthop-ai/openpsirt/internal/finding"
 	"github.com/nexthop-ai/openpsirt/internal/httpapi/httpapitest"
 	"github.com/nexthop-ai/openpsirt/internal/queue"
+	"github.com/nexthop-ai/openpsirt/internal/setting"
 )
 
 func TestARuleRoutesWorkNobodyHoldsAndTakesNothingFromAnybody(t *testing.T) {
@@ -168,6 +169,17 @@ func TestRetiringARuleLeavesWhatItPlaced(t *testing.T) {
 		if len(after.Items) != 1 || after.Items[0].Open != placed {
 			t.Errorf("retiring a rule took back what it placed: %+v", after.Items)
 		}
+
+		// A second click, and an identifier nothing here declared, are both a
+		// rule not in use: the caller's to know, not a fault.
+		for _, id := range []int64{rules.Items[0].ID, rules.Items[0].ID + 1000} {
+			if again := httpapitest.AsPerson(t, r, "assigner", http.MethodDelete,
+				"/v1/products/mine/routing-rules/"+httpapitest.Itoa(id),
+				""); again.Code != http.StatusNotFound {
+				t.Errorf("retiring rule %d, not in use, answered %d: %s", id, again.Code,
+					again.Body.String())
+			}
+		}
 	})
 }
 
@@ -281,6 +293,81 @@ func TestASweepDoesNotStopBecauseSomebodyTookOneRow(t *testing.T) {
 		if left != 0 {
 			t.Errorf("%d findings the rule matches are still unrouted after the "+
 				"sweep ran to the end", left)
+		}
+	})
+}
+
+// A full batch whose continuation cannot be queued is not a sweep that
+// finished. Settled as done, the rest of the product stays unrouted until
+// somebody saves another rule, and nothing says so.
+func TestASweepThatCannotQueueTheRestIsNotReportedFinished(t *testing.T) {
+	httpapitest.EachReach(t, func(t *testing.T, r *httpapitest.Reach) {
+		ctx := t.Context()
+		r.ScannedSiblings(t)
+		if made := httpapitest.AsPerson(t, r, "admin", http.MethodPost, "/v1/teams",
+			`{"name":"curlers","members":["triager"]}`); made.Code != http.StatusCreated {
+			t.Fatal(made.Body.String())
+		}
+		if made := httpapitest.AsPerson(t, r, "assigner", http.MethodPost,
+			"/v1/products/mine/routing-rules",
+			`{"name":"curl to the curlers","team":"curlers","upstream":"curl"}`,
+		); made.Code != http.StatusCreated {
+			t.Fatalf("adding a rule answered %d: %s", made.Code, made.Body.String())
+		}
+
+		work := queue.New(r.DB, queue.DefaultOptions())
+		// The rule's own sweep is waiting, and another beside it. With room
+		// for one waiting routing job, claiming the first leaves the second
+		// filling the queue, so the rest of the first cannot be queued.
+		if _, err := work.Add(ctx, queue.Route, "another product"); err != nil {
+			t.Fatal(err)
+		}
+		if err := setting.NewStore(r.DB.DB).Set(ctx, setting.QueueBacklog, "1"); err != nil {
+			t.Fatal(err)
+		}
+		sweeper := finding.NewSweeperOfSize(r.DB, work,
+			slog.New(slog.NewTextHandler(io.Discard, nil)), "test", 1)
+		if _, err := sweeper.Once(ctx); err == nil {
+			t.Fatal("a full batch whose continuation could not be queued reported success")
+		}
+		done, err := r.DB.DB.NewSelect().Table("job").
+			Where("kind = ?", queue.Route).Where("state = ?", queue.Done).Count(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if done != 0 {
+			t.Error("the sweep was settled as done with the rest of the product unrouted")
+		}
+	})
+}
+
+// A rule and the sweep that applies it to what is open commit together. A
+// rule recorded without its sweep leaves every open finding it covers unrouted
+// until another rule is saved, so a full queue refuses the rule.
+func TestARuleWhoseSweepCannotBeQueuedIsNotRecorded(t *testing.T) {
+	httpapitest.TwoReach(t, func(t *testing.T, r *httpapitest.Reach) {
+		ctx := t.Context()
+		if made := httpapitest.AsPerson(t, r, "admin", http.MethodPost, "/v1/teams",
+			`{"name":"curlers","members":["triager"]}`); made.Code != http.StatusCreated {
+			t.Fatal(made.Body.String())
+		}
+		if _, err := queue.New(r.DB, queue.DefaultOptions()).Add(ctx, queue.Route,
+			"another product"); err != nil {
+			t.Fatal(err)
+		}
+		if err := setting.NewStore(r.DB.DB).Set(ctx, setting.QueueBacklog, "1"); err != nil {
+			t.Fatal(err)
+		}
+		httpapitest.RefusedWith(t, httpapitest.AsPerson(t, r, "assigner", http.MethodPost,
+			"/v1/products/mine/routing-rules",
+			`{"name":"curl to the curlers","team":"curlers","upstream":"curl"}`),
+			http.StatusServiceUnavailable)
+		rules, err := r.DB.DB.NewSelect().Table("routing_rule").Count(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rules != 0 {
+			t.Error("a rule whose sweep could not be queued was recorded")
 		}
 	})
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/nexthop-ai/openpsirt/internal/ingest"
 	"github.com/nexthop-ai/openpsirt/internal/queue"
 	"github.com/nexthop-ai/openpsirt/internal/sbom"
+	"github.com/nexthop-ai/openpsirt/internal/setting"
 	"github.com/uptrace/bun"
 )
 
@@ -168,6 +169,82 @@ func TestAnAcceptedScanBecomesStoredGraph(t *testing.T) {
 		}
 		if waiting.Reference != strconv.FormatInt(f.branch, 10) {
 			t.Errorf("left a scan of %q, want the target just read", waiting.Reference)
+		}
+	})
+}
+
+// A full scan backlog is not the read's failure. The inventory is stored and
+// the scan accepted, and the periodic pass queues the scan once the queue
+// drains.
+func TestAScanReadIntoAFullBacklogIsStillApplied(t *testing.T) {
+	eachReader(t, func(t *testing.T, f *readerFixture) {
+		ctx := t.Context()
+		scanID := f.accept(t, f.branch, time.Now().UTC().Add(-time.Hour), anInventory)
+		if err := setting.NewStore(f.db.DB).Set(ctx, setting.QueueBacklog, "1"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.queue.Add(ctx, queue.Scan, "somebody else's build"); err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := f.reader.Once(ctx)
+		if err != nil {
+			t.Fatalf("a read into a full backlog failed: %v", err)
+		}
+		if result == nil || result.ScanID != scanID {
+			t.Fatalf("read %+v, want scan %d", result, scanID)
+		}
+		read, err := ingest.NewStore(f.db.DB).ByID(ctx, scanID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if read.Status != ingest.Accepted || read.Failure != "" {
+			t.Errorf("the scan reads %q with %q", read.Status, read.Failure)
+		}
+	})
+}
+
+// The scan an inventory leaves to be done commits with the graph. A failure
+// to queue it that is not a full backlog fails the read with nothing applied:
+// committed first, the graph stands while the read reports failure, which
+// marks an applied scan failed.
+func TestAScanThatCannotBeQueuedLeavesNothingApplied(t *testing.T) {
+	eachReader(t, func(t *testing.T, f *readerFixture) {
+		ctx := t.Context()
+		f.accept(t, f.branch, time.Now().UTC().Add(-time.Hour), anInventory)
+		// The queue's own table, moved away between the parse and the
+		// transaction that applies it, so queueing the scan is the statement
+		// that fails.
+		away := func(from, to string) {
+			t.Helper()
+			if _, err := f.db.ExecContext(context.WithoutCancel(ctx),
+				`ALTER TABLE "`+from+`" RENAME TO "`+to+`"`); err != nil {
+				t.Fatal(err)
+			}
+		}
+		moved := false
+		t.Cleanup(func() {
+			if moved {
+				away("job_away", "job")
+			}
+		})
+		reader := f.reading(sbom.Limits{}).BeforeApplying(func() {
+			away("job", "job_away")
+			moved = true
+		})
+
+		_, err := reader.Once(ctx)
+		away("job_away", "job")
+		moved = false
+		if err == nil {
+			t.Fatal("a read whose scan could not be queued reported success")
+		}
+		nodes, err := nodesNow(ctx, f.db.DB, f.branch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(nodes) != 0 {
+			t.Errorf("%d nodes stand from a read that failed", len(nodes))
 		}
 	})
 }

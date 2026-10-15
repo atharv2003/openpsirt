@@ -6,10 +6,15 @@ package sbom
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 
+	"github.com/nexthop-ai/openpsirt/internal/bound"
 	"github.com/nexthop-ai/openpsirt/internal/refusal"
 )
+
+// mostQuoted is how much of a document's own token a refusal quotes.
+const mostQuoted = 64
 
 // errTooLarge is returned when a document runs past the size it is allowed.
 var errTooLarge = refusal.New("document is larger than the configured limit")
@@ -63,10 +68,47 @@ type bounded struct {
 	dec      *json.Decoder
 	maxDepth int
 	depth    int
+	src      *source
 }
 
-func newBounded(r io.Reader, maxDepth int) *bounded {
-	return &bounded{dec: json.NewDecoder(r), maxDepth: maxDepth}
+// newBounded reads r as JSON, at most maxBytes of it and nested at most
+// maxDepth deep.
+func newBounded(r io.Reader, maxBytes int64, maxDepth int) *bounded {
+	src := &source{r: r}
+	return &bounded{
+		dec:      json.NewDecoder(&capped{r: src, left: maxBytes}),
+		maxDepth: maxDepth,
+		src:      src,
+	}
+}
+
+// source is the reader beneath a document, and what it failed with.
+//
+// A read that failed is a fault of whatever was read from, not of the
+// document: a connection cut short, or stored bytes let go partway through.
+// Wrapped as a refusal, it would be published to the sender as a fault in
+// their file.
+type source struct {
+	r   io.Reader
+	err error
+}
+
+func (s *source) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if err != nil && err != io.EOF {
+		s.err = err
+	}
+	return n, err
+}
+
+// refused states what went wrong reading the document under what, as a
+// refusal where the document is at fault and as a fault where the reader
+// beneath it failed.
+func (b *bounded) refused(what string, err error) error {
+	if b.src.err != nil {
+		return fmt.Errorf("%s: %w", what, b.src.err)
+	}
+	return refusal.Errorf("%s: %w", what, err)
 }
 
 // token reads the next token, stating a document that ends inside a value in
@@ -78,7 +120,7 @@ func newBounded(r io.Reader, maxDepth int) *bounded {
 // own.
 func (b *bounded) token() (json.Token, error) {
 	tok, err := b.dec.Token()
-	if errors.Is(err, io.ErrUnexpectedEOF) {
+	if errors.Is(err, io.ErrUnexpectedEOF) && b.src.err == nil {
 		return nil, refusal.New("the document ends partway through a value")
 	}
 	return tok, err
@@ -158,7 +200,9 @@ func (b *bounded) open(want json.Delim) error {
 		return err
 	}
 	if tok != want {
-		return refusal.Errorf("want %v, got %v", want, tok)
+		// The token is the document's own, and a string token is as long as
+		// the document lets it be.
+		return refusal.Errorf("want %v, got %s", want, bound.Head(fmt.Sprint(tok), mostQuoted))
 	}
 	return b.enter()
 }

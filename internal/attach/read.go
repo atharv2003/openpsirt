@@ -197,7 +197,7 @@ func (s *Store) Redact(ctx context.Context, subject access.Subject, token, reaso
 		return access.Denied("redact an attachment")
 	}
 	if strings.TrimSpace(reason) == "" {
-		return fmt.Errorf("say why the file is being removed")
+		return ErrNoReason
 	}
 	row := new(Attachment)
 	err := s.db.NewSelect().Model(row).Where("token = ?", strings.TrimSpace(token)).Scan(ctx)
@@ -406,8 +406,14 @@ func (s *Store) Issue(ctx context.Context, subject access.Subject,
 	// That the issue exists says nothing until it is known to be *here*: an
 	// identifier filed against another product would otherwise confirm itself
 	// against this one.
+	// Only a refusal folds into the issue not being here. A read that could
+	// not be made is a fault, and folded in, an outage tells the caller the
+	// issue is gone.
 	if err := mayReach(ctx, s.db, subject, named.ID, issue); err != nil {
-		return 0, 0, ErrNoSuchIssue
+		if errors.Is(err, access.ErrDenied) {
+			return 0, 0, ErrNoSuchIssue
+		}
+		return 0, 0, err
 	}
 	return named.ID, issue, nil
 }
@@ -415,3 +421,7 @@ func (s *Store) Issue(ctx context.Context, subject access.Subject,
 // ErrNoSuchIssue is the one answer for an issue that is not here, one nobody
 // may see, and a product that is neither.
 var ErrNoSuchIssue = fmt.Errorf("no issue here goes by that name")
+
+// ErrNoReason is a redaction that says nothing about why: a reason of nothing
+// but spaces passes a length bound and is no reason.
+var ErrNoReason = fmt.Errorf("say why the file is being removed")

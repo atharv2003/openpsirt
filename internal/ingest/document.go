@@ -190,8 +190,13 @@ func (d *Documents) Sent(ctx context.Context, scanIDs []int64) (map[int64][]Docu
 //
 // A document is tens of megabytes and there is no reason to hold one in memory
 // to hand it to a reader that only ever moves forwards.
-func (d *Documents) Open(ctx context.Context, documentID int64) io.Reader {
-	return &chunkReader{ctx: ctx, db: d.db, documentID: documentID}
+//
+// Its parts are read one at a time and not in one snapshot, so a document let
+// go while it is read runs out of parts before its size. That ends the stream
+// with ErrReleased: ended cleanly, a reader takes the bytes it got for the
+// whole document.
+func (d *Documents) Open(ctx context.Context, doc *Document) io.Reader {
+	return &chunkReader{ctx: ctx, db: d.db, documentID: doc.ID, size: doc.SizeBytes}
 }
 
 // Discard lets go of a scan's contents, keeping the record of what arrived.
@@ -248,15 +253,27 @@ func (d *Documents) Discard(ctx context.Context, scanID int64) error {
 	})
 }
 
+// ErrReleased ends a document's stream when the document was let go while it
+// was read.
+//
+// A fault rather than a refusal, and not the unexpected end of file a JSON
+// decoder reports for a file ending inside a value: the bytes that arrived
+// were whole, and stating it as a truncated file blames whoever sent them.
+var ErrReleased = errors.New("the document was let go while it was read")
+
 // chunkReader walks a document's rows in order.
 type chunkReader struct {
 	ctx        context.Context
 	db         bun.IDB
 	documentID int64
-	next       int
-	held       []byte
-	done       bool
-	err        error
+	// size is how many bytes the document holds, and read how many have been
+	// handed over.
+	size int64
+	read int64
+	next int
+	held []byte
+	done bool
+	err  error
 }
 
 func (c *chunkReader) Read(p []byte) (int, error) {
@@ -273,6 +290,10 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 			Where("seq = ?", c.next).
 			Limit(1).Scan(c.ctx)
 		switch {
+		case errors.Is(err, sql.ErrNoRows) && c.read < c.size:
+			// Its parts ran out before its size: let go while it was read.
+			c.err = ErrReleased
+			return 0, c.err
 		case errors.Is(err, sql.ErrNoRows):
 			c.done = true
 			return 0, io.EOF
@@ -285,6 +306,7 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 	}
 	n := copy(p, c.held)
 	c.held = c.held[n:]
+	c.read += int64(n)
 	return n, nil
 }
 

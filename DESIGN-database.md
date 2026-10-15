@@ -984,13 +984,21 @@ it is the state the record exists to prevent, and a write that succeeded beside
 a record that failed produced exactly that. A failure to record fails the act,
 and the caller retries a request that changed nothing.
 
-What follows the commit is what is not part of the act:
-
-| Outside | Why |
+| Inside the act | Why |
 |---|---|
-| A job queued for what was written | A job pointing at an uncommitted graph is worse than one queued a moment late, so it is asked for after the commit — and a full backlog is not the write's failure |
-| Work handed back when somebody loses their last role | A consequence of the withdrawal rather than part of it, and bounded by how much that person was holding rather than by the request |
+| A job queued for what was written | The job and the rows it describes commit together. Queued after the commit, a failure to queue is reported as the write failing once the write has landed, or the rows stand with nothing ever picking them up |
+| Work handed back when somebody loses their last role | Done after the withdrawal, a failure leaves the role gone and the work with somebody who can no longer open it, and asking again answers that there is no such grant before it reaches the hand-back. It is bounded by how much that person was holding |
+
+| Job | A full queue |
+|---|---|
+| Parsing an upload | Refuses the upload with 503, and nothing is stored |
+| Applying a saved routing rule to what is open | Refuses the rule with 503, and nothing is recorded. Nothing else sweeps for a rule |
+| Scanning an inventory a read stored | Is not the read's failure. The periodic pass asks again once the queue has drained |
+
+| Outside the act | Why |
+|---|---|
 | The deadline rewrite a policy change forces | Bounded by how much is open, measured at nineteen seconds against 441,108 findings, which is longer than a request |
+| A read made to name things in the answer | `DESIGN-api.md` § Refusal shape holds the rule |
 
 A store handed a transaction joins it rather than refusing. Three spellings
 exist:

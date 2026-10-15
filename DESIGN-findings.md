@@ -482,6 +482,11 @@ and looks up every due commit in it, most urgent first.
 | The lease was lost, or the process is shutting down | Nothing. The repository is left as it was before the visit began, a failure from an earlier visit included |
 | This deployment failed: the database or the lease | Nothing, and the failure is logged. A dropped connection is not the repository's fault, and recorded as one it would put the repository out of reach for a day |
 
+| Rule | Reason |
+|---|---|
+| A git that has to stop is asked to, and killed only if it has not stopped a minute later | Asked, git removes the lock files it holds. Killed mid-write, it leaves them, and git then refuses every later fetch or index write into that copy |
+| Lock files found in a copy before a visit writes into it are removed | A git killed anyway — out of memory, or past the minute — leaves them, and the copy then fails every visit. Only this pass writes into a copy, one visit at a time, so a lock found before a visit is one nobody holds |
+
 The lease is taken again every minute for the whole of a visit, the fetch and
 the index write included. A first fetch of the kernel from
 kernel.org takes a quarter of an hour, and the lease is half an hour. A
@@ -1261,7 +1266,9 @@ changes on top of 6.18.55, and those changes are what a record cannot speak for.
 
 The lines are kept on the closed row, because the snapshot the run read is
 replaced by the next. The run records which snapshot it read, beside the
-scanner's data version (REQ-13).
+scanner's data version (REQ-13). The lines are read back in the shape the run wrote
+them in, the record's own. Lines kept and unreadable are stated on the register
+row and logged, so the row does not read as a closure nothing was recorded for.
 
 | A scan without a snapshot to read | |
 |---|---|

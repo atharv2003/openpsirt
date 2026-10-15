@@ -123,10 +123,17 @@ refuse it.
 |---|---|
 | Not found | The product, stream or variant is not declared. The message names which |
 | Bad request | The build time is ahead of this deployment's clock |
-| Conflict | Something newer, or something with the same build time, is already held |
-| Unprocessable | The inventory could not be read at all |
+| Conflict | Something newer, or something with the same build time, is already held; or the product, stream or variant is retired |
+| Unprocessable | The inventory could not be read at all, or more suppression documents arrived than one scan may carry |
 | Payload too large | The request is larger than twice the document bound, refused unread where it declares its length |
 | Service unavailable | Too much is already waiting to be read, or this server is already reading as many uploads as `upload.max-concurrent` allows. The second carries a time to retry after |
+
+Every refusal past authorization is recorded against the build, the ones above
+included. A refusal before it — a name not declared, a sender who may not file
+there — records nothing, so a sender who may not file against a build cannot
+write rows about it. The reason recorded for an upload that could not be read is
+what was wrong with it, which the producer is also handed among the answer's
+errors.
 
 Already held is a success, because the ordinary case is a retry after a timeout
 that had in fact succeeded.
@@ -192,6 +199,15 @@ A document whose contents were released answers 410, not 404. On screen, one
 still held is a link and one released is not: a link answering 410 is a control
 that looks like it works.
 
+A document is read back one part at a time rather than in one snapshot, so one
+released while it is read runs out of parts before its size. The stream then
+ends in an error rather than cleanly: the background reader fails the read
+instead of parsing part of a document as all of it, and a download already
+answered 200 ends short of the length it declared and is logged. The error is a
+fault, and the parser passes a failed read beneath it through as one, so the
+producer's receipt carries the fixed sentence rather than a refusal of bytes
+that arrived whole.
+
 ## Scan application
 
 A worker claims the scan, reads its documents, and applies what they describe.
@@ -204,6 +220,12 @@ and finding that out while the producer still has the build in front of them is
 worth more than finding out later. What the build argued is stored against the
 target rather than the scan, because it is what the next vulnerability scan
 has to apply, and by then the documents may be gone.
+
+The scan job is queued in the transaction that applies the scan, so the graph
+and the work to scan it commit together. A full backlog does not fail the read:
+the periodic pass queues the scan once the queue drains. A branch's documents
+are let go after the apply commits, and a failure there is logged and leaves the
+scan applied.
 
 A failure is recorded against the scan, not only against the job. A job that
 keeps retrying is visible only to whoever operates the deployment, which is the
@@ -707,7 +729,7 @@ budget, and every bound is configurable.
 | Bounded | Rule |
 |---|---|
 | The report's size | Past the ceiling the run fails. It is not read in part: half a report reads as a product that stopped having problems, which is the failure every other rule here exists to prevent |
-| What the scanner said while running | Past the ceiling the excess is dropped and the run stands. A scanner with a lot to say still scanned |
+| What the scanner said while running | Past the ceiling the beginning is dropped and the end kept, and the run stands. A scanner with a lot to say still scanned, and one that failed says why on its last lines |
 | How many matches one report states | Charged as each match is read rather than after the array, because what a bound stops is the walk |
 | How many addresses one match points at | Bounded separately, because the two multiply: a report inside the match ceiling is still a report of one match pointing at everything |
 | One execution's wall-clock time | A scanner that has stopped making progress fails as a run that failed rather than holding a worker. It stays below the ceiling on one hold (`DESIGN-queue.md`), and the process refuses to start where it does not |
@@ -998,16 +1020,21 @@ document has been read.
 | A document is read before its digest is asked for | A statement set listed beside the advisories is set aside whatever its digest says, and a distribution lists tens of thousands of them |
 | The digest a feed entry names is the one read; otherwise the file beside the document | The format puts it at the document's address with the algorithm's suffix, and a feed entry may name it outright. One https address per algorithm is taken from an entry, which bounds what one entry can ask for |
 | Both SHA-256 and SHA-512 are read, and whichever answered is asked for first after | Publishers split between them, and each serves one kind beside every document, so the one a publisher does not serve is asked for once a pass |
-| A publisher serving no digest is read unchecked | The format asks for one of its trusted providers only. A refusal, a page in place of a digest, a redirect, a host an administrator excluded, or nothing at all means none is served; a publisher that cannot be reached for the digest holds the mark, the way it does for a document. After two documents in a row with none beside them, the rest of the pass does not ask |
+| A publisher serving no digest is read unchecked | The format asks for one of its trusted providers only. A refusal, a page in place of a digest, a redirect, a host an administrator excluded, or nothing at all means none is served; a publisher that cannot be reached for the digest, or that answers it with a rate limit, holds the mark, the way it does for a document. After two documents in a row with none beside them, the rest of the pass does not ask |
 | A VEX document in the same feed is left alone | A publisher's statement set replaces their whole answer for a product. Setting that aside is a judgment, and a pass on a timer makes none — it is taken by uploading it |
 | One replica reaches out, settled by a lease | The politeness the pass keeps to is a rate per deployment rather than per replica, and three replicas each keeping to it would be three times the traffic at a publisher's expense |
 | The lease is taken again as the pass runs, between suppliers and before each document | A document is up to three requests with a timeout each — itself and two digest files — so one supplier's pass outlasts a lease sized for the interval, and a slow publisher handing the pass to a second replica mid-flight is what a lease exists to prevent. A pass that loses the lease leaves the supplier due |
 | Bounded per supplier per wake, and a supplier that filled its bound stays due | A publisher having a busy week is not a reason to make a hundred requests of them in a minute. Left to the interval instead, the bound would be per day, and a publisher issuing more in a day than one pass takes would fall further behind every day |
 | Both shapes the format defines are read, at the labels that travel | A publisher serves a feed or a directory of documents, and the largest publisher of these serves only the second — so a reader that knows one takes the other's description, finds nothing, and reports that it worked. Only the labels a publisher serves to everybody are read: one that has to be arranged answers a refusal on every pass |
 | How many places a publisher may point at is bounded | Nothing in the format bounds it, and a description within the size bound can name tens of thousands of addresses — which is a pass running for hours and outliving the lease that says it is the one reading |
-| A listing that cannot be read does not stop the others | A publisher serving a restricted label beside a public one is ordinary, and failing the supplier on the first means the public one is never reached |
+| A listing refused the same way on every pass does not stop the others | A publisher serving a restricted label beside a public one is ordinary, and failing the supplier on the first means the public one is never reached |
+| A listing that could not be reached holds the mark | The mark is shared by every listing. Moved on the strength of the others, it passes everything the unreached listing named before it, and those entries are never read |
 | A stamp far in the future is not read | The mark moves forward only, so one entry stamped in 2099 would carry it past everything issued between now and then — and the fetch succeeds, so the supplier reads as healthy while it takes nothing |
 | A document that cannot be read is stepped over; a publisher that cannot be reached holds the mark | The two are different facts. A document refused the same way every time — withdrawn and answering 404, larger than what is read, malformed, or an address the client turns away itself: a redirect, a host an administrator excluded by name, a port other than https — would otherwise stop the supplier for ever. A publisher that cannot be reached has not shown what is behind the mark, so the mark stays. A name resolving inside this network or into an excluded network is read as unreachable: a filtering resolver or a split view answers that way until it is corrected |
+| A rate limit, a request timeout and "too early" hold the mark | Each asks to be asked again. A publisher's content delivery network answers them for a whole pass, and stepped over, every document in it is lost |
+| A document answered "not authorized" or "forbidden" is stepped over, and the attempt is recorded as failed | A document the publisher restricted answers this way on every pass, so holding on it stops the supplier for ever. A bot filter answers it too, so stepping over it silently loses advisories while the supplier reads as healthy. The address and the answer are kept as what stopped the attempt, and the last read that worked does not move |
+| A listing answered "not authorized" or "forbidden" beside one that reads is stepped over, and the attempt is not recorded as failed | A directory carries no label to leave a restricted one out by, and a publisher lists one directory per label, so a restricted one answers this way on every pass. Recorded as failed, the supplier never reads as answering again. A supplier none of whose listings could be read fails |
+| A listing or document whose address cannot be made into a request is stepped over | It is refused the same way on every pass, so holding on it stops the supplier for ever |
 | The mark is a moment and the address read at it | A publisher stamps a batch with one moment, and a date-only stamp gives a whole day the same one. On the moment alone, a pass that stopped inside such a group would skip the rest of it for ever |
 | A listing's moment is read to the microsecond, the precision the mark is stored at | Compared finer, the entry the mark was taken from is never equal to it: it is read again every pass, and a batch sharing one moment past what a pass takes never drains |
 | A pass cut short by shutdown writes how far it reached and leaves the supplier due, with no failure recorded | Written with the pass's own context, the write fails as the process stops, and everything read is fetched again on the next start. Recorded as a finished read, the rest waits a day; recorded as a failure, a healthy publisher reads as unreachable |
@@ -1102,6 +1129,8 @@ beside the scanner's data and read whole (REQ-12, REQ-31).
 | An archive downloaded some other way is read into the same place | `openpsirt records import`, for a deployment whose route out is not this one |
 | The snapshot is replaced by a rename | A scan reads the old file or the new one, never half of either |
 | A snapshot that cannot be read is an error, never no records | A damaged bundle read as none would close nothing and say so nowhere |
+| A record in the archive that cannot be read is left out, and the snapshot is built from the rest | Failing the archive on one record keeps the last snapshot for as long as that record stands, and the last snapshot goes on closing findings on what records said before they changed. Left out, the record narrows nothing, which is the conservative outcome. How many were left out, and the first, are logged; an archive in which no record could be read builds nothing |
+| A moment of update with no offset is read as UTC | The record format allows one and defines it so |
 | Kept on the scanner's volume | Each replica's own on scratch space, and one shared where the replicas mount one claim; the rename keeps that safe |
 | Scratch files older than two hours are removed at the start of a fetch | A fetch killed part way leaves an archive of hundreds of megabytes on the volume. A fetch takes minutes, so one younger than that may be an import still being written |
 

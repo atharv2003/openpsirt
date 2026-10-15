@@ -4,8 +4,12 @@
 package triageapi_test
 
 import (
+	"encoding/json"
+	"net/http"
 	"testing"
 
+	"github.com/nexthop-ai/openpsirt/internal/catalog"
+	"github.com/nexthop-ai/openpsirt/internal/finding"
 	"github.com/nexthop-ai/openpsirt/internal/httpapi/httpapitest"
 )
 
@@ -102,4 +106,69 @@ func TestBlockingRowsOfOneComponentAreToldApart(t *testing.T) {
 				first.Component, first.Version)
 		}
 	})
+}
+
+// A tag declared and not yet built is the ordinary state of a tag between
+// being cut and its pipeline running. It answers, saying nothing has been
+// scanned there, rather than failing or reporting a clean build. A tag whose
+// first upload was refused has a build and no scan, and reads the same: the
+// upload handler names the build before it records the refusal.
+//
+// On every engine, because the build with no match is what the standing
+// query's outer join is for.
+func TestReadinessForATagNotYetBuiltSaysNothingHasBeenScanned(t *testing.T) {
+	for _, refused := range []bool{false, true} {
+		name := "never built"
+		if refused {
+			name = "an upload refused"
+		}
+		t.Run(name, func(t *testing.T) {
+			httpapitest.EachReach(t, func(t *testing.T, r *httpapitest.Reach) {
+				ctx := t.Context()
+				r.ScannedTwoIssues(t)
+				names := catalog.NewStore(r.DB.DB)
+				product, err := names.ProductByName(ctx, "mine")
+				if err != nil {
+					t.Fatal(err)
+				}
+				tag, err := names.DeclareStream(ctx, product.ID, "v2.5.0", catalog.Tag, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if refused {
+					variant, err := names.VariantByName(ctx, product.ID, "broadcom")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := names.TargetFor(ctx, tag.ID, variant.ID); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				const at = "/v1/products/mine/streams/v2.5.0/variants/broadcom/readiness"
+				answered := httpapitest.AsPerson(t, r, "reader", http.MethodGet, at, "")
+				if answered.Code != http.StatusOK {
+					t.Fatalf("readiness for a tag not yet built answered %d: %s", answered.Code,
+						answered.Body.String())
+				}
+				var out struct {
+					Now struct {
+						Stream        string `json:"stream"`
+						Total         int    `json:"total"`
+						LastScannedAt string `json:"last_scanned_at"`
+					} `json:"now"`
+					Why string `json:"why"`
+				}
+				if err := json.Unmarshal(answered.Body.Bytes(), &out); err != nil {
+					t.Fatal(err)
+				}
+				if out.Why != finding.NothingScannedYet {
+					t.Errorf("why reads %q, want %q", out.Why, finding.NothingScannedYet)
+				}
+				if out.Now.Stream != "v2.5.0" || out.Now.Total != 0 || out.Now.LastScannedAt != "" {
+					t.Errorf("the build reads %+v", out.Now)
+				}
+			})
+		})
+	}
 }

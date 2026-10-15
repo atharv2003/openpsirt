@@ -165,9 +165,26 @@ A connection that could not be made or was cut short is read from the
 network's and each driver's own error for it. The document parser states a
 file ending inside a value in its own words, because the error it would
 otherwise return is the one a driver returns for a connection cut short, and a
-truncated upload is the sender's to fix. A failed upload's receipt carries the
+truncated upload is the sender's to fix. A read that fails beneath the parser is
+a fault, whatever error it ends with. A failed upload's receipt carries the
 refusal's sentence where its cause is a refusal, and a fixed sentence
-otherwise, including where the job reading it died before it could say why.
+otherwise, including where the job reading it died before it could say why. A
+failed scan run's receipt carries the scanner's own words, which are what tell
+a producer why, and a fixed sentence where the failure came from the database or
+its driver.
+
+Whether an error's text may be published is one test, used wherever the
+question is asked: a refusal that carries nothing an engine or a driver put in
+it. A failed scan run's receipt asks only the second half, because a scanner's
+own words are not a refusal and are what tell a producer why. The harness every route package runs over its mappers reads the whole body
+a fault answers, its list of errors included, and fails a fault that carries any
+detail of its cause.
+
+An act that committed is answered as done. A read made afterwards to name
+things in the answer — who recorded it, which window it counts against — is
+logged where it fails, and the answer carries those names blank. Answered as a
+fault, the caller sends the act again, and an append-only record such as a
+notice is then held twice for good.
 
 A 404 is never built from an error's own text. It asserts that a name reaches
 nothing, and the body then publishes whatever the error carried — for a store
@@ -298,6 +315,7 @@ part of the statement.
 | A filter with three answers is a word, not a flag | Origin is one: a screen offering "Scanner" as a flag can only send the absence of "entered by hand", so choosing it filters nothing |
 | A filter taking words from a fixed set takes each word once, and is refused with a 422 where one repeats | Each word is bound into the statement, and the set of words bounds how many there are only where none repeats. A free-text filter carries a count of items instead. A test walks every repeatable query parameter the document declares and fails one declaring neither |
 | A query parameter the operation does not declare is refused with a 400 naming it | Ignored, a mistyped filter returns the unfiltered list, which reads as a correct answer. The list is read from the operation's own declaration, so what is accepted is what the document publishes |
+| A query string that cannot be read is refused with a 400 | A pair with a malformed escape or a semicolon is otherwise dropped before anything looks at it, and the filter it carried is read as absent |
 | That refusal comes after the scope on the operation's declaration is checked | A caller outside the scope learns nothing about what it takes. A role on the product is checked by the handler, after it; the parameters are published, so the order discloses nothing there |
 
 This also prevents a sort exposing a column the caller was never meant to order
