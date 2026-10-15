@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nexthop-ai/openpsirt/internal/catalog"
+	"github.com/nexthop-ai/openpsirt/internal/dbtest/fixture"
 	"github.com/nexthop-ai/openpsirt/internal/finding"
 	"github.com/nexthop-ai/openpsirt/internal/graph"
 	"github.com/nexthop-ai/openpsirt/internal/ingest"
@@ -38,10 +39,8 @@ func RefusedWith(t *testing.T, got *httptest.ResponseRecorder, want int) {
 // build, and answers with nothing: every test here reads back through the API.
 //
 // The two seeds below differ in the graph they apply and what the report
-// carries, and in nothing else — they had a locate, a target lookup, a scan
-// record, a run and an apply written out twice between them, which is five
-// calls whose failure modes a reader has to check twice to find out they are
-// the same.
+// carries, and in nothing else, so the locate, the target lookup, the scan
+// record, the run and the apply they share are written here once.
 func (r *Reach) Scan(t *testing.T, hash string, snapshot graph.Snapshot,
 	reported []finding.Reported) {
 
@@ -64,7 +63,7 @@ func (r *Reach) Scan(t *testing.T, hash string, snapshot graph.Snapshot,
 	if err != nil || outcome != ingest.Accept {
 		t.Fatalf("record scan: %v %v", outcome, err)
 	}
-	if _, err := graph.NewStore(r.DB.DB).Apply(ctx, target.ID, made.ID, snapshot); err != nil {
+	if _, err := fixture.ApplyGraph(ctx, r.DB.DB, target.ID, made.ID, snapshot); err != nil {
 		t.Fatal(err)
 	}
 	findings := finding.NewStore(r.DB.DB)

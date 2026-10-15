@@ -125,16 +125,16 @@ func (s *Store) DisclosingPage(ctx context.Context, subject access.Subject, scop
 	until := s.now().UTC().Add(within)
 	approaching := func(q *bun.SelectQuery) *bun.SelectQuery {
 		q = q.TableExpr(`"finding" AS "f"`).
-			Join(`JOIN "target" AS "tg" ON tg.id = f.target_id`).
-			Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-			Join(`JOIN "product" AS "p" ON p.id = st.product_id`).
-			Join(`JOIN "vulnerability" AS "v" ON v.id = f.vulnerability_id`).
-			Where("f.visibility = ?", access.Private).
-			Where("f.closed_at IS NULL").
-			Where("f.disclose_at IS NOT NULL").
-			Where("f.disclose_at <= ?", until)
+			Join(`JOIN "target" AS "tg" ON "tg"."id" = "f"."target_id"`).
+			Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+			Join(`JOIN "product" AS "p" ON "p"."id" = "st"."product_id"`).
+			Join(`JOIN "vulnerability" AS "v" ON "v"."id" = "f"."vulnerability_id"`).
+			Where(`"f"."visibility" = ?`, access.Private).
+			Where(`"f"."closed_at" IS NULL`).
+			Where(`"f"."disclose_at" IS NOT NULL`).
+			Where(`"f"."disclose_at" <= ?`, until)
 		if len(private) > 0 {
-			q = q.Where("st.product_id IN (?)", bun.List(private))
+			q = q.Where(`"st"."product_id" IN (?)`, bun.List(private))
 		}
 		return scope.Narrow(q)
 	}
@@ -142,26 +142,26 @@ func (s *Store) DisclosingPage(ctx context.Context, subject access.Subject, scop
 	// The rating is the product's own, so it is one value for the group.
 	query := approaching(s.db.NewSelect()).
 		Join(rating.For(rating.OnStream)).
-		ColumnExpr(`p.id AS "product_id"`).
-		ColumnExpr(`v.id AS "vulnerability_id"`).
-		ColumnExpr(`v.identifier AS "vulnerability"`).
-		ColumnExpr(`v.description AS "summary"`).
+		ColumnExpr(`"p"."id" AS "product_id"`).
+		ColumnExpr(`"v"."id" AS "vulnerability_id"`).
+		ColumnExpr(`"v"."identifier" AS "vulnerability"`).
+		ColumnExpr(`"v"."description" AS "summary"`).
 		ColumnExpr(rating.EffectiveExpr + ` AS "severity"`).
-		ColumnExpr(`p.name AS "product"`).
+		ColumnExpr(`"p"."name" AS "product"`).
 		ColumnExpr(catalog.ShownExpr("p") + ` AS "product_name"`).
-		ColumnExpr(`MIN(f.disclose_at) AS "disclose_at"`).
+		ColumnExpr(`MIN("f"."disclose_at") AS "disclose_at"`).
 		// Whoever is dealing with it, and nobody where the places disagree.
 		// A minimum named one of them: a partly assigned embargo read as one
 		// person's, which is a list of what is coming that names the wrong
 		// person to ask. The same reconciliation the deadline list does, in
 		// the statement rather than after it.
-		ColumnExpr(`CASE WHEN COUNT(f.assigned_to) = COUNT(*)
-			AND MIN(f.assigned_to) = MAX(f.assigned_to)
-			THEN MIN(f.assigned_to) END AS "assigned_to"`).
+		ColumnExpr(`CASE WHEN COUNT("f"."assigned_to") = COUNT(*)
+			AND MIN("f"."assigned_to") = MAX("f"."assigned_to")
+			THEN MIN("f"."assigned_to") END AS "assigned_to"`).
 		ColumnExpr(`COUNT(*) AS "places"`).
-		GroupExpr("p.id, p.name, p.display_name, v.id, v.identifier, v.description, " +
+		GroupExpr(`"p"."id", "p"."name", "p"."display_name", "v"."id", "v"."identifier", "v"."description", ` +
 			rating.EffectiveExpr).
-		OrderExpr("disclose_at, v.identifier, p.name")
+		OrderExpr(`"disclose_at", "v"."identifier", "p"."name"`)
 
 	// Counted over the grouping rather than the rows: a row here is an issue
 	// in a product however many places it sits at, and counting the places
@@ -230,17 +230,17 @@ func (s *Store) whereEmbargoed(ctx context.Context,
 		EmbargoedBuild
 	}
 	if err := approaching(s.db.NewSelect()).
-		Join(`JOIN "variant" AS "va" ON va.id = tg.variant_id`).
-		Join(`JOIN "component" AS "c" ON c.id = f.component_id`).
-		ColumnExpr(`st.product_id AS "product_id"`).
-		ColumnExpr(`f.vulnerability_id AS "vulnerability_id"`).
-		ColumnExpr(`c.name AS "component"`).
-		ColumnExpr(`st.name AS "stream"`).
+		Join(`JOIN "variant" AS "va" ON "va"."id" = "tg"."variant_id"`).
+		Join(`JOIN "component" AS "c" ON "c"."id" = "f"."component_id"`).
+		ColumnExpr(`"st"."product_id" AS "product_id"`).
+		ColumnExpr(`"f"."vulnerability_id" AS "vulnerability_id"`).
+		ColumnExpr(`"c"."name" AS "component"`).
+		ColumnExpr(`"st"."name" AS "stream"`).
 		ColumnExpr(catalog.ShownExpr("st")+` AS "stream_name"`).
-		ColumnExpr(`va.name AS "variant"`).
+		ColumnExpr(`"va"."name" AS "variant"`).
 		ColumnExpr(catalog.ShownExpr("va")+` AS "variant_name"`).
-		Where("st.product_id IN (?)", bun.List(productIDs)).
-		Where("f.vulnerability_id IN (?)", bun.List(issueIDs)).
+		Where(`"st"."product_id" IN (?)`, bun.List(productIDs)).
+		Where(`"f"."vulnerability_id" IN (?)`, bun.List(issueIDs)).
 		Distinct().
 		Scan(ctx, &placed); err != nil {
 		return fmt.Errorf("read where what is approaching disclosure sits: %w", err)
@@ -474,19 +474,8 @@ func (s *Store) move(ctx context.Context, subject access.Subject, act Act,
 	if act != Extension && act != Shortening {
 		return nil, refusal.Errorf("a disclosure date is moved later or brought forward")
 	}
-	if !subject.Triages(access.Private, productID) {
-		return nil, access.Denied(
-			fmt.Sprintf("move a disclosure date in product %d", productID))
-	}
-	if subject.ID == 0 {
-		return nil, access.Denied("move a disclosure date without being anybody")
-	}
-	if strings.TrimSpace(reason) == "" {
-		return nil, Unreasoned{Said: "say why the embargo is being moved"}
-	}
-	// The submission policy, run before the text is stored. This row is
-	// append-only and is read back into a disclosure record.
-	if err := markdown.Check(reason); err != nil {
+	if err := mayMoveEmbargo(subject, productID, reason, "move a disclosure date",
+		"say why the embargo is being moved"); err != nil {
 		return nil, err
 	}
 
@@ -508,21 +497,15 @@ func (s *Store) move(ctx context.Context, subject access.Subject, act Act,
 			return wrongWay(act)
 		}
 
-		threshold, err := setting.NewStore(tx).Duration(ctx,
-			setting.MovementThreshold, setting.DefaultMovementThreshold)
-		if err != nil {
-			return err
-		}
-		already, err := movedBy(ctx, tx, productID, vulnerabilityID)
-		if err != nil {
-			return err
-		}
 		asked := &Movement{
 			VulnerabilityID: vulnerabilityID, ProductID: productID,
 			Act: act, Was: &was, Until: &until, Reason: reason,
 			AskedBy: subject.ID, AskedAt: now,
 		}
-		asked.NeedsApproval = threshold <= 0 || already+asked.Distance() >= threshold
+		if asked.NeedsApproval, err = needsSecondPerson(ctx, tx, productID, vulnerabilityID,
+			asked.Distance()); err != nil {
+			return err
+		}
 		out = asked
 		// ApprovedAt is unset on every path to here, so nothing clears it.
 		if _, err := tx.NewInsert().Model(out).Exec(ctx); err != nil {
@@ -533,12 +516,49 @@ func (s *Store) move(ctx context.Context, subject access.Subject, act Act,
 			// that somebody asked; what is in force is still the old date.
 			return nil
 		}
-		return moveTo(ctx, tx, productID, vulnerabilityID, until, now)
+		return moveTo(ctx, tx, productID, vulnerabilityID, until)
 	})
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// mayMoveEmbargo refuses a request to move an embargo's end that the subject
+// may not make, or that gives no reason. Doing names the act, and why is what
+// to say where the reason is missing.
+//
+// The reason is checked against the submission policy before it is stored: a
+// movement is append-only and is read back into a disclosure record.
+func mayMoveEmbargo(subject access.Subject, productID int64, reason, doing, why string) error {
+	if !subject.Triages(access.Private, productID) {
+		return access.Denied(fmt.Sprintf("%s in product %d", doing, productID))
+	}
+	if subject.ID == 0 {
+		return access.Denied(doing + " without being anybody")
+	}
+	if strings.TrimSpace(reason) == "" {
+		return Unreasoned{Said: why}
+	}
+	return markdown.Check(reason)
+}
+
+// needsSecondPerson reports whether moving an embargo's end this far needs
+// somebody else to agree: everything the embargo has already been moved by,
+// plus this distance, reaches the threshold.
+func needsSecondPerson(ctx context.Context, db bun.IDB, productID, vulnerabilityID int64,
+	distance time.Duration) (bool, error) {
+
+	threshold, err := setting.NewStore(db).Duration(ctx,
+		setting.MovementThreshold, setting.DefaultMovementThreshold)
+	if err != nil {
+		return false, err
+	}
+	already, err := movedBy(ctx, db, productID, vulnerabilityID)
+	if err != nil {
+		return false, err
+	}
+	return already+distance >= threshold, nil
 }
 
 // endsAt reads where an embargo ends now.
@@ -551,14 +571,14 @@ func endsAt(ctx context.Context, db bun.IDB, productID, vulnerabilityID int64) (
 	var was time.Time
 	err := db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "target" AS "tg" ON tg.id = f.target_id`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		ColumnExpr("MAX(f.disclose_at)").
-		Where("st.product_id = ?", productID).
-		Where(HeldAs("f.vulnerability_id"), vulnerabilityID).
-		Where("f.visibility = ?", access.Private).
-		Where("f.closed_at IS NULL").
-		Where("f.disclose_at IS NOT NULL").
+		Join(`JOIN "target" AS "tg" ON "tg"."id" = "f"."target_id"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		ColumnExpr(`MAX("f"."disclose_at")`).
+		Where(`"st"."product_id" = ?`, productID).
+		Where(HeldAs(`"f"."vulnerability_id"`), vulnerabilityID).
+		Where(`"f"."visibility" = ?`, access.Private).
+		Where(`"f"."closed_at" IS NULL`).
+		Where(`"f"."disclose_at" IS NOT NULL`).
 		Scan(ctx, &was)
 	if database.IsNoRows(err) || (err == nil && was.IsZero()) {
 		return time.Time{}, ErrNotEmbargoed
@@ -586,7 +606,7 @@ func (s *Store) AgreeToMovement(ctx context.Context, subject access.Subject, id 
 		now := s.now().UTC().Truncate(time.Microsecond)
 		asked := new(Movement)
 		agreed = asked
-		if err := tx.NewSelect().Model(asked).Where("id = ?", id).Scan(ctx); err != nil {
+		if err := tx.NewSelect().Model(asked).Where(`"id" = ?`, id).Scan(ctx); err != nil {
 			// A movement somebody may not reach and one that is
 			// not there answer alike, so guessing identifiers says
 			// nothing. A read that could not be made is neither, and
@@ -622,7 +642,7 @@ func (s *Store) AgreeToMovement(ctx context.Context, subject access.Subject, id 
 			if err := agree(ctx, tx, id, subject.ID, now); err != nil {
 				return err
 			}
-			return makePublic(ctx, tx, asked.ProductID, asked.VulnerabilityID, now)
+			return makePublic(ctx, tx, asked.ProductID, asked.VulnerabilityID)
 		}
 
 		// A ruling's shortening stands only while the ruling does. Withdrawn,
@@ -651,9 +671,9 @@ func (s *Store) AgreeToMovement(ctx context.Context, subject access.Subject, id 
 			return err
 		}
 		if asked.Act == Duplicated {
-			return dateFlaw(ctx, tx, asked.ProductID, asked.VulnerabilityID, asked.Until, true, now)
+			return dateFlaw(ctx, tx, asked.ProductID, asked.VulnerabilityID, asked.Until, true)
 		}
-		return moveTo(ctx, tx, asked.ProductID, asked.VulnerabilityID, *asked.Until, now)
+		return moveTo(ctx, tx, asked.ProductID, asked.VulnerabilityID, *asked.Until)
 	})
 	if err != nil {
 		return nil, err
@@ -670,10 +690,10 @@ func (s *Store) AgreeToMovement(ctx context.Context, subject access.Subject, id 
 // where the record holds one.
 func agree(ctx context.Context, tx bun.IDB, id, personID int64, now time.Time) error {
 	res, err := tx.NewUpdate().Model((*Movement)(nil)).
-		Set("approved_by = ?", personID).
-		Set("approved_at = ?", now).
-		Where("id = ?", id).
-		Where("approved_at IS NULL").Exec(ctx)
+		Set(`"approved_by" = ?`, personID).
+		Set(`"approved_at" = ?`, now).
+		Where(`"id" = ?`, id).
+		Where(`"approved_at" IS NULL`).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("record the agreement: %w", err)
 	}
@@ -716,7 +736,7 @@ func (s *Store) Movements(ctx context.Context, subject access.Subject,
 	}
 	var rows []Movement
 	if err := s.db.NewSelect().Model(&rows).
-		Where("product_id = ?", productID).
+		Where(`"product_id" = ?`, productID).
 		Where(FiledUnder(filed.Issue), vulnerabilityID).
 		Order("asked_at", "id").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read how this embargo has been moved: %w", err)
@@ -749,7 +769,7 @@ func (s *Store) Movements(ctx context.Context, subject access.Subject,
 	}
 	if err := s.db.NewSelect().Model((*FlawReport)(nil)).
 		Column("fr.id", "fr.reference").
-		Where("fr.id IN (?)", bun.List(reports)).
+		Where(`"fr"."id" IN (?)`, bun.List(reports)).
 		Scan(ctx, &named); err != nil {
 		return nil, fmt.Errorf("read which claims this embargo counts from: %w", err)
 	}
@@ -779,7 +799,7 @@ func (s *Store) Movements(ctx context.Context, subject access.Subject,
 func movedBy(ctx context.Context, db bun.IDB, productID, vulnerabilityID int64) (time.Duration, error) {
 	var rows []Movement
 	err := db.NewSelect().Model(&rows).
-		Where("product_id = ?", productID).
+		Where(`"product_id" = ?`, productID).
 		Where(FiledUnder(filed.Issue), vulnerabilityID).
 		Scan(ctx)
 	if err != nil {
@@ -797,14 +817,13 @@ func movedBy(ctx context.Context, db bun.IDB, productID, vulnerabilityID int64) 
 
 // moveTo writes the new end of an embargo across everything it covers.
 func moveTo(ctx context.Context, db bun.IDB, productID, vulnerabilityID int64,
-	until, now time.Time) error {
+	until time.Time) error {
 
 	_, err := db.NewUpdate().Model((*Finding)(nil)).
-		Set("disclose_at = ?", until).
-		Set("last_changed_at = ?", now).
+		Set(`"disclose_at" = ?`, until).
 		Where(HeldAs("vulnerability_id"), vulnerabilityID).
-		Where("visibility = ?", access.Private).
-		Where("closed_at IS NULL").
+		Where(`"visibility" = ?`, access.Private).
+		Where(`"closed_at" IS NULL`).
 		Where(inThisProduct, productID).
 		Exec(ctx)
 	if err != nil {
@@ -874,29 +893,29 @@ func (s *Store) PendingPage(ctx context.Context, subject access.Subject,
 	query := s.db.NewSelect().
 		Model((*Movement)(nil)).
 		ColumnExpr("dx.*").
-		Join(`JOIN "product" AS "p" ON p.id = dx.product_id`).
-		Join(`JOIN "vulnerability" AS "v" ON v.id = dx.vulnerability_id`).
-		ColumnExpr(`p.name AS "product"`).
-		ColumnExpr(`v.identifier AS "vulnerability"`).
-		Where("dx.needs_approval = ?", true).
-		Where("dx.approved_at IS NULL").
+		Join(`JOIN "product" AS "p" ON "p"."id" = "dx"."product_id"`).
+		Join(`JOIN "vulnerability" AS "v" ON "v"."id" = "dx"."vulnerability_id"`).
+		ColumnExpr(`"p"."name" AS "product"`).
+		ColumnExpr(`"v"."identifier" AS "vulnerability"`).
+		Where(`"dx"."needs_approval" = ?`, true).
+		Where(`"dx"."approved_at" IS NULL`).
 		// Only while something here is still undisclosed. A request left
 		// waiting when the issue was disclosed can no longer be agreed to,
 		// and a queue entry nobody can act on is noise on the one list whose
 		// point is that everything on it is a question.
 		Where(`EXISTS (SELECT 1 FROM `+IssueFindings("fu")+`
-			JOIN "target" AS "tu" ON tu.id = fu.target_id
-			JOIN "stream" AS "su" ON su.id = tu.stream_id
-			WHERE "si"."id" = dx.vulnerability_id
-			AND su.product_id = dx.product_id
-			AND fu.visibility = ?)`, access.Private).
+			JOIN "target" AS "tu" ON "tu"."id" = "fu"."target_id"
+			JOIN "stream" AS "su" ON "su"."id" = "tu"."stream_id"
+			WHERE "si"."id" = "dx"."vulnerability_id"
+			AND "su"."product_id" = "dx"."product_id"
+			AND "fu"."visibility" = ?)`, access.Private).
 		// Nor one a withdrawn ruling asked for, which can no longer be agreed
 		// to.
 		Where(`NOT EXISTS (SELECT 1 FROM "report_ruling" AS "rw"
-			WHERE rw.id = dx.ruling_id AND rw.withdrawn_at IS NOT NULL)`).
-		OrderExpr("dx.asked_at DESC")
+			WHERE "rw"."id" = "dx"."ruling_id" AND "rw"."withdrawn_at" IS NOT NULL)`).
+		OrderExpr(`"dx"."asked_at" DESC`)
 	if !all {
-		query = query.Where("dx.product_id IN (?)", bun.List(readable))
+		query = query.Where(`"dx"."product_id" IN (?)`, bun.List(readable))
 	}
 	total, err := s.db.NewSelect().TableExpr(`(?) AS "waiting"`, query).Count(ctx)
 	if err != nil {

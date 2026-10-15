@@ -310,8 +310,11 @@ func TestASweepDoesNotStopBecauseSomebodyTookOneRow(t *testing.T) {
 		}
 
 		work := queue.New(r.DB, queue.DefaultOptions())
-		sweeper := finding.NewSweeperOfSize(r.DB, work,
-			slog.New(slog.NewTextHandler(io.Discard, nil)), "test", 2)
+		if _, _, err := setting.NewStore(r.DB.DB).Change(t.Context(), setting.RoutingBatch, "2"); err != nil {
+			t.Fatal(err)
+		}
+		sweeper := finding.NewSweeper(r.DB, work,
+			slog.New(slog.NewTextHandler(io.Discard, nil)), "test")
 		for range 20 {
 			placed, err := sweeper.Once(t.Context())
 			if err != nil {
@@ -325,9 +328,9 @@ func TestASweepDoesNotStopBecauseSomebodyTookOneRow(t *testing.T) {
 		var left int
 		if err := r.DB.DB.NewSelect().Table("finding").
 			ColumnExpr("COUNT(*)").
-			Where("assigned_to IS NULL").
-			Where("closed_at IS NULL").
-			Where(`component_id IN (SELECT id FROM "component" WHERE upstream_name = ?)`, "curl").
+			Where(`"assigned_to" IS NULL`).
+			Where(`"closed_at" IS NULL`).
+			Where(`"component_id" IN (SELECT "id" FROM "component" WHERE "upstream_name" = ?)`, "curl").
 			Scan(t.Context(), &left); err != nil {
 			t.Fatal(err)
 		}
@@ -363,16 +366,19 @@ func TestASweepThatCannotQueueTheRestIsNotReportedFinished(t *testing.T) {
 		if _, err := work.Add(ctx, queue.Route, "another product"); err != nil {
 			t.Fatal(err)
 		}
-		if err := setting.NewStore(r.DB.DB).Set(ctx, setting.QueueBacklog, "1"); err != nil {
+		if _, _, err := setting.NewStore(r.DB.DB).Change(ctx, setting.QueueBacklog, "1"); err != nil {
 			t.Fatal(err)
 		}
-		sweeper := finding.NewSweeperOfSize(r.DB, work,
-			slog.New(slog.NewTextHandler(io.Discard, nil)), "test", 1)
+		if _, _, err := setting.NewStore(r.DB.DB).Change(t.Context(), setting.RoutingBatch, "1"); err != nil {
+			t.Fatal(err)
+		}
+		sweeper := finding.NewSweeper(r.DB, work,
+			slog.New(slog.NewTextHandler(io.Discard, nil)), "test")
 		if _, err := sweeper.Once(ctx); err == nil {
 			t.Fatal("a full batch whose continuation could not be queued reported success")
 		}
 		done, err := r.DB.DB.NewSelect().Table("job").
-			Where("kind = ?", queue.Route).Where("state = ?", queue.Done).Count(ctx)
+			Where(`"kind" = ?`, queue.Route).Where(`"state" = ?`, queue.Done).Count(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -396,7 +402,7 @@ func TestARuleWhoseSweepCannotBeQueuedIsNotRecorded(t *testing.T) {
 			"another product"); err != nil {
 			t.Fatal(err)
 		}
-		if err := setting.NewStore(r.DB.DB).Set(ctx, setting.QueueBacklog, "1"); err != nil {
+		if _, _, err := setting.NewStore(r.DB.DB).Change(ctx, setting.QueueBacklog, "1"); err != nil {
 			t.Fatal(err)
 		}
 		httpapitest.RefusedWith(t, httpapitest.AsPerson(t, r, "assigner", http.MethodPost,
@@ -470,8 +476,11 @@ func TestTheSweeperWorksAWholeBacklogInOneWakeAndReturnsWhenCancelled(t *testing
 		ctx, stop := context.WithCancel(t.Context())
 		defer stop()
 		work := queue.New(r.DB, queue.DefaultOptions())
-		sweeper := finding.NewSweeperOfSize(r.DB, work,
-			slog.New(slog.NewTextHandler(io.Discard, nil)), "test", 2)
+		if _, _, err := setting.NewStore(r.DB.DB).Change(t.Context(), setting.RoutingBatch, "2"); err != nil {
+			t.Fatal(err)
+		}
+		sweeper := finding.NewSweeper(r.DB, work,
+			slog.New(slog.NewTextHandler(io.Discard, nil)), "test")
 
 		returned := make(chan struct{})
 		go func() {
@@ -483,9 +492,9 @@ func TestTheSweeperWorksAWholeBacklogInOneWakeAndReturnsWhenCancelled(t *testing
 			var left int
 			if err := r.DB.DB.NewSelect().Table("finding").
 				ColumnExpr("COUNT(*)").
-				Where("assigned_to IS NULL").
-				Where("closed_at IS NULL").
-				Where(`component_id IN (SELECT id FROM "component" WHERE upstream_name = ?)`, "curl").
+				Where(`"assigned_to" IS NULL`).
+				Where(`"closed_at" IS NULL`).
+				Where(`"component_id" IN (SELECT "id" FROM "component" WHERE "upstream_name" = ?)`, "curl").
 				Scan(ctx, &left); err != nil {
 				return -1
 			}

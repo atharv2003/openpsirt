@@ -77,7 +77,7 @@ func (f *fixture) shipped(t *testing.T, snap graph.Snapshot) {
 	if err != nil || outcome != ingest.Accept {
 		t.Fatalf("record scan: %v %v", outcome, err)
 	}
-	if _, err := f.graph.Apply(t.Context(), f.target, scan.ID, snap); err != nil {
+	if _, err := world.ApplyGraph(t.Context(), f.db, f.target, scan.ID, snap); err != nil {
 		t.Fatalf("apply graph: %v", err)
 	}
 	f.lastScan = scan.ID
@@ -155,7 +155,7 @@ func (f *fixture) shippedTo(t *testing.T, target int64, snap graph.Snapshot) {
 	if err != nil || outcome != ingest.Accept {
 		t.Fatalf("record scan: %v %v", outcome, err)
 	}
-	if _, err := f.graph.Apply(t.Context(), target, scan.ID, snap); err != nil {
+	if _, err := world.ApplyGraph(t.Context(), f.db, target, scan.ID, snap); err != nil {
 		t.Fatalf("apply graph: %v", err)
 	}
 }
@@ -218,7 +218,7 @@ func (f *fixture) openClaims(t *testing.T) []finding.Claim {
 	t.Helper()
 	var rows []finding.Claim
 	if err := f.db.DB.NewSelect().Model(&rows).
-		Where("target_id = ?", f.target).Where("closed_scan_id IS NULL").
+		Where(`"target_id" = ?`, f.target).Where(`"closed_scan_id" IS NULL`).
 		Order("id").Scan(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func (f *fixture) every(t *testing.T) []finding.Finding {
 	t.Helper()
 	var rows []finding.Finding
 	err := f.db.DB.NewSelect().Model(&rows).
-		Where("target_id = ?", f.target).Order("id").Scan(t.Context())
+		Where(`"target_id" = ?`, f.target).Order("id").Scan(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func (f *fixture) open(t *testing.T) []finding.Finding {
 	t.Helper()
 	var rows []finding.Finding
 	err := f.db.DB.NewSelect().Model(&rows).
-		Where("target_id = ?", f.target).Where("closed_at IS NULL").Scan(t.Context())
+		Where(`"target_id" = ?`, f.target).Where(`"closed_at" IS NULL`).Scan(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,4 +312,11 @@ func (f *fixture) planner(t *testing.T, roles ...access.Role) access.Subject {
 	}
 	return access.NewPerson(person.ID, "somebody@example.com", false,
 		map[int64][]access.Role{f.productID: roles}, 0)
+}
+
+// changedNothing is whether a run opened, closed, updated or closed by
+// statement nothing at all.
+func changedNothing(a finding.Applied) bool {
+	return a.Opened == 0 && a.Closed == 0 && a.Updated == 0 && a.Patched == 0 && a.Unaffected == 0 &&
+		a.Disclaimed == 0
 }

@@ -6,7 +6,6 @@ package triageapi
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -28,7 +27,7 @@ func registerComments(api huma.API, in core.Deps) {
 		Tags: []string{"Triage"},
 	}, core.AnyPerson, "Answers only what you may see."), func(ctx context.Context, input *struct {
 		ID int64 `path:"id"`
-	}) (*core.ListOutput[CommentBody], error) {
+	}) (*core.ListOutput[core.WrittenBody], error) {
 		subject, store, err := core.Triaging(ctx, in)
 		if err != nil {
 			return nil, err
@@ -38,30 +37,12 @@ func registerComments(api huma.API, in core.Deps) {
 			return nil, core.RefusedDecision(in.Logger, err)
 		}
 
-		authors := make([]int64, 0, len(comments))
+		rows := make([]core.Writing, 0, len(comments))
 		for _, comment := range comments {
-			authors = append(authors, comment.WrittenBy)
+			rows = append(rows, core.Writing{ID: comment.ID, Body: comment.Body,
+				WrittenBy: comment.WrittenBy, WrittenAt: comment.WrittenAt, EditedAt: comment.EditedAt})
 		}
-		who, err := core.WhoSigned(ctx, in.DB.DB, authors)
-		if err != nil {
-			return nil, core.WentWrong(in.Logger, "the discussion could not be read", err)
-		}
-
-		out := &core.ListOutput[CommentBody]{}
-		out.Body.Items = make([]CommentBody, 0, len(comments))
-		for _, comment := range comments {
-			body := CommentBody{
-				ID: comment.ID, Body: comment.Body,
-				WrittenBy:     who.Identity(comment.WrittenBy),
-				WrittenByName: who.Label(comment.WrittenBy),
-				WrittenAt:     comment.WrittenAt.UTC().Format(time.RFC3339),
-			}
-			if comment.EditedAt != nil {
-				body.EditedAt = comment.EditedAt.UTC().Format(time.RFC3339)
-			}
-			out.Body.Items = append(out.Body.Items, body)
-		}
-		return out, nil
+		return core.Written(ctx, in, rows, "the discussion could not be read")
 	})
 
 	huma.Register(api, core.Requiring(huma.Operation{
@@ -119,7 +100,7 @@ func registerComments(api huma.API, in core.Deps) {
 		for _, row := range rows {
 			out.Body.Items = append(out.Body.Items, core.WasSaidBody{
 				Version: row.Ordinal, Body: row.Body,
-				ReplacedAt: row.ReplacedAt.UTC().Format(time.RFC3339),
+				ReplacedAt: core.Stamp(row.ReplacedAt),
 			})
 		}
 		return out, nil

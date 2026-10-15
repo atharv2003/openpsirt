@@ -76,11 +76,10 @@ func (s *Store) AssignMatching(ctx context.Context, subject access.Subject, scop
 		if err != nil {
 			return err
 		}
-		if !subject.TriagesIn(productID) {
-			return access.Denied(fmt.Sprintf(
-				"decide who deals with findings in product %d", productID))
+		dispatches, err := mayHandOver(subject, productID)
+		if err != nil {
+			return err
 		}
-		dispatches := subject.Holds(access.Assigner, productID)
 		// Refused before anything is read, by the rule moveWhere holds, so a
 		// hand-off nobody may make is refused whether or not anything matches.
 		if err := mayMove(subject, productID, to, dispatches); err != nil {
@@ -138,15 +137,11 @@ func (s *Store) AssignMatching(ctx context.Context, subject access.Subject, scop
 		// it. Narrowed by what the caller may see, like StrictestOf.
 		strictest := access.Public
 		for _, fold := range folds {
-			private, err := tx.NewSelect().Model((*Finding)(nil)).
-				Column("id").
-				Where(inThisProduct, productID).
-				Where("vulnerability_id IN (?)", bun.List(byFold[fold])).
-				Where(inFold, fold).
-				Where("closed_at IS NULL").
-				Where("visibility IN (?)", bun.List(visible)).
-				Where("visibility = ?", access.Private).
-				Exists(ctx)
+			private, err := anyUndisclosed(ctx, tx, visible, func(q *bun.SelectQuery) *bun.SelectQuery {
+				return q.Where(inThisProduct, productID).
+					Where(`"vulnerability_id" IN (?)`, bun.List(byFold[fold])).
+					Where(inFold, fold)
+			})
 			if err != nil {
 				return fmt.Errorf("read how far this is disclosed: %w", err)
 			}
@@ -165,7 +160,7 @@ func (s *Store) AssignMatching(ctx context.Context, subject access.Subject, scop
 		for _, fold := range folds {
 			moved, err := inner.moveWhere(ctx, tx, subject, productID, to, dispatches,
 				func(q *bun.UpdateQuery) *bun.UpdateQuery {
-					return q.Where("vulnerability_id IN (?)", bun.List(byFold[fold])).
+					return q.Where(`"vulnerability_id" IN (?)`, bun.List(byFold[fold])).
 						Where(inFold, fold)
 				})
 			if err != nil {
@@ -203,10 +198,10 @@ func (s *Store) leftBehind(ctx context.Context, productID int64, visible []acces
 	if err := s.db.NewSelect().Model((*Finding)(nil)).
 		Column("vulnerability_id").
 		Where(inThisProduct, productID).
-		Where("vulnerability_id IN (?)", bun.List(issues)).
+		Where(`"vulnerability_id" IN (?)`, bun.List(issues)).
 		Where(inFold, fold).
-		Where("closed_at IS NULL").
-		Where("visibility IN (?)", bun.List(visible)).
+		Where(`"closed_at" IS NULL`).
+		Where(`"visibility" IN (?)`, bun.List(visible)).
 		Where("NOT ("+held+")", args...).
 		Group("vulnerability_id").
 		Scan(ctx, &ids); err != nil {
@@ -220,7 +215,7 @@ func (s *Store) leftBehind(ctx context.Context, productID int64, visible []acces
 }
 
 // inFold narrows findings to the binaries of one fold.
-const inFold = `component_id IN (SELECT c.id FROM "component" AS "c" WHERE ` +
+const inFold = `"component_id" IN (SELECT "c"."id" FROM "component" AS "c" WHERE ` +
 	FoldedOn + ` = ?)`
 
 // pieces is every group a narrowing admits, unpaged: the rows the findings
@@ -237,7 +232,7 @@ func (s *Store) pieces(ctx context.Context, targets []int64, visible []access.Vi
 		Fold            string `bun:"fold"`
 	}
 	q := filter.listed(s.db, targets, visible).
-		ColumnExpr(`f.vulnerability_id AS "vulnerability_id"`).
+		ColumnExpr(`"f"."vulnerability_id" AS "vulnerability_id"`).
 		ColumnExpr(FoldedOn + ` AS "fold"`)
 	if err := q.Scan(ctx, &rows); err != nil {
 		return nil, fmt.Errorf("read what the narrowing admits: %w", err)

@@ -168,8 +168,8 @@ const (
 // it is neither opened nor fixed: what counts what a run opened or closed, or
 // how long a fix took, leaves it out. It carries no deadline, so no deadline
 // can be judged met by it, and it is in no open set a trend or a list reads.
-const wasOpen = `(f.opened_run_id IS NULL OR f.closed_run_id IS NULL
-	OR f.opened_run_id <> f.closed_run_id)`
+const wasOpen = `("f"."opened_run_id" IS NULL OR "f"."closed_run_id" IS NULL
+	OR "f"."opened_run_id" <> "f"."closed_run_id")`
 
 // Closures are every reason a finding stops being open, in the order they are
 // offered.
@@ -336,10 +336,6 @@ type Finding struct {
 	// anybody means to do.
 	AssignedTo *int64     `bun:"assigned_to"`
 	AssignedAt *time.Time `bun:"assigned_at"`
-	// LastChangedAt is when anything about this finding last moved — a fix
-	// appearing, or the build answering it. A finding open for years outlives
-	// any record of the change kept elsewhere, so it carries its own.
-	LastChangedAt time.Time `bun:"last_changed_at,notnull"`
 	// ArrivedFrom is the upstream version this place held before, recorded
 	// only where the version moved and the issue came with it. Its presence is
 	// the statement that somebody bumped this and the bump did not resolve it;
@@ -498,12 +494,6 @@ type Applied struct {
 	Displaced []Displaced
 }
 
-// Unchanged reports whether the run changed nothing.
-func (a Applied) Unchanged() bool {
-	return a.Opened == 0 && a.Closed == 0 && a.Updated == 0 && a.Patched == 0 && a.Unaffected == 0 &&
-		a.Disclaimed == 0
-}
-
 // PlaceIdentity keys a component under the thing that pulled it in.
 //
 // Names only, never versions: a version in the key would lapse every decision
@@ -577,8 +567,8 @@ func (s *Store) LastRecordsVersion(ctx context.Context, targetID int64) (string,
 	var runs []Run
 	err := s.db.NewSelect().Model(&runs).
 		Column("records_version").
-		Where("target_id = ?", targetID).
-		Where("records_version <> ?", "").
+		Where(`"target_id" = ?`, targetID).
+		Where(`"records_version" <> ?`, "").
 		Order("id DESC").
 		Limit(1).
 		Scan(ctx)
@@ -621,10 +611,10 @@ func (s *Store) Finish(ctx context.Context, runID int64, version, databaseVersio
 		failure = cause.Error()
 	}
 	_, err := s.db.NewUpdate().Model((*Run)(nil)).
-		Set("finished_at = ?", done).Set("failure = ?", failure).
-		Set("caution = ?", caution).
-		Set("scanner_version = ?", version).Set("database_version = ?", databaseVersion).
-		Where("id = ?", runID).Exec(ctx)
+		Set(`"finished_at" = ?`, done).Set(`"failure" = ?`, failure).
+		Set(`"caution" = ?`, caution).
+		Set(`"scanner_version" = ?`, version).Set(`"database_version" = ?`, databaseVersion).
+		Where(`"id" = ?`, runID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("record the end of scan run %d: %w", runID, err)
 	}

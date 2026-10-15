@@ -101,8 +101,8 @@ func (s *Store) AddRule(ctx context.Context, by access.Subject, productID, teamI
 		// so, and nothing about the code looked wrong.
 		var highest int
 		if err := tx.NewSelect().Model((*Routing)(nil)).
-			ColumnExpr("COALESCE(MAX(ordinal), 0)").
-			Where("product_id = ?", productID).
+			ColumnExpr(`COALESCE(MAX("ordinal"), 0)`).
+			Where(`"product_id" = ?`, productID).
 			Scan(ctx, &highest); err != nil {
 			return err
 		}
@@ -133,8 +133,8 @@ func (s *Store) Rules(ctx context.Context, subject access.Subject, productID int
 func (s *Store) rules(ctx context.Context, productID int64) ([]Routing, error) {
 	var rules []Routing
 	if err := s.db.NewSelect().Model(&rules).
-		Where("product_id = ?", productID).
-		Where("retired_at IS NULL").
+		Where(`"product_id" = ?`, productID).
+		Where(`"retired_at" IS NULL`).
 		// By identifier as well, because two rules can hold the same
 		// ordinal: it is assigned as one past the highest under the
 		// engine's ordinary isolation, so two rules created at once
@@ -153,18 +153,12 @@ func (s *Store) RetireRule(ctx context.Context, by access.Subject, productID, id
 	if err := mayRoute(by, productID); err != nil {
 		return err
 	}
-	res, err := s.db.NewUpdate().Model((*Routing)(nil)).
-		Set("retired_at = ?", s.now().UTC().Truncate(time.Microsecond)).
-		Where("id = ?", id).Where("product_id = ?", productID).
-		Where("retired_at IS NULL").Exec(ctx)
+	took, err := database.Retire(ctx, s.db, (*Routing)(nil), id, s.now().UTC().Truncate(time.Microsecond),
+		func(q *bun.UpdateQuery) *bun.UpdateQuery { return q.Where(`"product_id" = ?`, productID) })
 	if err != nil {
 		return fmt.Errorf("retire that rule: %w", err)
 	}
-	n, err := database.Affected(res)
-	if err != nil {
-		return fmt.Errorf("retire that rule: %w", err)
-	}
-	if n == 0 {
+	if !took {
 		return ErrNoSuchRule
 	}
 	return nil
@@ -229,11 +223,10 @@ func (s *Store) ApplyRules(ctx context.Context, productID int64, cap int) (int, 
 			// rather than placing work where nothing can be picked up from.
 			continue
 		}
-		// The room a rule gets is what the batch has left to read. Handing it
-		// what the batch has left to *write* gave the next rule the room the
-		// last one lost to a human assignment, which is first-match-wins
-		// undone for that batch: work the earlier rule had claimed went to a
-		// later one instead.
+		// The room a rule gets is what the batch has left to read, not what it
+		// has left to write. The room the last rule lost to a human assignment
+		// is not the next rule's, or first-match-wins is undone for that batch
+		// and work the earlier rule claimed goes to a later one.
 		read, n, err := s.applyOne(ctx, productID, rule, party, cap-seen)
 		if errors.Is(err, ErrTooBroad) {
 			outgrown = append(outgrown, rule.ID)
@@ -261,8 +254,8 @@ func (s *Store) applyOne(ctx context.Context, productID int64, rule Routing,
 	var ids []int64
 	page := s.db.NewSelect().Model((*Finding)(nil)).
 		Column("id").
-		Where("closed_at IS NULL").
-		Where("assigned_to IS NULL").
+		Where(`"closed_at" IS NULL`).
+		Where(`"assigned_to" IS NULL`).
 		Where(inThisProduct, productID).
 		Limit(room)
 	if rule.Upstream != "" {
@@ -284,7 +277,7 @@ func (s *Store) applyOne(ctx context.Context, productID int64, rule Routing,
 		// Split and OR-ed rather than one list: a subtree is thousands of
 		// components, and a statement binding that many parameters is refused
 		// by two of the four engines.
-		where, args := database.InAnyOf("component_id", beneath)
+		where, args := database.InAnyOf(`"component_id"`, beneath)
 		page = page.Where(where, args...)
 	}
 	if err := page.Scan(ctx, &ids); err != nil {
@@ -295,14 +288,14 @@ func (s *Store) applyOne(ctx context.Context, productID int64, rule Routing,
 	}
 
 	res, err := s.db.NewUpdate().Model((*Finding)(nil)).
-		Set("assigned_to = ?", party).
-		Set("assigned_at = ?", now).
-		Set("routed_by = ?", rule.ID).
-		Where("id IN (?)", bun.List(ids)).
+		Set(`"assigned_to" = ?`, party).
+		Set(`"assigned_at" = ?`, now).
+		Set(`"routed_by" = ?`, rule.ID).
+		Where(`"id" IN (?)`, bun.List(ids)).
 		// Re-checked at the moment of the write: an assignment that
 		// landed between the read and here is somebody's, and a rule
 		// never takes something out of anybody's hands.
-		Where("assigned_to IS NULL").
+		Where(`"assigned_to" IS NULL`).
 		Exec(ctx)
 	if err != nil {
 		return 0, 0, fmt.Errorf("place what that rule matched: %w", err)
@@ -329,12 +322,12 @@ func bySource(query *bun.SelectQuery, pattern string) *bun.SelectQuery {
 	// differently outside ASCII, so asking one to made whether a rule swept a
 	// component depend on which engine was running. Folded on the way in, this
 	// is an equality test and it can use the index.
-	const name = `COALESCE(NULLIF(c.upstream_folded, ''), c.name_folded)`
+	const name = `COALESCE(NULLIF("c"."upstream_folded", ''), "c"."name_folded")`
 	if glob, like := globbed(pattern); glob {
-		return query.Where(`component_id IN (SELECT c.id FROM "component" AS "c"
+		return query.Where(`"component_id" IN (SELECT "c"."id" FROM "component" AS "c"
 			WHERE `+name+` LIKE ?`+database.LikeClause+`)`, like)
 	}
-	return query.Where(`component_id IN (SELECT c.id FROM "component" AS "c"
+	return query.Where(`"component_id" IN (SELECT "c"."id" FROM "component" AS "c"
 		WHERE `+name+` = ?)`, pattern)
 }
 
@@ -427,9 +420,9 @@ func (s *Store) WouldMatch(ctx context.Context, subject access.Subject,
 	// and what it would place differ by who holds it, and both are worth
 	// seeing.
 	narrow := func(q *bun.SelectQuery) (*bun.SelectQuery, error) {
-		q = q.Where("f.closed_at IS NULL").
-			Where("f.visibility IN (?)", bun.List(visible)).
-			Where(inThisProductAs("f.target_id"), productID)
+		q = q.Where(`"f"."closed_at" IS NULL`).
+			Where(`"f"."visibility" IN (?)`, bun.List(visible)).
+			Where(inThisProductAs(`"f"."target_id"`), productID)
 		if upstream != "" {
 			q = bySource(q, upstream)
 		}
@@ -443,7 +436,7 @@ func (s *Store) WouldMatch(ctx context.Context, subject access.Subject,
 				// empty one: it is what a typo looks like from here.
 				return q.Where("1 = 0"), nil
 			}
-			where, args := database.InAnyOf("f.component_id", under)
+			where, args := database.InAnyOf(`"f"."component_id"`, under)
 			q = q.Where(where, args...)
 		}
 		return q, nil
@@ -451,9 +444,9 @@ func (s *Store) WouldMatch(ctx context.Context, subject access.Subject,
 
 	var found Catches
 	names, err := narrow(s.db.NewSelect().TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "component" AS "cn" ON cn.id = f.component_id`).
-		ColumnExpr(`DISTINCT cn.name AS "name"`).
-		OrderExpr("cn.name").
+		Join(`JOIN "component" AS "cn" ON "cn"."id" = "f"."component_id"`).
+		ColumnExpr(`DISTINCT "cn"."name" AS "name"`).
+		OrderExpr(`"cn"."name"`).
 		Limit(sample))
 	if err != nil {
 		return Catches{}, err
@@ -465,8 +458,8 @@ func (s *Store) WouldMatch(ctx context.Context, subject access.Subject,
 	// kernel matches hundreds of modules, and the sample is what is named,
 	// not how many there are.
 	distinct, err := narrow(s.db.NewSelect().TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "component" AS "cn" ON cn.id = f.component_id`).
-		ColumnExpr(`DISTINCT cn.name AS "name"`))
+		Join(`JOIN "component" AS "cn" ON "cn"."id" = "f"."component_id"`).
+		ColumnExpr(`DISTINCT "cn"."name" AS "name"`))
 	if err != nil {
 		return Catches{}, err
 	}
@@ -475,8 +468,8 @@ func (s *Store) WouldMatch(ctx context.Context, subject access.Subject,
 	}
 
 	counted, err := narrow(s.db.NewSelect().TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "component" AS "c" ON c.id = f.component_id`).
-		ColumnExpr("DISTINCT f.vulnerability_id, f.component_id"))
+		Join(`JOIN "component" AS "c" ON "c"."id" = "f"."component_id"`).
+		ColumnExpr(`DISTINCT "f"."vulnerability_id", "f"."component_id"`))
 	if err != nil {
 		return Catches{}, err
 	}
@@ -487,9 +480,9 @@ func (s *Store) WouldMatch(ctx context.Context, subject access.Subject,
 	found.Work = work
 
 	unheld, err := narrow(s.db.NewSelect().TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "component" AS "c" ON c.id = f.component_id`).
-		ColumnExpr("DISTINCT f.vulnerability_id, f.component_id").
-		Where("f.assigned_to IS NULL"))
+		Join(`JOIN "component" AS "c" ON "c"."id" = "f"."component_id"`).
+		ColumnExpr(`DISTINCT "f"."vulnerability_id", "f"."component_id"`).
+		Where(`"f"."assigned_to" IS NULL`))
 	if err != nil {
 		return Catches{}, err
 	}
@@ -512,9 +505,9 @@ func (s *Store) beneathIn(ctx context.Context, productID int64, name string) ([]
 	var builds []int64
 	err := s.db.NewSelect().
 		TableExpr(`"target" AS "tg"`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		ColumnExpr("tg.id").
-		Where("st.product_id = ?", productID).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		ColumnExpr(`"tg"."id"`).
+		Where(`"st"."product_id" = ?`, productID).
 		Scan(ctx, &builds)
 	if err != nil {
 		return nil, fmt.Errorf("read which builds this product has: %w", err)
@@ -526,21 +519,21 @@ func (s *Store) beneathIn(ctx context.Context, productID int64, name string) ([]
 		var roots []int64
 		if err := s.db.NewSelect().
 			TableExpr(`"graph_node" AS "n"`).
-			Join(`JOIN "component" AS "c" ON c.id = n.component_id`).
-			ColumnExpr("DISTINCT n.component_id").
-			Where("n.target_id = ?", build).
-			Where("n.closed_scan_id IS NULL").
+			Join(`JOIN "component" AS "c" ON "c"."id" = "n"."component_id"`).
+			ColumnExpr(`DISTINCT "n"."component_id"`).
+			Where(`"n"."target_id" = ?`, build).
+			Where(`"n"."closed_scan_id" IS NULL`).
 			Apply(func(q *bun.SelectQuery) *bun.SelectQuery {
 				if glob, like := globbed(name); glob {
-					return q.Where("c.name_folded LIKE ?"+database.LikeClause, like)
+					return q.Where(`"c"."name_folded" LIKE ?`+database.LikeClause, like)
 				}
-				return q.Where("c.name_folded = ?", name)
+				return q.Where(`"c"."name_folded" = ?`, name)
 			}).
 			// One more than the cap, so that reaching it is distinguishable
 			// from landing on it exactly. The cap is the store's, not the
-			// constant: a store built with a smaller reach truncated at the
-			// shipped number and never tripped its own refusal, which is
-			// quietly applying to part of what a rule names.
+			// constant: a store built with a smaller reach that truncates at
+			// the shipped number never trips its own refusal, and applies a
+			// rule to part of what it names.
 			Limit(s.reaching()+1).
 			Scan(ctx, &roots); err != nil {
 			return nil, fmt.Errorf("look for that component: %w", err)
@@ -584,10 +577,10 @@ func (s *Store) partiesOf(ctx context.Context, rules []Routing) (map[int64]int64
 	}
 	err := s.db.NewSelect().
 		TableExpr(`"team" AS "tm"`).
-		ColumnExpr(`tm.id AS "id"`).
-		ColumnExpr(`tm.party_id AS "party_id"`).
-		Where("tm.id IN (?)", bun.List(ids)).
-		Where("tm.retired_at IS NULL").
+		ColumnExpr(`"tm"."id" AS "id"`).
+		ColumnExpr(`"tm"."party_id" AS "party_id"`).
+		Where(`"tm"."id" IN (?)`, bun.List(ids)).
+		Where(`"tm"."retired_at" IS NULL`).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("read which teams these rules point at: %w", err)

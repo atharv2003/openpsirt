@@ -79,30 +79,30 @@ func (w *sweep) statementsRevised(ctx context.Context) (map[int64][]Holds, error
 		Publisher       string `bun:"publisher"`
 		Undisclosed     bool   `bun:"undisclosed"`
 	}
-	undisclosed, private := access.AnyPrivate("de.visibility")
+	undisclosed, private := access.AnyPrivate(`"de"."visibility"`)
 	err := w.db.NewSelect().
 		TableExpr(finding.Decisions).
-		Join(`JOIN "vex_statement" AS "ss" ON ss.id = de.from_statement_id`).
-		Join(`JOIN "product" AS "p" ON p.id = de.product_id`).
+		Join(`JOIN "vex_statement" AS "ss" ON "ss"."id" = "de"."from_statement_id"`).
+		Join(`JOIN "product" AS "p" ON "p"."id" = "de"."product_id"`).
 		// The issue the decision is read as, which is the one a reader finds
 		// where a merge put another name under it.
-		Join(`JOIN "vulnerability" AS "v" ON v.id = dv.issue_id`).
-		ColumnExpr(`MIN(de.id) AS "decision_id"`).
-		ColumnExpr(`de.product_id AS "product_id"`).
-		ColumnExpr(`v.id AS "vulnerability_id"`).
-		ColumnExpr(`MIN(p.name) AS "product"`).
-		ColumnExpr(`MIN(v.identifier) AS "vulnerability"`).
-		ColumnExpr(`ss.publisher AS "publisher"`).
+		Join(`JOIN "vulnerability" AS "v" ON "v"."id" = "dv"."issue_id"`).
+		ColumnExpr(`MIN("de"."id") AS "decision_id"`).
+		ColumnExpr(`"de"."product_id" AS "product_id"`).
+		ColumnExpr(`"v"."id" AS "vulnerability_id"`).
+		ColumnExpr(`MIN("p"."name") AS "product"`).
+		ColumnExpr(`MIN("v"."identifier") AS "vulnerability"`).
+		ColumnExpr(`"ss"."publisher" AS "publisher"`).
 		ColumnExpr(undisclosed+` AS "undisclosed"`, private).
 		// Standing, because a decision nobody is relying on any more is not
 		// one whose evidence moving matters.
-		Where("de.live_key IS NOT NULL").
-		Where("de.state = ?", triage.Approved).
+		Where(`"de"."live_key" IS NOT NULL`).
+		Where(`"de"."state" = ?`, triage.Approved).
 		// And the statement it cited is no longer what that publisher says.
-		Where("ss.superseded_at IS NOT NULL").
+		Where(`"ss"."superseded_at" IS NOT NULL`).
 		// Grouped exactly as the condition is identified, so one condition is
 		// one row and its link does not depend on which of several came last.
-		GroupExpr("de.product_id, v.id, ss.publisher").
+		GroupExpr(`"de"."product_id", "v"."id", "ss"."publisher"`).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("read where a publisher changed their mind: %w", err)
@@ -160,22 +160,22 @@ func (w *sweep) disclosureWithin(ctx context.Context, admins []int64, kind Kind,
 		AssignedTo      *int64    `bun:"assigned_to"`
 	}
 	err := findingsWith(w.db.NewSelect(), false).
-		ColumnExpr(`MIN(f.disclose_at) AS "disclose_at"`).
-		ColumnExpr(`MIN(f.assigned_to) AS "assigned_to"`).
-		Where("f.visibility = ?", access.Private).
-		Where("f.closed_at IS NULL").
-		Where("f.disclose_at IS NOT NULL").
-		Where("f.disclose_at <= ?", time.Now().UTC().Add(lead)).
+		ColumnExpr(`MIN("f"."disclose_at") AS "disclose_at"`).
+		ColumnExpr(`MIN("f"."assigned_to") AS "assigned_to"`).
+		Where(`"f"."visibility" = ?`, access.Private).
+		Where(`"f"."closed_at" IS NULL`).
+		Where(`"f"."disclose_at" IS NOT NULL`).
+		Where(`"f"."disclose_at" <= ?`, time.Now().UTC().Add(lead)).
 		// With a lead time given this is the *coming* ones only: what has
 		// already arrived is the other condition, and one row raising both
 		// would be told twice about one thing.
 		Where(func() string {
 			if lead > 0 {
-				return "f.disclose_at > ?"
+				return `"f"."disclose_at" > ?`
 			}
-			return "f.disclose_at <= ?"
+			return `"f"."disclose_at" <= ?`
 		}(), time.Now().UTC()).
-		GroupExpr("p.name, st.name, va.name, c.name, v.identifier, st.product_id, v.id").
+		GroupExpr(`"p"."name", "st"."name", "va"."name", "c"."name", "v"."identifier", "st"."product_id", "v"."id"`).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("read what is past its disclosure date: %w", err)
@@ -186,20 +186,11 @@ func (w *sweep) disclosureWithin(ctx context.Context, admins []int64, kind Kind,
 	// extended clears the alert it opened only because the next sweep hands
 	// the same person a list without it. Returning nothing at all would leave
 	// every cleared condition standing.
-	people, held := w.people, w.held
-	private := map[int64]map[int64]bool{}
 	// The party itself. The assignment column holds a party rather than a
 	// person, and a notification goes to somebody, so the two are mapped
 	// in one place rather than at each use.
-	whose := make(map[int64]int64, len(people))
-	for _, person := range people {
-		reaches := map[int64]bool{}
-		for _, grant := range held[person.ID] {
-			if grant.Active && (grant.Role == access.PrivateRead || grant.Role == access.PrivateTriage) {
-				reaches[grant.ProductID] = true
-			}
-		}
-		private[person.ID] = reaches
+	whose := make(map[int64]int64, len(w.people))
+	for _, person := range w.people {
 		whose[person.PartyID] = person.ID
 	}
 
@@ -223,12 +214,12 @@ func (w *sweep) disclosureWithin(ctx context.Context, admins []int64, kind Kind,
 		about, body := "disclosure",
 			row.Vulnerability+" in "+row.Product+" at "+row.Component+
 				" reached its disclosure date on "+
-				row.DiscloseAt.Format(time.DateOnly)+" and nothing has been decided."
+				day(row.DiscloseAt)+" and nothing has been decided."
 		if lead > 0 {
 			about = "disclosure-near"
 			body = row.Vulnerability + " in " + row.Product + " at " + row.Component +
 				" discloses on " +
-				row.DiscloseAt.Format(time.DateOnly) +
+				day(row.DiscloseAt) +
 				" and nothing has been decided. Extending it needs a second person, " +
 				"and that takes time to arrange."
 		}
@@ -265,7 +256,7 @@ func (w *sweep) disclosureWithin(ctx context.Context, admins []int64, kind Kind,
 		if _, already := out[owner]; already && contains(out[owner], holds.About) {
 			continue
 		}
-		if !private[owner][row.ProductID] {
+		if !w.reach[owner][row.ProductID].reads(true) {
 			continue
 		}
 		out[owner] = append(out[owner], holds)

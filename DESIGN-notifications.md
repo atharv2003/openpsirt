@@ -20,6 +20,7 @@ Satisfies REQ-46, REQ-47, REQ-48, REQ-49, REQ-77, REQ-80, REQ-81.
 - [Claim outcomes](#claim-outcomes)
 - [The digest](#the-digest)
 - [Outbound content](#outbound-content)
+- [Dates and times](#dates-and-times)
 - [The notification list](#the-notification-list)
 - [Delivery](#delivery)
 - [Mail](#mail)
@@ -456,6 +457,16 @@ Administrators, and whoever holds it — the second only where they may still re
 undisclosed work in that product. An assignment can outlive the role that
 allowed it.
 
+## Dates and times
+
+The text of a notification is composed once and carried by every channel, so
+these hold for the notification area, mail and chat alike.
+
+| Rule | |
+|---|---|
+| A day is the UTC day a moment falls on | One moment is one day to every reader, whatever zone the server's clock is in, and it is the day the interface shows for it (`DESIGN-interface.md`) |
+| A time within a day is to the minute in UTC, and says UTC | An obligation window ends at an hour, and a time with no zone reads as the reader's own |
+
 ## The notification list
 
 Narrowed in the data-access layer, with a subject, like every other read
@@ -747,6 +758,7 @@ notices; what is said about them is here.
 | Rule | Reason |
 |---|---|
 | Three conditions: running, near its end, and passed | They clear differently, the way the embargo conditions do. The running one and the near one clear when the end arrives, and the passed one opens |
+| Worked out from the shelf, read once per sweep for all three | The shelf and the conditions agree on when a window starts, nears and ends, at one moment |
 | Running is raised from the moment the window starts | The windows in force anywhere are a day to a fortnight and an incident is rare, so a warning that waits gives back the hours it exists to save |
 | A window waiting on another window's notice raises nothing until that notice is recorded | It has no end to say, and saying it is running would be false |
 | A window counting from the fix raises nothing until a stated release date of a tag named on the record has come | The same reason. A release date still to come is a start that has not arrived |

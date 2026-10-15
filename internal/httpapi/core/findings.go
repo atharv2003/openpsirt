@@ -231,6 +231,22 @@ type Narrowing struct {
 	Ascending    bool            `query:"asc" doc:"Order the other way — oldest, nearest deadline, fewest places, lowest first"`
 }
 
+// BandCounts reads counts keyed by severity band into the four a body states,
+// worst first, by the domain's own list of bands.
+func BandCounts(by map[string]int) (critical, high, medium, low int) {
+	bands := finding.Bands()
+	return by[bands[0]], by[bands[1]], by[bands[2]], by[bands[3]]
+}
+
+// Window is the page of rows held in memory that a limit and an offset name.
+//
+// Worked out without adding the two: an offset near the largest integer wraps
+// negative when the limit is added to it. Past the end it is empty.
+func Window[T any](rows []T, limit, offset int) []T {
+	start := min(max(offset, 0), len(rows))
+	return rows[start : start+min(max(limit, 0), len(rows)-start)]
+}
+
 // Paging is how much of a list to return, kept apart from the filters so that
 // something answering the whole of a narrowing — an export — can take every
 // filter without also offering a page size it does not honor. A parameter that

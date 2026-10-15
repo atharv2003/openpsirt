@@ -86,7 +86,7 @@ func (s *Store) Ran(ctx context.Context, subject access.Subject,
 	// holds, with the path doing the authorizing and the identifier doing the
 	// reading.
 	err = s.db.NewSelect().Model(&run).
-		Where("id = ?", runID).Where("target_id = ?", targetID).Scan(ctx)
+		Where(`"id" = ?`, runID).Where(`"target_id" = ?`, targetID).Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("no such run on this build: %w", ErrNoSuchRun)
 	}
@@ -103,38 +103,30 @@ func (s *Store) Ran(ctx context.Context, subject access.Subject,
 		OpenedBy: map[string]int{}, ClosedBy: map[string]int{},
 	}
 
-	// One statement per direction, each grouped over a distinct inner select
-	// rather than COUNT DISTINCT over two columns, which not every engine
-	// takes — the same shape the per-run counts on the receipts use, so the
-	// receipt and this screen cannot disagree about what a run opened.
+	// One statement per direction, over what runChanged reads, which is what
+	// the per-run counts on the receipts read.
 	count := func(column runColumn, into map[string]int, exploited *int) error {
 		var rows []struct {
 			Band      string `bun:"band"`
 			Count     int    `bun:"count"`
 			Exploited int    `bun:"exploited"`
 		}
-		inner := s.db.NewSelect().
-			Distinct().
-			TableExpr(`"finding" AS "f"`).
-			Join(`JOIN "vulnerability" AS "v" ON v.id = f.vulnerability_id`).
+		inner, run := runChanged(s.db, targetID, column, visible)
+		inner = inner.
+			Join(`JOIN "vulnerability" AS "v" ON "v"."id" = "f"."vulnerability_id"`).
 			Join(rating.Here, productID).
 			ColumnExpr(rating.BandExpr+` AS "band"`).
-			ColumnExpr(`f.vulnerability_id AS "vulnerability_id"`).
-			ColumnExpr(`f.component_id AS "component_id"`).
 			// The flag rather than the urgency's top bands, which answer
 			// "some exploitation" and would count a product recorded as
 			// attacked here among the issues a feed calls exploited.
-			ColumnExpr(`CASE WHEN f.urgency_exploited THEN 1 ELSE 0 END AS "exploited"`).
-			Where("f.target_id = ?", targetID).
-			Where(string(database.Column(s.db, "f."+string(column)))+" = ?", runID).
-			Where("f.visibility IN (?)", bun.List(visible)).
-			Where(wasOpen)
+			ColumnExpr(`CASE WHEN "f"."urgency_exploited" THEN 1 ELSE 0 END AS "exploited"`).
+			Where(run+" = ?", runID)
 		err := s.db.NewSelect().
 			TableExpr(`(?) AS "changed"`, inner).
-			ColumnExpr(`changed.band AS "band"`).
+			ColumnExpr(`"changed"."band" AS "band"`).
 			ColumnExpr(`COUNT(*) AS "count"`).
-			ColumnExpr(`SUM(changed.exploited) AS "exploited"`).
-			GroupExpr("changed.band").
+			ColumnExpr(`SUM("changed"."exploited") AS "exploited"`).
+			GroupExpr(`"changed"."band"`).
 			Scan(ctx, &rows)
 		if err != nil {
 			return fmt.Errorf("count what this run changed: %w", err)
@@ -178,3 +170,23 @@ const (
 	// closedByRun is the run that stopped reporting it.
 	closedByRun runColumn = "closed_run_id"
 )
+
+// runChanged is the distinct issues at components of a build that runs opened
+// or closed, at the visibilities given, with the run reference named by
+// column, quoted, for the caller's condition on which runs.
+//
+// Distinct rows grouped over rather than COUNT DISTINCT over two columns,
+// which not every engine takes. One spelling, so the receipts and the run's
+// own screen cannot disagree about what a run opened.
+func runChanged(db bun.IDB, targetID int64, column runColumn,
+	visible []access.Visibility) (*bun.SelectQuery, string) {
+
+	return db.NewSelect().
+		Distinct().
+		TableExpr(`"finding" AS "f"`).
+		ColumnExpr(`"f"."vulnerability_id" AS "vulnerability_id"`).
+		ColumnExpr(`"f"."component_id" AS "component_id"`).
+		Where(`"f"."target_id" = ?`, targetID).
+		Where(`"f"."visibility" IN (?)`, bun.List(visible)).
+		Where(wasOpen), string(database.Column(db, "f."+string(column)))
+}

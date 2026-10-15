@@ -5,6 +5,8 @@ package finding
 
 import (
 	"github.com/uptrace/bun"
+
+	"github.com/nexthop-ai/openpsirt/internal/database"
 )
 
 // The findings list's groups in two levels.
@@ -44,31 +46,31 @@ const (
 )
 
 // places is how many places the group holds.
-func (g grain) places() string { return g.pick("COUNT(*)", "SUM(f.n)") }
+func (g grain) places() string { return g.pick("COUNT(*)", `SUM("f"."n")`) }
 
 // peak is the highest urgency among the group's places.
-func (g grain) peak() string { return g.pick("MAX(f.urgency)", "MAX(f.peak)") }
+func (g grain) peak() string { return g.pick(`MAX("f"."urgency")`, `MAX("f"."peak")`) }
 
 // exploited and exploitedHere are the two exploitation flags.
-func (g grain) exploited() string { return g.pick(exploitedAcross, "MAX(f.hit)") }
+func (g grain) exploited() string { return g.pick(exploitedAcross, `MAX("f"."hit")`) }
 
-func (g grain) exploitedHere() string { return g.pick(exploitedHereAcross, "MAX(f.hit_here)") }
+func (g grain) exploitedHere() string { return g.pick(exploitedHereAcross, `MAX("f"."hit_here")`) }
 
 // withFix is how many places name a version that fixes the issue.
-func (g grain) withFix() string { return g.pick(withFixAcross, "SUM(f.with_fix)") }
+func (g grain) withFix() string { return g.pick(withFixAcross, `SUM("f"."with_fix")`) }
 
 // fixLeast and fixMost are the two ends of what upstream did.
-func (g grain) fixLeast() string { return g.pick("MIN(f.fix_state)", "MIN(f.fix_least)") }
+func (g grain) fixLeast() string { return g.pick(`MIN("f"."fix_state")`, `MIN("f"."fix_least")`) }
 
-func (g grain) fixMost() string { return g.pick("MAX(f.fix_state)", "MAX(f.fix_most)") }
+func (g grain) fixMost() string { return g.pick(`MAX("f"."fix_state")`, `MAX("f"."fix_most")`) }
 
 // held is how many places somebody holds, and heldLeast and heldMost the two
 // ends of who.
-func (g grain) held() string { return g.pick("COUNT(f.assigned_to)", "SUM(f.held)") }
+func (g grain) held() string { return g.pick(`COUNT("f"."assigned_to")`, `SUM("f"."held")`) }
 
-func (g grain) heldLeast() string { return g.pick("MIN(f.assigned_to)", "MIN(f.held_least)") }
+func (g grain) heldLeast() string { return g.pick(`MIN("f"."assigned_to")`, `MIN("f"."held_least")`) }
 
-func (g grain) heldMost() string { return g.pick("MAX(f.assigned_to)", "MAX(f.held_most)") }
+func (g grain) heldMost() string { return g.pick(`MAX("f"."assigned_to")`, `MAX("f"."held_most")`) }
 
 // decided is how many places carry one of the flags byState's derived table
 // computes per place.
@@ -78,7 +80,7 @@ func (g grain) decided(flag string) string {
 	default:
 		panic("finding: " + flag + " is not a column of the decided table")
 	}
-	return g.pick("SUM(COALESCE(dd."+flag+", 0))", `SUM(f.`+flag+`)`)
+	return g.pick(`SUM(COALESCE("dd"."`+flag+`", 0))`, `SUM("f"."`+flag+`")`)
 }
 
 func (g grain) pick(rows, parts string) string {
@@ -89,7 +91,7 @@ func (g grain) pick(rows, parts string) string {
 }
 
 // withFixAcross counts the places naming a fixed version.
-const withFixAcross = "SUM(CASE WHEN f.fixed_in IS NULL OR f.fixed_in = '' THEN 0 ELSE 1 END)"
+const withFixAcross = `SUM(CASE WHEN "f"."fixed_in" IS NULL OR "f"."fixed_in" = '' THEN 0 ELSE 1 END)`
 
 // partKey is one key of the first level: the expression a partial group is
 // grouped on, and the column it is selected as. The second level and the
@@ -123,7 +125,7 @@ func keyedBy(q *bun.SelectQuery, keys []partKey) *bun.SelectQuery {
 // over them reads the same at either level.
 func (f Filter) folded(db bun.IDB, rows *bun.SelectQuery, keys []partKey) *bun.SelectQuery {
 	if f.DiffersBetweenBuilds && f.Builds > 1 {
-		keys = append(keys[:len(keys):len(keys)], partKey{expr: "f.target_id", name: "target_id"})
+		keys = append(keys[:len(keys):len(keys)], partKey{expr: `"f"."target_id"`, name: "target_id"})
 	}
 	var inner *bun.SelectQuery
 	if f.asksDecided() {
@@ -133,7 +135,7 @@ func (f Filter) folded(db bun.IDB, rows *bun.SelectQuery, keys []partKey) *bun.S
 	}
 	outer := db.NewSelect().
 		TableExpr(`(?) AS "f"`, inner).
-		Join(`JOIN "component" AS "c" ON c.id = f.component_id`)
+		Join(`JOIN "component" AS "c" ON "c"."id" = "f"."component_id"`)
 	return f.narrowGroups(outer, overParts)
 }
 
@@ -149,6 +151,7 @@ func (f Filter) folded(db bun.IDB, rows *bun.SelectQuery, keys []partKey) *bun.S
 // groups can no longer be read from finding's covering index: 1,067 ms against
 // 575 ms for a build's unsettled work on PostgreSQL with 133,549 decisions.
 func (f Filter) decidedBeside(db bun.IDB, rows *bun.SelectQuery, keys []partKey) *bun.SelectQuery {
+	col := func(name string) string { return string(database.Column(db, name)) }
 	apart := f
 	apart.decidedApart = true
 	columns := append(append([]partColumn{}, headColumns...), apart.partialColumns()...)
@@ -175,9 +178,9 @@ func (f Filter) decidedBeside(db bun.IDB, rows *bun.SelectQuery, keys []partKey)
 	whole := apart
 	whole.decidedIssues = f.placedIssues
 	population := whole.narrowRows(rows).
-		ColumnExpr(`f.id AS "id"`).
-		ColumnExpr(`f.place_identity AS "place_identity"`).
-		ColumnExpr(`f.consumer_id AS "consumer_id"`)
+		ColumnExpr(`"f"."id" AS "id"`).
+		ColumnExpr(`"f"."place_identity" AS "place_identity"`).
+		ColumnExpr(`"f"."consumer_id" AS "consumer_id"`)
 	for _, key := range keys {
 		population = population.ColumnExpr(key.expr+` AS "`+key.name+`"`, key.args...)
 	}
@@ -192,10 +195,10 @@ func (f Filter) decidedBeside(db bun.IDB, rows *bun.SelectQuery, keys []partKey)
 	// 635 ms for the undecided page's grouping on PostgreSQL.
 	perPlace := f.comparesDecidedPlaces()
 	if perPlace {
-		places = places.GroupExpr("f2.id")
+		places = places.GroupExpr(`"f2"."id"`)
 	}
 	if f.decidedIssues != nil {
-		places = f.amongDecidedIssues(places, "dv.issue_id")
+		places = f.amongDecidedIssues(places, `"dv"."issue_id"`)
 	}
 	if f.Across {
 		// Across products each place carries its own product, and the decision
@@ -207,21 +210,21 @@ func (f Filter) decidedBeside(db bun.IDB, rows *bun.SelectQuery, keys []partKey)
 		if !named {
 			panic("finding: a first level across products is keyed on the product")
 		}
-		places = places.Where("de.product_id = f2.product_id")
+		places = places.Where(`"de"."product_id" = "f2"."product_id"`)
 	} else {
-		places = places.Where("de.product_id = ?", f.ProductID)
+		places = places.Where(`"de"."product_id" = ?`, f.ProductID)
 	}
 	for _, key := range keys {
-		places = places.ColumnExpr(`f2.` + key.name + ` AS "` + key.name + `"`).GroupExpr("f2." + key.name)
+		places = places.ColumnExpr(col("f2."+key.name) + ` AS "` + key.name + `"`).GroupExpr(col("f2." + key.name))
 	}
 	decided := places
 	if perPlace {
 		decided = db.NewSelect().TableExpr(`(?) AS "dp"`, places)
 		for _, key := range keys {
-			decided = decided.ColumnExpr(`dp.` + key.name).GroupExpr("dp." + key.name)
+			decided = decided.ColumnExpr(col("dp." + key.name)).GroupExpr(col("dp." + key.name))
 		}
 		for _, flag := range decidedFlags {
-			decided = decided.ColumnExpr(`SUM(dp.` + flag + `) AS "` + flag + `"`)
+			decided = decided.ColumnExpr(`SUM(` + col("dp."+flag) + `) AS "` + flag + `"`)
 		}
 	}
 
@@ -238,7 +241,7 @@ func (f Filter) decidedBeside(db bun.IDB, rows *bun.SelectQuery, keys []partKey)
 	// column.
 	others := db.NewSelect().TableExpr(`(?) AS "d"`, decided)
 	for _, key := range keys {
-		others = others.ColumnExpr(`d.` + key.name + ` AS "` + key.name + `"`)
+		others = others.ColumnExpr(col("d."+key.name) + ` AS "` + key.name + `"`)
 	}
 	for _, column := range columns {
 		none := "NULL"
@@ -249,22 +252,22 @@ func (f Filter) decidedBeside(db bun.IDB, rows *bun.SelectQuery, keys []partKey)
 	}
 	for _, flag := range decidedFlags {
 		parts = parts.ColumnExpr(`0 AS "` + flag + `"`)
-		others = others.ColumnExpr(`d.` + flag + ` AS "` + flag + `"`)
+		others = others.ColumnExpr(col("d."+flag) + ` AS "` + flag + `"`)
 	}
 	stacked := db.NewSelect().
 		TableExpr(`(SELECT * FROM (?) AS "parts" UNION ALL ?) AS "u"`, parts, others)
 	for _, key := range keys {
-		stacked = stacked.ColumnExpr(`u.` + key.name + ` AS "` + key.name + `"`).GroupExpr("u." + key.name)
+		stacked = stacked.ColumnExpr(col("u."+key.name) + ` AS "` + key.name + `"`).GroupExpr(col("u." + key.name))
 	}
 	for _, column := range columns {
-		stacked = stacked.ColumnExpr(column.fold + `(u.` + column.name + `) AS "` + column.name + `"`)
+		stacked = stacked.ColumnExpr(column.fold + `(` + col("u."+column.name) + `) AS "` + column.name + `"`)
 	}
 	for _, flag := range decidedFlags {
-		stacked = stacked.ColumnExpr(`SUM(u.` + flag + `) AS "` + flag + `"`)
+		stacked = stacked.ColumnExpr(`SUM(` + col("u."+flag) + `) AS "` + flag + `"`)
 	}
 	// A decided group always has places in the partial groups, because both
 	// read the same population; a group with none is not one the list holds.
-	return stacked.Having("SUM(u.n) > 0")
+	return stacked.Having(`SUM("u"."n") > 0`)
 }
 
 // comparesDecidedPlaces is whether a condition the filter asks of a group
@@ -316,8 +319,8 @@ func placeHeads(q *bun.SelectQuery) *bun.SelectQuery {
 
 // issueAndComponent is the first level's keys for a list inside one product.
 var issueAndComponent = []partKey{
-	{expr: "f.vulnerability_id", name: "vulnerability_id"},
-	{expr: "f.component_id", name: "component_id"},
+	{expr: `"f"."vulnerability_id"`, name: "vulnerability_id"},
+	{expr: `"f"."component_id"`, name: "component_id"},
 }
 
 // partials selects partialColumns.
@@ -331,29 +334,29 @@ func (f Filter) partials(q *bun.SelectQuery) *bun.SelectQuery {
 func (f Filter) partialColumns() []partColumn {
 	var columns []partColumn
 	if f.HasFix {
-		columns = append(columns, partColumn{"MIN(f.fixed_in)", "MIN", "fixed_in"},
+		columns = append(columns, partColumn{`MIN("f"."fixed_in")`, "MIN", "fixed_in"},
 			partColumn{withFixAcross, "SUM", "with_fix"})
 	}
 	if f.Unconfirmed {
-		columns = append(columns, partColumn{"MIN(f.matched)", "MIN", "matched"})
+		columns = append(columns, partColumn{`MIN("f"."matched")`, "MIN", "matched"})
 	}
 	if f.OpenedAfter != nil || f.OpenedBefore != nil || f.SortBy == ByAge {
-		columns = append(columns, partColumn{"MIN(f.opened_at)", "MIN", "opened_at"})
+		columns = append(columns, partColumn{`MIN("f"."opened_at")`, "MIN", "opened_at"})
 	}
 	if f.ClosedAfter != nil {
-		columns = append(columns, partColumn{"MAX(f.closed_at)", "MAX", "closed_at"})
+		columns = append(columns, partColumn{`MAX("f"."closed_at")`, "MAX", "closed_at"})
 	}
 	if f.Overdue || f.DueBefore != nil || f.SortBy == ByDeadline {
-		columns = append(columns, partColumn{"MIN(f.due_at)", "MIN", "due_at"})
+		columns = append(columns, partColumn{`MIN("f"."due_at")`, "MIN", "due_at"})
 	}
 	if len(f.fixStates()) > 0 {
-		columns = append(columns, partColumn{"MIN(f.fix_state)", "MIN", "fix_least"},
-			partColumn{"MAX(f.fix_state)", "MAX", "fix_most"})
+		columns = append(columns, partColumn{`MIN("f"."fix_state")`, "MIN", "fix_least"},
+			partColumn{`MAX("f"."fix_state")`, "MAX", "fix_most"})
 	}
 	if len(trimmed(f.Assigned)) > 0 {
-		columns = append(columns, partColumn{"COUNT(f.assigned_to)", "SUM", "held"},
-			partColumn{"MIN(f.assigned_to)", "MIN", "held_least"},
-			partColumn{"MAX(f.assigned_to)", "MAX", "held_most"})
+		columns = append(columns, partColumn{`COUNT("f"."assigned_to")`, "SUM", "held"},
+			partColumn{`MIN("f"."assigned_to")`, "MIN", "held_least"},
+			partColumn{`MAX("f"."assigned_to")`, "MAX", "held_most"})
 	}
 	// The decision flags are not among them: a filter asking how far a group
 	// has been decided counts its decided places beside the first level (see

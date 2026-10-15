@@ -28,7 +28,7 @@ import (
 // be done by hand is the step every pipeline works around.
 type Declaring struct {
 	// DB is the database a declaration and the record of it are written on, in
-	// one transaction. Nil where this process has no database.
+	// one transaction.
 	DB *database.DB
 	// Store is built over whatever handle the caller is writing on: the
 	// transaction, where a declaration is being made, and the pooled handle
@@ -51,13 +51,7 @@ type Declaring struct {
 }
 
 // Handle is the database a read-only route builds its store over.
-//
-// Named rather than written as d.DB at each site: a nil *database.DB handed to
-// an interface parameter is an interface that is not nil.
 func (d Declaring) Handle() bun.IDB {
-	if d.DB == nil {
-		return nil
-	}
 	return d.DB.DB
 }
 
@@ -196,6 +190,17 @@ type ListOutput[T any] struct {
 	Body listBody[T]
 }
 
+// CountedListOutput is a page of a list that always states its total, zero
+// included, so a caller can tell an empty page from a list with nothing in it.
+type CountedListOutput[T any] struct {
+	Body countedListBody[T]
+}
+
+type countedListBody[T any] struct {
+	Items []T `json:"items"`
+	Total int `json:"total" doc:"The total, so a page says what it is a page of"`
+}
+
 // OverPeriod is a listing that covers a stretch of time and says which.
 //
 // Its own shape rather than two more fields on every listing: most lists here
@@ -254,32 +259,13 @@ func Refused(logger *slog.Logger, err error, what string) error {
 	return WentWrong(logger, what, err)
 }
 
-// StoreFor gives the handlers a catalog, or says plainly that this process
-// has none.
-//
-// db is the handle it builds it over: the transaction a declaration is being
-// made in, or handle() where the route only reads.
-func StoreFor(d Declaring, db bun.IDB) (*catalog.Store, error) {
-	if d.Store == nil || db == nil {
-		return nil, NoDatabase(d.Logger)
-	}
-	store := d.Store(db)
-	if store == nil {
-		return nil, NoDatabase(d.Logger)
-	}
-	return store, nil
-}
-
 // ProductIn resolves a product by name inside db, with the catalog store over
 // db. A name that resolves to nothing is refused as undeclared, and the
 // refusal names the product.
 func ProductIn(ctx context.Context, d Declaring, db bun.IDB,
 	product string) (*catalog.Store, *catalog.Product, error) {
 
-	store, err := StoreFor(d, db)
-	if err != nil {
-		return nil, nil, err
-	}
+	store := d.Store(db)
 	found, err := store.ProductByName(ctx, product)
 	if err != nil {
 		return nil, nil, Undeclared(d.Logger, err, "that product could not be looked up")
@@ -362,23 +348,8 @@ func DeclineDeclaration(logger *slog.Logger, err error) error {
 // numbers that can disagree, and the one on the catalog would be the one
 // nobody checks.
 func LastScans(ctx context.Context, scans *ingest.Store, subject access.Subject) (map[string]string, error) {
-	rows, err := scans.Scanning(ctx, subject, finding.Scope{}, 0)
-	if err != nil {
-		return nil, err
-	}
-	seen := make(map[string]string, len(rows))
-	for _, row := range rows {
-		if row.LastReceivedAt == nil {
-			continue
-		}
-		at := Stamp(*row.LastReceivedAt)
-		// The newest across a product's builds. Rows arrive quietest first,
-		// so the last one to win is the most recent.
-		if at > seen[row.Product] {
-			seen[row.Product] = at
-		}
-	}
-	return seen, nil
+	return lastScansBy(ctx, scans, subject, finding.Scope{},
+		func(row ingest.Coverage) string { return row.Product })
 }
 
 // LastScansIn is the same within one product, keyed by whichever level the
@@ -389,7 +360,16 @@ func LastScans(ctx context.Context, scans *ingest.Store, subject access.Subject)
 func LastScansIn(ctx context.Context, scans *ingest.Store, subject access.Subject, productID int64,
 	key func(ingest.Coverage) string) (map[string]string, error) {
 
-	rows, err := scans.Scanning(ctx, subject, finding.Scope{ProductID: &productID}, 0)
+	return lastScansBy(ctx, scans, subject, finding.Scope{ProductID: &productID}, key)
+}
+
+// lastScansBy is the newest arrival across the builds in scope, by key,
+// whatever order the rows arrive in. Every stamp is UTC and the same width,
+// so they compare as strings.
+func lastScansBy(ctx context.Context, scans *ingest.Store, subject access.Subject, scope finding.Scope,
+	key func(ingest.Coverage) string) (map[string]string, error) {
+
+	rows, err := scans.Scanning(ctx, subject, scope, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -403,15 +383,6 @@ func LastScansIn(ctx context.Context, scans *ingest.Store, subject access.Subjec
 		}
 	}
 	return seen, nil
-}
-
-// WordStated reads an override that may be absent as the word it states, or as
-// nothing where the product has no opinion of its own.
-func WordStated(word *string) string {
-	if word == nil {
-		return ""
-	}
-	return *word
 }
 
 // CalendarDate reads a calendar date, or nothing where one was cleared.

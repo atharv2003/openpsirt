@@ -17,6 +17,7 @@ func TestAFileOpeningWithTheHeaderPasses(t *testing.T) {
 		{"go", "a/b.go", "// Copyright Nexthop Systems Inc.\n// SPDX-License-Identifier: Apache-2.0\n\npackage b\n"},
 		{"css", "a/b.css", "/* Copyright Nexthop Systems Inc. */\n/* SPDX-License-Identifier: Apache-2.0 */\n\n:root {}\n"},
 		{"a makefile", "Makefile", "# Copyright Nexthop Systems Inc.\n# SPDX-License-Identifier: Apache-2.0\n\nall:\n"},
+		{"an included makefile", "mk/gates.mk", "# Copyright Nexthop Systems Inc.\n# SPDX-License-Identifier: Apache-2.0\n\nall:\n"},
 		{"after an interpreter line", "a/run.sh",
 			"#!/bin/sh\n\n# Copyright Nexthop Systems Inc.\n# SPDX-License-Identifier: Apache-2.0\n\necho\n"},
 		{"after a parser directive", "Dockerfile",
@@ -98,13 +99,14 @@ func TestOnlySourceIsHeld(t *testing.T) {
 		"web/src/a.tsx":             true,
 		"web/src/styles/tokens.css": true,
 		"Makefile.demo":             true,
+		"mk/gates.mk":               true,
 		"Dockerfile":                true,
 		"README.md":                 false,
 		"internal/a/testdata/x.go":  false,
 		"web/src/api/schema.d.ts":   false,
 		"deploy/helm/x/values.yaml": false,
 	} {
-		if got, _ := covered(file); got != want {
+		if got := covered(file); got != want {
 			t.Errorf("%s held to a header: %v, want %v", file, got, want)
 		}
 	}

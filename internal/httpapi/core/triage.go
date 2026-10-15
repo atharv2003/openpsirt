@@ -167,9 +167,6 @@ func Triaging(ctx context.Context, in Deps) (access.Subject, *triage.Store, erro
 	if err != nil {
 		return access.Subject{}, nil, err
 	}
-	if in.DB == nil {
-		return access.Subject{}, nil, NoDatabase(in.Logger)
-	}
 	return subject, triage.NewStore(in.DB.DB), nil
 }
 
@@ -243,9 +240,7 @@ func DecisionBodyOf(d triage.Decision) DecisionBody {
 	// carries it. A reader told nothing takes a claim nobody agreed to as in
 	// force.
 	body.NeedsApproval = d.NeedsApproval
-	if d.SentBackAt != nil {
-		body.SentBackAt = d.SentBackAt.UTC().Format(time.RFC3339)
-	}
+	body.SentBackAt = StampAt(d.SentBackAt)
 	if d.SelectedBy != nil {
 		body.SelectedBy = *d.SelectedBy
 	}
@@ -262,9 +257,6 @@ func DecisionBodyOf(d triage.Decision) DecisionBody {
 // moment its database was in trouble, with nothing saying so. A setting nobody
 // has changed is a different matter, and answers with the default.
 func DeferralThreshold(ctx context.Context, in Deps) (time.Duration, error) {
-	if in.DB == nil {
-		return triage.DefaultDeferralThreshold, nil
-	}
 	// The store's own read, so the screens and the gate measure one value.
 	return triage.DeferralThreshold(ctx, in.DB.DB)
 }
@@ -369,7 +361,7 @@ func DescribeDecisions(ctx context.Context, in Deps, store *triage.Store,
 			Reasoning:      reasoning[decision.ID],
 			ProposedBy:     who.Identity(decision.ProposedBy),
 			ProposedByName: who.Label(decision.ProposedBy),
-			ProposedAt:     decision.ProposedAt.UTC().Format(time.RFC3339),
+			ProposedAt:     Stamp(decision.ProposedAt),
 			AgeDays:        int(store.Age(&decision).Hours() / 24),
 		})
 	}

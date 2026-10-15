@@ -6,6 +6,7 @@ package finding
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -43,14 +44,27 @@ const (
 	ForReleases
 )
 
-// coveringOutcomes is the outcomes that cover a place for one reader.
+// StatedOutcomes is every outcome that covers a place for some reader, which
+// is every outcome a published document states.
+func StatedOutcomes() []string {
+	return []string{OutcomeNotApplicable, OutcomeMismatched, OutcomeAlreadyFixed, OutcomeWontFix}
+}
+
+// coveringOutcomes is the outcomes that cover a place for one reader: every
+// stated outcome, and a claim that will not be fixed only where it names a
+// mitigation for a reader that publishes one.
 func coveringOutcomes(reader Reader) string {
-	wontFix := `(cl.outcome = 'wont-fix' AND COALESCE(cl.mitigation, '') <> '')`
+	wontFix := `("cl"."outcome" = '` + OutcomeWontFix + `' AND COALESCE("cl"."mitigation", '') <> '')`
 	if reader == ForReleases {
-		wontFix = `cl.outcome = 'wont-fix'`
+		wontFix = `"cl"."outcome" = '` + OutcomeWontFix + `'`
 	}
-	return `(cl.outcome IN ('not-applicable', '` + Mismatched + `', 'already-fixed') OR ` +
-		wontFix + `)`
+	var plain []string
+	for _, outcome := range StatedOutcomes() {
+		if outcome != OutcomeWontFix {
+			plain = append(plain, "'"+outcome+"'")
+		}
+	}
+	return `("cl"."outcome" IN (` + strings.Join(plain, ", ") + `) OR ` + wontFix + `)`
 }
 
 // WhollyCovered narrows a grouped read of findings to the groups whose every
@@ -89,8 +103,8 @@ func WhollyCovered(q *bun.SelectQuery, productID int64,
 	visible []access.Visibility, reader Reader) *bun.SelectQuery {
 
 	return covered(q, productID, visible, reader).
-		Having("COUNT(cl.id) = COUNT(*)").
-		Having("COUNT(DISTINCT cl.outcome) = 1")
+		Having(`COUNT("cl"."id") = COUNT(*)`).
+		Having(`COUNT(DISTINCT "cl"."outcome") = 1`)
 }
 
 // covered joins each open finding of a grouped read to the approved, live
@@ -102,15 +116,15 @@ func covered(q *bun.SelectQuery, productID int64, visible []access.Visibility,
 
 	return q.
 		Join(`LEFT JOIN (`+Decisions+`) ON `+DecisionAt("?")+`
-			AND de.state = 'approved'
-			AND de.live_key IS NOT NULL
-			AND de.visibility IN (?)
-			AND `+keyMatchesOn("de", `(SELECT mc.outcome FROM "claim" AS "mc"
-				WHERE mc.id = de.claim_id)`), productID, bun.List(visible)).
-		Join(`LEFT JOIN "claim" AS "cl" ON cl.id = de.claim_id AND ` + coveringOutcomes(reader)).
-		ColumnExpr(`MIN(cl.outcome) AS "outcome"`).
-		ColumnExpr(`MIN(de.id) AS "decided_by"`).
-		Where("f.closed_at IS NULL")
+			AND "de"."state" = 'approved'
+			AND "de"."live_key" IS NOT NULL
+			AND "de"."visibility" IN (?)
+			AND `+keyMatchesOn("de", `(SELECT "mc"."outcome" FROM "claim" AS "mc"
+				WHERE "mc"."id" = "de"."claim_id")`), productID, bun.List(visible)).
+		Join(`LEFT JOIN "claim" AS "cl" ON "cl"."id" = "de"."claim_id" AND ` + coveringOutcomes(reader)).
+		ColumnExpr(`MIN("cl"."outcome") AS "outcome"`).
+		ColumnExpr(`MIN("de"."id") AS "decided_by"`).
+		Where(`"f"."closed_at" IS NULL`)
 }
 
 // Stated is what one decision claims, as a published statement repeats it.
@@ -142,14 +156,14 @@ func StatedBy(ctx context.Context, db bun.IDB, decisions []int64) (map[int64]Sta
 		Mitigation    string    `bun:"mitigation"`
 		ProposedAt    time.Time `bun:"proposed_at"`
 	}
-	where, args := database.InAnyOf("de.id", decisions)
+	where, args := database.InAnyOf(`"de"."id"`, decisions)
 	if err := db.NewSelect().
 		TableExpr(`"decision" AS "de"`).
-		Join(`JOIN "claim" AS "cl" ON cl.id = de.claim_id`).
-		ColumnExpr(`de.id AS "id"`).
-		ColumnExpr(`COALESCE(cl.justification, '') AS "justification"`).
-		ColumnExpr(`COALESCE(cl.mitigation, '') AS "mitigation"`).
-		ColumnExpr(`de.proposed_at AS "proposed_at"`).
+		Join(`JOIN "claim" AS "cl" ON "cl"."id" = "de"."claim_id"`).
+		ColumnExpr(`"de"."id" AS "id"`).
+		ColumnExpr(`COALESCE("cl"."justification", '') AS "justification"`).
+		ColumnExpr(`COALESCE("cl"."mitigation", '') AS "mitigation"`).
+		ColumnExpr(`"de"."proposed_at" AS "proposed_at"`).
 		Where(where, args...).
 		Scan(ctx, &rows); err != nil {
 		return nil, fmt.Errorf("read what these claims say: %w", err)

@@ -103,7 +103,7 @@ func TestANewSupplierIsReadFromTheHistoryWindowBeforeItWasNamed(t *testing.T) {
 			advisory("EL-2026-0201", "libnl-3-200", "3.7.1", "CVE-2026-2201"))
 		p.publishes("/older.json", now.Add(-60*24*time.Hour).Format(time.RFC3339),
 			advisory("EL-2026-0202", "libnl-3-200", "3.7.1", "CVE-2026-2202"))
-		if err := setting.NewStore(f.db.DB).Set(ctx, setting.SupplierHistory, "30"); err != nil {
+		if _, _, err := setting.NewStore(f.db.DB).Change(ctx, setting.SupplierHistory, "30"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -152,8 +152,8 @@ func TestASupplierThatCannotBeReachedDoesNotStopTheNext(t *testing.T) {
 		}
 		// Wound back so the publisher's document is ahead of the mark.
 		if _, err := f.db.DB.NewUpdate().Model((*supplier.Source)(nil)).
-			Set("caught_up_to = ?", long).
-			Where("id IN (?, ?)", down.ID, up.ID).Exec(ctx); err != nil {
+			Set(`"caught_up_to" = ?`, long).
+			Where(`"id" IN (?, ?)`, down.ID, up.ID).Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
 

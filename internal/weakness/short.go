@@ -90,7 +90,8 @@ type Named struct {
 }
 
 // shortNames and rank are the common list keyed by identifier, and ordered is
-// every identifier either list names, most common first.
+// every identifier the catalog names, most common first. Every identifier on
+// the common list is one the catalog names, which a test holds.
 var (
 	shortNames = map[string]string{}
 	rank       = map[string]int{}
@@ -104,11 +105,6 @@ func init() {
 	}
 	for id := range names {
 		ordered = append(ordered, id)
-	}
-	for id := range shortNames {
-		if _, known := names[id]; !known {
-			ordered = append(ordered, id)
-		}
 	}
 	sort.Slice(ordered, func(i, j int) bool { return before(ordered[i], ordered[j]) })
 }
@@ -143,11 +139,10 @@ func shortOf(id string) (string, bool) {
 // Of is one identifier under both of its names, either of them empty where
 // its list does not hold it.
 //
-// Taken as it was recorded — trimmed and upper-cased, which is the form a
-// finding holds — so a lookup and the record agree about what is the same
-// identifier.
+// Taken in the form a finding holds it, so a lookup and the record agree about
+// what is the same identifier.
 func Of(id string) Named {
-	clean := strings.ToUpper(strings.TrimSpace(id))
+	clean := Canonical(id)
 	name, _ := Name(clean)
 	short, _ := shortOf(clean)
 	return Named{ID: clean, Name: name, Short: short}

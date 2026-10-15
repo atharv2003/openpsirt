@@ -81,9 +81,9 @@ func (s *Store) StandingAt(ctx context.Context, subject access.Subject, productI
 	// With the argument each row applies, which is the whole of what a reader
 	// is shown: the outcome, the justification, the dates.
 	if err := readableBy(s.db.NewSelect().Model(&rows).Relation("Claim"), subject, "de").
-		Where("de.product_id = ?", productID).
+		Where(`"de"."product_id" = ?`, productID).
 		Where(finding.FiledUnder(filed.DecisionIssue), issueID).
-		Where("de.live_key IN (?)", bun.List(keys)).
+		Where(`"de"."live_key" IN (?)`, bun.List(keys)).
 		Order("de.id ASC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read what stands here: %w", err)
 	}
@@ -129,7 +129,7 @@ func (s *Store) groupByClaim(ctx context.Context, subject access.Subject, rows [
 
 	var claims []Claim
 	if err := s.db.NewSelect().Model(&claims).
-		Where("id IN (?)", bun.List(order)).Scan(ctx); err != nil {
+		Where(`"id" IN (?)`, bun.List(order)).Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read the claims standing here: %w", err)
 	}
 	for _, claim := range claims {
@@ -143,7 +143,7 @@ func (s *Store) groupByClaim(ctx context.Context, subject access.Subject, rows [
 		// the author's own remarks are answers rather than requests.
 		var comments []Comment
 		if err := s.db.NewSelect().Model(&comments).
-			Where("claim_id IN (?)", bun.List(sentBack)).
+			Where(`"claim_id" IN (?)`, bun.List(sentBack)).
 			// Bounded. What is wanted is the newest comment on each claim
 			// that is with its author, and this read every comment ever
 			// written on every one of them to take one each — a claim people
@@ -215,10 +215,10 @@ func (s *Store) EarlierAt(ctx context.Context, subject access.Subject, productID
 	var rows []Decision
 	// With the argument each row applied, which is what is offered back.
 	if err := readableBy(s.db.NewSelect().Model(&rows).Relation("Claim"), subject, "de").
-		Where("de.product_id = ?", productID).
+		Where(`"de"."product_id" = ?`, productID).
 		Where(finding.FiledUnder(filed.DecisionIssue), issueID).
-		Where("de.place_identity IN (?)", bun.List(places)).
-		Where("de.state IN (?, ?)", Withdrawn, LapsedState).
+		Where(`"de"."place_identity" IN (?)`, bun.List(places)).
+		Where(`"de"."state" IN (?, ?)`, Withdrawn, LapsedState).
 		// Bounded, newest first. This is the whole history of what was
 		// decided at these places and then stopped applying, which on a
 		// long-lived product is every judgment ever made there — and a screen
@@ -238,7 +238,7 @@ func (s *Store) EarlierAt(ctx context.Context, subject access.Subject, productID
 	}
 	var approvals []Approval
 	if err := s.db.NewSelect().Model(&approvals).
-		Where("claim_id IN (?)", bun.List(claimsOf(rows))).
+		Where(`"claim_id" IN (?)`, bun.List(claimsOf(rows))).
 		Order("id DESC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read who agreed: %w", err)
 	}
@@ -283,12 +283,12 @@ func (s *Store) SimilarAt(ctx context.Context, subject access.Subject, productID
 	}
 	var rows []Decision
 	if err := readableBy(s.db.NewSelect().Model(&rows).Relation("Claim"), subject, "de").
-		Where("de.product_id = ?", productID).
+		Where(`"de"."product_id" = ?`, productID).
 		Where("NOT ("+finding.FiledUnder(filed.DecisionIssue)+")", issueID).
-		Where("de.place_identity IN (?)", bun.List(places)).
-		Where("claim.outcome = ?", NotApplicable).
-		Where("de.state = ?", Approved).
-		Where("de.live_key IS NOT NULL").
+		Where(`"de"."place_identity" IN (?)`, bun.List(places)).
+		Where(`"claim"."outcome" = ?`, NotApplicable).
+		Where(`"de"."state" = ?`, Approved).
+		Where(`"de"."live_key" IS NOT NULL`).
 		// Bounded in the statement rather than in the loop below. Five are
 		// offered and every approved dismissal at these places crossed the
 		// wire to pick them — a component at sixty places in a deployment
@@ -302,17 +302,11 @@ func (s *Store) SimilarAt(ctx context.Context, subject access.Subject, productID
 		return nil, nil
 	}
 
-	order, representative := firstPerClaim(rows, similarOffered)
-
-	var claims []Claim
-	if err := s.db.NewSelect().Model(&claims).
-		Where("id IN (?)", bun.List(order)).Scan(ctx); err != nil {
-		return nil, fmt.Errorf("read the claims standing here: %w", err)
+	found, err := s.evidenceOf(ctx, subject, rows, "read the claims standing here")
+	if err != nil {
+		return nil, err
 	}
-	byID := make(map[int64]Claim, len(claims))
-	for _, claim := range claims {
-		byID[claim.ID] = claim
-	}
+	order := found.order
 
 	// How many issues each claim covers, counted over every row of it: a
 	// claim about many issues has rows this finding does not sit at. Narrowed
@@ -325,13 +319,13 @@ func (s *Store) SimilarAt(ctx context.Context, subject access.Subject, productID
 		Issues  int   `bun:"issues"`
 	}
 	if err := readableBy(s.db.NewSelect().Model((*Decision)(nil)), subject, "de").
-		ColumnExpr(`de.claim_id AS "claim_id"`).
+		ColumnExpr(`"de"."claim_id" AS "claim_id"`).
 		// Counted as the issues the rows are read as, so two names a report
 		// merged are one issue.
 		Join(finding.DecisionIssue).
-		ColumnExpr(`COUNT(DISTINCT dv.issue_id) AS "issues"`).
-		Where("de.claim_id IN (?)", bun.List(order)).
-		GroupExpr("de.claim_id").
+		ColumnExpr(`COUNT(DISTINCT "dv"."issue_id") AS "issues"`).
+		Where(`"de"."claim_id" IN (?)`, bun.List(order)).
+		GroupExpr(`"de"."claim_id"`).
 		Scan(ctx, &counted); err != nil {
 		return nil, fmt.Errorf("read what those claims cover: %w", err)
 	}
@@ -339,34 +333,16 @@ func (s *Store) SimilarAt(ctx context.Context, subject access.Subject, productID
 	for _, row := range counted {
 		issues[row.ClaimID] = row.Issues
 	}
-	agreed, err := s.standingApprovals(ctx, order)
-	if err != nil {
-		return nil, err
-	}
-
-	heads := make([]Decision, 0, len(order))
-	for _, id := range order {
-		heads = append(heads, representative[id])
-	}
-	reasoning, err := s.currentReasoning(ctx, heads)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.withholdPartReasoning(ctx, subject, heads, reasoning); err != nil {
-		return nil, err
-	}
 
 	out := make([]Similar, 0, len(order))
 	for _, id := range order {
+		row := found.head[id]
 		one := Similar{
-			Claim: byID[id], Decision: representative[id],
-			Reasoning: reasoning[representative[id].ID],
+			Claim: found.claim[id], Decision: row,
+			Reasoning: found.reasoning[row.ID],
 			Issues:    issues[id],
 		}
-		if approval, ok := agreed[id]; ok {
-			when := approval.ApprovedAt
-			one.ApprovedBy, one.ApprovedAt = approval.ApprovedBy, &when
-		}
+		one.ApprovedBy, one.ApprovedAt = found.agreedOn(id)
 		out = append(out, one)
 	}
 	return out, nil
@@ -414,11 +390,11 @@ func (s *Store) DecidedElsewhere(ctx context.Context, subject access.Subject, pr
 	}
 	var rows []Decision
 	if err := readableBy(s.db.NewSelect().Model(&rows).Relation("Claim"), subject, "de").
-		Where("de.product_id <> ?", productID).
+		Where(`"de"."product_id" <> ?`, productID).
 		Where(finding.FiledUnder(filed.DecisionIssue), issueID).
-		Where("de.place_identity IN (?)", bun.List(places)).
-		Where("de.state = ?", Approved).
-		Where("de.live_key IS NOT NULL").
+		Where(`"de"."place_identity" IN (?)`, bun.List(places)).
+		Where(`"de"."state" = ?`, Approved).
+		Where(`"de"."live_key" IS NOT NULL`).
 		Order("de.id DESC").Limit(database.InBulk.Most).Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read what was decided about this elsewhere: %w", err)
 	}
@@ -429,50 +405,81 @@ func (s *Store) DecidedElsewhere(ctx context.Context, subject access.Subject, pr
 	// One entry per claim, and at most a handful. A deployment carrying twenty
 	// products would otherwise put twenty blocks of somebody else's reasoning
 	// on a screen somebody is trying to decide on.
-	order, representative := firstPerClaim(rows, similarOffered)
+	found, err := s.evidenceOf(ctx, subject, rows, "read the claims decided elsewhere")
+	if err != nil {
+		return nil, err
+	}
 
+	out := make([]Elsewhere, 0, len(found.order))
+	for _, claimID := range found.order {
+		row := found.head[claimID]
+		one := Elsewhere{
+			Claim: found.claim[claimID], Decision: row, Reasoning: found.reasoning[row.ID],
+			ProductID: row.ProductID,
+		}
+		one.ApprovedBy, one.ApprovedAt = found.agreedOn(claimID)
+		out = append(out, one)
+	}
+	return out, nil
+}
+
+// evidence is what a set of decisions offers as evidence: the first row of
+// each claim, at most a handful of claims, in the order the rows came.
+type evidence struct {
+	order []int64
+	// head is the row kept for each claim, by claim.
+	head  map[int64]Decision
+	claim map[int64]Claim
+	// reasoning is each kept row's current reasoning as the reader may see
+	// it, by decision.
+	reasoning map[int64]string
+	// agreed is the agreement standing on each claim, where one does.
+	agreed map[int64]Approval
+}
+
+// evidenceOf reads the claims a set of decisions offers, with their current
+// reasoning withheld where the reader may not see all of it, and the
+// agreement standing on each. readingClaims names the read of the claims in
+// an error.
+func (s *Store) evidenceOf(ctx context.Context, subject access.Subject, rows []Decision,
+	readingClaims string) (evidence, error) {
+
+	order, head := firstPerClaim(rows, similarOffered)
 	var claims []Claim
 	if err := s.db.NewSelect().Model(&claims).
-		Where("id IN (?)", bun.List(order)).Scan(ctx); err != nil {
-		return nil, fmt.Errorf("read the claims decided elsewhere: %w", err)
+		Where(`"id" IN (?)`, bun.List(order)).Scan(ctx); err != nil {
+		return evidence{}, fmt.Errorf("%s: %w", readingClaims, err)
 	}
 	byID := make(map[int64]Claim, len(claims))
 	for _, claim := range claims {
 		byID[claim.ID] = claim
 	}
-
-	picked := make([]Decision, 0, len(order))
-	for _, claimID := range order {
-		picked = append(picked, representative[claimID])
+	heads := make([]Decision, 0, len(order))
+	for _, id := range order {
+		heads = append(heads, head[id])
 	}
-	reasoning, err := s.currentReasoning(ctx, picked)
+	reasoning, err := s.currentReasoning(ctx, heads)
 	if err != nil {
-		return nil, err
+		return evidence{}, err
 	}
-	if err := s.withholdPartReasoning(ctx, subject, picked, reasoning); err != nil {
-		return nil, err
+	if err := s.withholdPartReasoning(ctx, subject, heads, reasoning); err != nil {
+		return evidence{}, err
 	}
-
-	approver, err := s.standingApprovals(ctx, order)
+	agreed, err := s.standingApprovals(ctx, order)
 	if err != nil {
-		return nil, err
+		return evidence{}, err
 	}
+	return evidence{order: order, head: head, claim: byID, reasoning: reasoning, agreed: agreed}, nil
+}
 
-	out := make([]Elsewhere, 0, len(order))
-	for _, claimID := range order {
-		row := representative[claimID]
-		one := Elsewhere{
-			Claim: byID[claimID], Decision: row, Reasoning: reasoning[row.ID],
-			ProductID: row.ProductID,
-		}
-		if agreed, ok := approver[claimID]; ok {
-			one.ApprovedBy = agreed.ApprovedBy
-			at := agreed.ApprovedAt
-			one.ApprovedAt = &at
-		}
-		out = append(out, one)
+// agreedOn is who agreed to a claim and when, or nobody.
+func (e evidence) agreedOn(claimID int64) (int64, *time.Time) {
+	approval, ok := e.agreed[claimID]
+	if !ok {
+		return 0, nil
 	}
-	return out, nil
+	when := approval.ApprovedAt
+	return approval.ApprovedBy, &when
 }
 
 // firstPerClaim keeps the first row of each claim, in the order the rows came,
@@ -509,8 +516,8 @@ func (s *Store) standingApprovals(ctx context.Context, claimIDs []int64) (map[in
 	}
 	var approvals []Approval
 	if err := s.db.NewSelect().Model(&approvals).
-		Where("claim_id IN (?)", bun.List(claimIDs)).
-		Where("withdrawn_at IS NULL").
+		Where(`"claim_id" IN (?)`, bun.List(claimIDs)).
+		Where(`"withdrawn_at" IS NULL`).
 		Order("id DESC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read who agreed: %w", err)
 	}

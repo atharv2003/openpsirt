@@ -266,8 +266,8 @@ func TestWithdrawingAndDeferringAgainDoesNotResetTheThreshold(t *testing.T) {
 		// taken back. Withdrawing needs nobody, so the whole loop is one
 		// person's.
 		if _, err := f.db.DB.NewUpdate().Table("decision").
-			Set("proposed_at = ?", time.Now().UTC().Add(-28*24*time.Hour)).
-			Where("claim_id = ?", first.ClaimID).Exec(ctx); err != nil {
+			Set(`"proposed_at" = ?`, time.Now().UTC().Add(-28*24*time.Hour)).
+			Where(`"claim_id" = ?`, first.ClaimID).Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if err := f.store.Withdraw(ctx, f.triager, first.ClaimID); err != nil {
@@ -304,7 +304,7 @@ func TestTheGateIsWorkedOutAgainstThePolicyWhenTheClaimLands(t *testing.T) {
 		ctx := t.Context()
 		// A deferral of ten days, and a deployment that gates anything past
 		// seven.
-		if err := setting.NewStore(f.db.DB).Set(ctx, setting.DeferralThreshold,
+		if _, _, err := setting.NewStore(f.db.DB).Change(ctx, setting.DeferralThreshold,
 			(7 * 24 * time.Hour).String()); err != nil {
 			t.Fatal(err)
 		}
@@ -406,7 +406,7 @@ func TestTheQueuesTotalAskedAloneIsThePagesTotal(t *testing.T) {
 func TestAPartDayThresholdIsReadAsTheWholeDayTheFormIsTold(t *testing.T) {
 	each(t, func(t *testing.T, f *fixture) {
 		ctx := t.Context()
-		if err := setting.NewStore(f.db.DB).Set(ctx, setting.DeferralThreshold, "12h"); err != nil {
+		if _, _, err := setting.NewStore(f.db.DB).Change(ctx, setting.DeferralThreshold, "12h"); err != nil {
 			t.Fatal(err)
 		}
 		threshold, err := triage.DeferralThreshold(ctx, f.db.DB)

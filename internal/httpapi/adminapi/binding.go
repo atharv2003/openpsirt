@@ -49,11 +49,7 @@ func registerBindings(api huma.API, a core.Administering, settings func(bun.IDB)
 		if _, _, err := readable(ctx, a, a.Handle()); err != nil {
 			return nil, err
 		}
-		store := settings(a.Handle())
-		if store == nil {
-			return nil, core.NoDatabase(a.Logger)
-		}
-		stored, _, err := store.Get(ctx, setting.RoleMode)
+		stored, _, err := settings(a.Handle()).Get(ctx, setting.RoleMode)
 		if err != nil {
 			return nil, core.WentWrong(a.Logger, "cannot read where roles come from", err)
 		}
@@ -115,10 +111,7 @@ func productLabels(ctx context.Context, a core.Administering) (map[string]string
 // is given — which is the transaction deciding, rather than this.
 func roleModeIn(settings func(bun.IDB) *setting.Store) func(context.Context, bun.IDB) (access.Mode, error) {
 	return func(ctx context.Context, db bun.IDB) (access.Mode, error) {
-		if settings(db) == nil {
-			return access.Direct, nil
-		}
-		stored, _, err := setting.NewStore(db).Get(ctx, setting.RoleMode)
+		stored, _, err := settings(db).Get(ctx, setting.RoleMode)
 		if err != nil {
 			return "", fmt.Errorf("read where roles come from: %w", err)
 		}
@@ -170,7 +163,7 @@ func registerRevocation(api huma.API, a core.Administering) {
 			"breaks if it is turned off.",
 		Tags: []string{"Administration"},
 	}, core.DeploymentWide, ""), func(ctx context.Context, _ *struct{}) (*core.ListOutput[TokenBody], error) {
-		rights, names, err := core.Administerable(ctx, a, a.Handle())
+		rights, _, err := core.Administerable(ctx, a, a.Handle())
 		if err != nil {
 			return nil, err
 		}
@@ -186,7 +179,13 @@ func registerRevocation(api huma.API, a core.Administering) {
 		for _, person := range people {
 			owners[person.ID] = person.Identity
 		}
-		return tokenList(ctx, a.Logger, names, tokens, owners)
+		// Every product named once for the whole list, rather than a read per
+		// narrowed token.
+		products, err := productNames(ctx, a)
+		if err != nil {
+			return nil, err
+		}
+		return tokenList(a.Logger, products, tokens, owners)
 	})
 
 	huma.Register(api, core.Requiring(huma.Operation{
@@ -207,10 +206,9 @@ func registerRevocation(api huma.API, a core.Administering) {
 			if err != nil {
 				return err
 			}
-			person, err := rights.ByIdentity(ctx, in.Identity)
+			person, err := core.PersonNamed(ctx, a.Logger, rights, in.Identity)
 			if err != nil {
-				return core.Absent(a.Logger, err, "that person could not be looked up",
-					core.NoSuchPerson)
+				return err
 			}
 			token, err := rights.TokenByName(ctx, person.ID, in.Name)
 			if err != nil {
@@ -251,9 +249,9 @@ func registerRevocation(api huma.API, a core.Administering) {
 			if err != nil {
 				return err
 			}
-			person, err := rights.ByIdentity(ctx, in.Identity)
+			person, err := core.PersonNamed(ctx, a.Logger, rights, in.Identity)
 			if err != nil {
-				return core.Absent(a.Logger, err, "that person could not be looked up", core.NoSuchPerson)
+				return err
 			}
 			if err := rights.EndSessionsFor(ctx, person.ID); err != nil {
 				return core.WentWrong(a.Logger, "cannot end the sessions", err)

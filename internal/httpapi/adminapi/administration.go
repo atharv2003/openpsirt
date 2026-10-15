@@ -61,7 +61,7 @@ func personBody(person *access.Account, doors []access.Identity, estate []access
 	body := PersonBody{
 		Identity: person.Identity, DisplayName: person.DisplayName,
 		Admin: person.IsAdmin, AdminByConfiguration: person.IsBootstrap,
-		Audits: person.Audits, DeactivatedAt: orAbsent(person.DeactivatedAt),
+		Audits: person.Audits, DeactivatedAt: core.StampAt(person.DeactivatedAt),
 		Email: person.Email, EmailSource: core.EmailSource(person.EmailSource),
 	}
 	for _, door := range doors {
@@ -312,21 +312,21 @@ func registerAdministration(api huma.API, a core.Administering) {
 		if err != nil {
 			return nil, err
 		}
-		// Read once for everybody, like the per-product grants beside it. A
+		// Read once for everybody, like the per-product grants beside them. A
 		// query per person makes a long list slow.
 		everywhere, err := store.EveryEstateGrant(ctx)
 		if err != nil {
 			return nil, core.WentWrong(a.Logger, "cannot list what people hold everywhere", err)
 		}
+		identities, err := store.EveryIdentity(ctx)
+		if err != nil {
+			return nil, core.WentWrong(a.Logger, "cannot read how they sign in", err)
+		}
 
 		out := &core.ListOutput[PersonBody]{}
 		out.Body.Items = make([]PersonBody, 0, len(people))
 		for _, person := range people {
-			doors, err := store.Identities(ctx, person.ID)
-			if err != nil {
-				return nil, core.WentWrong(a.Logger, "cannot read how they sign in", err)
-			}
-			body := personBody(&person, doors, everywhere[person.ID], held[person.ID], named)
+			body := personBody(&person, identities[person.ID], everywhere[person.ID], held[person.ID], named)
 			if !holding(body.Holds, onProduct, named, string(input.Role)) {
 				continue
 			}
@@ -496,7 +496,7 @@ func registerAdministration(api huma.API, a core.Administering) {
 				if err := store.GrantRole(ctx, person.ID, product.ID, access.Role(hold.Role)); err != nil {
 					return core.Asked(a.Logger, err)
 				}
-				if err := core.Noted(ctx, db, trail.Role, person.Identity+" on "+product.Name,
+				if err := core.Noted(ctx, db, trail.Role, trail.OnProduct(person.Identity, product.Name),
 					nil, trail.Said(string(hold.Role), true)); err != nil {
 					return core.NotRecorded(a.Logger, err)
 				}
@@ -571,9 +571,9 @@ func registerAdministration(api huma.API, a core.Administering) {
 			if err != nil {
 				return err
 			}
-			person, err := store.ByIdentity(ctx, in.Identity)
+			person, err := core.PersonNamed(ctx, a.Logger, store, in.Identity)
 			if err != nil {
-				return core.Absent(a.Logger, err, "that person could not be looked up", core.NoSuchPerson)
+				return err
 			}
 			product, err := names.ProductByName(ctx, in.Product)
 			if err != nil {
@@ -596,7 +596,7 @@ func registerAdministration(api huma.API, a core.Administering) {
 			case err != nil:
 				return core.WentWrong(a.Logger, "cannot withdraw the role", err)
 			}
-			if err := core.Noted(ctx, tx, trail.Role, person.Identity+" on "+product.Name,
+			if err := core.Noted(ctx, tx, trail.Role, trail.OnProduct(person.Identity, product.Name),
 				trail.Said(in.Role, true), nil); err != nil {
 				return core.NotRecorded(a.Logger, err)
 			}
@@ -660,9 +660,9 @@ func registerAdministration(api huma.API, a core.Administering) {
 			if err != nil {
 				return err
 			}
-			person, err := store.ByIdentity(ctx, in.Identity)
+			person, err := core.PersonNamed(ctx, a.Logger, store, in.Identity)
 			if err != nil {
-				return core.Absent(a.Logger, err, "that person could not be looked up", core.NoSuchPerson)
+				return err
 			}
 			// The window re-opened is the one the deployment configured, read
 			// inside the act like every other value it decides from.
@@ -720,9 +720,9 @@ func registerAdministration(api huma.API, a core.Administering) {
 			if err != nil {
 				return err
 			}
-			person, err := store.ByIdentity(ctx, in.Identity)
+			person, err := core.PersonNamed(ctx, a.Logger, store, in.Identity)
 			if err != nil {
-				return core.Absent(a.Logger, err, "that person could not be looked up", core.NoSuchPerson)
+				return err
 			}
 			role := access.Role(in.Role)
 			if !role.Valid() {
@@ -787,11 +787,8 @@ func registerAdministration(api huma.API, a core.Administering) {
 // handsBack is whether this deployment hands back the work of somebody whose
 // last role in a product went.
 func handsBack(a core.Administering) bool {
-	return a.Findings != nil && a.Findings() != nil
+	return a.Findings != nil
 }
-
-// timeFormat is how a moment is reported.
-const timeFormat = "2006-01-02T15:04:05Z"
 
 // mintable is administerable for the acts that hand out a way in: a credential
 // cannot hand out another.
@@ -805,14 +802,7 @@ func mintable(ctx context.Context, a core.Administering, db bun.IDB) (*access.St
 // claimWindowIn is how long an authorization stays redeemable, read through
 // the handle of the act that writes one.
 func claimWindowIn(ctx context.Context, a core.Administering, db bun.IDB) (time.Duration, error) {
-	if a.Settings == nil {
-		return access.DefaultClaimWindow, nil
-	}
-	settings := a.Settings(db)
-	if settings == nil {
-		return access.DefaultClaimWindow, nil
-	}
-	window, err := settings.Duration(ctx, setting.ClaimWindow, access.DefaultClaimWindow)
+	window, err := a.Settings(db).Duration(ctx, setting.ClaimWindow, access.DefaultClaimWindow)
 	if err != nil {
 		return 0, core.WentWrong(a.Logger, "cannot read how long an authorization stays redeemable", err)
 	}
@@ -828,7 +818,7 @@ func readable(ctx context.Context, a core.Administering, db bun.IDB) (*access.St
 	if err := core.ReadingTheDeployment(ctx); err != nil {
 		return nil, nil, err
 	}
-	return core.Stores(a, db)
+	return a.Access(db), a.Catalog(db), nil
 }
 
 // held is one thing somebody holds over the deployment: what it is called in

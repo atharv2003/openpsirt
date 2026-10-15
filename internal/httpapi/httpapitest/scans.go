@@ -5,7 +5,6 @@ package httpapitest
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -204,7 +203,7 @@ func Carrying(builtAt time.Time, components map[string]string) string {
 // ProductHere is the product the ingest fixture declared.
 func ProductHere(t *testing.T, f *IngestFixture) int64 {
 	t.Helper()
-	product, err := catalog.NewStore(f.DB.DB).ProductByName(context.Background(), "sonic")
+	product, err := catalog.NewStore(f.DB.DB).ProductByName(t.Context(), fixture.ProductName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,8 +233,8 @@ func (r *Reach) InventoryOf(t *testing.T, contents string) int64 {
 		t.Fatal(err)
 	}
 	var runID int64
-	if err := r.DB.DB.NewSelect().Table("scan_run").ColumnExpr("id").
-		Where("target_id = ?", target.ID).Order("id DESC").Limit(1).
+	if err := r.DB.DB.NewSelect().Table("scan_run").ColumnExpr(`"id"`).
+		Where(`"target_id" = ?`, target.ID).Order("id DESC").Limit(1).
 		Scan(ctx, &runID); err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +286,7 @@ func (r *Reach) Inventoried(t *testing.T, variant, hash string, held map[string]
 		snap.Components = append(snap.Components, component)
 		snap.Dependencies = append(snap.Dependencies, graph.Dependency{Parent: top, Child: component})
 	}
-	if _, err := graph.NewStore(r.DB.DB).Apply(ctx, target.ID, scan.ID, snap); err != nil {
+	if _, err := fixture.ApplyGraph(ctx, r.DB.DB, target.ID, scan.ID, snap); err != nil {
 		t.Fatal(err)
 	}
 }

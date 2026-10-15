@@ -166,13 +166,10 @@ func (s *Store) forAdvisory(ctx context.Context, subject access.Subject, who pub
 		// to carry. Claiming the security-advisory profile while failing its
 		// tests describes the document as something it is not, and a reader's
 		// tooling drops it on exactly that.
-		CSAFVersion: "2.0",
+		CSAFVersion: CSAFVersion,
 		Title:       titleOf(row, assembled),
 		Language:    "en-US",
-		Publisher: Issuer{
-			Category: categoryOf(who), Name: who.Name,
-			Namespace: who.Namespace,
-		},
+		Publisher:   IssuerOf(who),
 		Tracking: Tracking{
 			// The advisory's own name. A document naming an issue's
 			// identifier as its own tracking identifier claims to be the
@@ -268,7 +265,7 @@ func (s *Store) ours(ctx context.Context, subject access.Subject, productID int6
 	// The folded column, folded the way it was stored, so an identifier
 	// typed with other capitals is the same issue.
 	err := s.db.NewSelect().Model(&issue).
-		Where("identifier_folded = ?", finding.FoldIdentifier(identifier)).
+		Where(`"identifier_folded" = ?`, finding.FoldIdentifier(identifier)).
 		Limit(1).Scan(ctx)
 	if err != nil {
 		return nil, nil, database.FromRead(err, ErrNoSuchIssue,
@@ -280,7 +277,7 @@ func (s *Store) ours(ctx context.Context, subject access.Subject, productID int6
 		standing := issue.IssueID
 		issue = finding.Vulnerability{}
 		if err := s.db.NewSelect().Model(&issue).
-			Where("vu.id = ?", standing).Scan(ctx); err != nil {
+			Where(`"vu"."id" = ?`, standing).Scan(ctx); err != nil {
 			return nil, nil, fmt.Errorf("look up the issue %q merged into: %w", identifier, err)
 		}
 	}
@@ -291,13 +288,13 @@ func (s *Store) ours(ctx context.Context, subject access.Subject, productID int6
 	// flaw with one discovery.
 	var row finding.Finding
 	err = s.db.NewSelect().Model(&row).
-		Join(`JOIN "target" AS "t" ON t.id = f.target_id`).
-		Join(`JOIN "stream" AS "st" ON st.id = t.stream_id`).
-		Where("st.product_id = ?", productID).
-		Where("f.vulnerability_id = ?", issue.ID).
-		Where("f.visibility IN (?)", bun.List(access.Visible(subject, productID))).
-		Where("f.kind = ?", finding.Entered).
-		OrderExpr("f.opened_at ASC, f.id ASC").
+		Join(`JOIN "target" AS "t" ON "t"."id" = "f"."target_id"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "t"."stream_id"`).
+		Where(`"st"."product_id" = ?`, productID).
+		Where(`"f"."vulnerability_id" = ?`, issue.ID).
+		Where(`"f"."visibility" IN (?)`, bun.List(access.Visible(subject, productID))).
+		Where(`"f"."kind" = ?`, finding.Entered).
+		OrderExpr(`"f"."opened_at" ASC, "f"."id" ASC`).
 		Limit(1).Scan(ctx)
 	if err != nil && !database.IsNoRows(err) {
 		return nil, nil, fmt.Errorf("look up what we recorded about %q: %w", identifier, err)
@@ -328,11 +325,11 @@ func (s *Store) here(ctx context.Context, subject access.Subject,
 	productID, issueID int64) (bool, error) {
 
 	count, err := s.db.NewSelect().Model((*finding.Finding)(nil)).
-		Join(`JOIN "target" AS "t" ON t.id = f.target_id`).
-		Join(`JOIN "stream" AS "st" ON st.id = t.stream_id`).
-		Where("st.product_id = ?", productID).
-		Where("f.vulnerability_id = ?", issueID).
-		Where("f.visibility IN (?)", bun.List(access.Visible(subject, productID))).
+		Join(`JOIN "target" AS "t" ON "t"."id" = "f"."target_id"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "t"."stream_id"`).
+		Where(`"st"."product_id" = ?`, productID).
+		Where(`"f"."vulnerability_id" = ?`, issueID).
+		Where(`"f"."visibility" IN (?)`, bun.List(access.Visible(subject, productID))).
 		Count(ctx)
 	if err != nil {
 		return false, fmt.Errorf("count where issue %d sits here: %w", issueID, err)
@@ -340,11 +337,18 @@ func (s *Store) here(ctx context.Context, subject access.Subject,
 	return count > 0, nil
 }
 
-func categoryOf(p publisher.Named) string {
-	if p.Category == "" {
-		return "vendor"
+// CSAFVersion is the version of the standard every document here meets.
+const CSAFVersion = "2.0"
+
+// IssuerOf is this deployment's publisher as a document names it, and as the
+// provider description names it beside the documents. One with no category is
+// a vendor.
+func IssuerOf(who publisher.Named) Issuer {
+	category := who.Category
+	if category == "" {
+		category = "vendor"
 	}
-	return p.Category
+	return Issuer{Category: category, Name: who.Name, Namespace: who.Namespace}
 }
 
 // summaryOf is what the flaw is, in the words of whoever recorded it.
@@ -369,9 +373,9 @@ func isCVE(identifier string) bool {
 func (s *Store) namesOf(ctx context.Context, id int64) ([]string, error) {
 	var names []string
 	err := s.db.NewSelect().Model((*finding.Alias)(nil)).
-		ColumnExpr("va.identifier").
-		Where("va.vulnerability_id = ?", id).
-		OrderExpr("va.identifier").
+		ColumnExpr(`"va"."identifier"`).
+		Where(`"va"."vulnerability_id" = ?`, id).
+		OrderExpr(`"va"."identifier"`).
 		Scan(ctx, &names)
 	if err != nil {
 		return nil, fmt.Errorf("read what this issue is also called: %w", err)

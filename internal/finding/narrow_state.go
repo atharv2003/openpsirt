@@ -30,9 +30,20 @@ import (
 // Exported because the same question is asked outside this package: what is
 // undecided is what the notification sweep means by work sitting still, and a
 // second spelling of it would be a second definition of "decided".
-const KeyMatches = "(cl.outcome = '" + Mismatched + "' OR (" +
-	"COALESCE(de.component_upstream_version, '') = " + ComponentUpstreamExpr +
-	" AND COALESCE(de.consumer_upstream_version, '') = " + ConsumerUpstreamExpr + "))"
+const KeyMatches = `("cl"."outcome" = '` + OutcomeMismatched + "' OR (" + VersionsMatch + "))"
+
+// VersionsMatch says a decision row `de` was written against the versions a
+// finding's component `c` and consumer `uc` hold now, which is the half of
+// KeyMatches every outcome but a wrong match is held to. A decision stores no
+// version where nothing stated one, and the finding's expression reads that as
+// empty, so the two absences compare as the same absence.
+const VersionsMatch = componentMatches + " AND " + consumerMatches
+
+// componentMatches and consumerMatches are the two halves of VersionsMatch.
+const (
+	componentMatches = `COALESCE("de"."component_upstream_version", '') = ` + ComponentUpstreamExpr
+	consumerMatches  = `COALESCE("de"."consumer_upstream_version", '') = ` + ConsumerUpstreamExpr
+)
 
 // keyMatchesOn is KeyMatches over a decision under another alias, with the
 // claim's outcome given as an expression, for a statement that asks it before
@@ -42,12 +53,8 @@ const KeyMatches = "(cl.outcome = '" + Mismatched + "' OR (" +
 // out again, so the rule has one spelling. KeyMatches stays a constant because
 // other constants are built from it.
 func keyMatchesOn(decision, outcome string) string {
-	return strings.NewReplacer("cl.outcome", outcome, "de.", decision+".").Replace(KeyMatches)
+	return strings.NewReplacer(`"cl"."outcome"`, outcome, `"de".`, `"`+decision+`".`).Replace(KeyMatches)
 }
-
-// Mismatched is the outcome whose claim is about identity, named here so the
-// expression above and the triage package cannot drift on the spelling.
-const Mismatched = "mismatched"
 
 // PlannedFilter is whether a promised upgrade covers a finding.
 type PlannedFilter string
@@ -61,10 +68,6 @@ const (
 	// promise takes what it covers out of view.
 	NotPlanned PlannedFilter = "unplanned"
 )
-
-// upgradeNeeded is the outcome that promises a move, named here so the
-// filter and the triage package cannot drift on the spelling.
-const upgradeNeeded = "upgrade-needed"
 
 // DecisionAt is the one spelling of a decision `de`, read beside `dv` through
 // Decisions, being about the finding `f`: the same product, the same issue and
@@ -82,13 +85,54 @@ const upgradeNeeded = "upgrade-needed"
 // placed in the statement as written.
 func DecisionAt(product string) string {
 	switch product {
-	case "?", "st.product_id", "de.product_id":
+	case "?", `"st"."product_id"`, `"de"."product_id"`:
 	default:
 		panic("finding.DecisionAt: " + product + " is not a product the statement names")
 	}
-	return "de.product_id = " + product +
-		" AND dv.issue_id = f.vulnerability_id" +
-		" AND de.place_identity = f.place_identity"
+	return `"de"."product_id" = ` + product + " AND " + DecisionAtPlace("f")
+}
+
+// DecisionAtPlace is the issue and the place of DecisionAt without the
+// product, for a statement that holds the product another way: the finding's
+// build joined to the decision's product, a build of it bound, or the
+// decision's product compared beside it. A statement holding the product in no
+// way matches decisions of every product that ships the place.
+//
+// finding is the alias the statement gives the finding, from the ones code
+// names. Anything else is a programming error, because it is placed in the
+// statement as written.
+func DecisionAtPlace(finding string) string {
+	return decidedPlaceIn(`"dv"."issue_id"`, `"de"."place_identity"`, finding)
+}
+
+// DecisionFiledAt is DecisionAtPlace for a statement that reads a decision
+// without the issue it is filed under, so the issue is asked through
+// SameIssue. decision is `de` or `dc`, the aliases code gives a decision row.
+func DecisionFiledAt(decision, finding string) string {
+	switch decision {
+	case "de", "dc":
+	default:
+		panic("finding.DecisionFiledAt: " + decision + " is not a decision the statement names")
+	}
+	findingAlias(finding)
+	return SameIssue(`"`+finding+`"."vulnerability_id"`, `"`+decision+`"."vulnerability_id"`) +
+		` AND "` + decision + `"."place_identity" = "` + finding + `"."place_identity"`
+}
+
+// decidedPlaceIn is the issue and the place of a decision, under the columns
+// given, being the finding's.
+func decidedPlaceIn(issue, place, finding string) string {
+	findingAlias(finding)
+	return issue + ` = "` + finding + `"."vulnerability_id" AND ` + place + ` = "` + finding + `"."place_identity"`
+}
+
+// findingAlias refuses a finding alias that no statement here gives one.
+func findingAlias(finding string) {
+	switch finding {
+	case "f", "f2", "g", "fc", "cf", "bf", "pf":
+	default:
+		panic("finding: " + finding + " is not a finding the statement names")
+	}
 }
 
 // coversHere says a decision row `de` is about the finding it was correlated
@@ -102,7 +146,7 @@ func DecisionAt(product string) string {
 // A claim with no key has lapsed or been withdrawn, and by definition its
 // versions no longer match — what it says about the place is history, and it
 // is matched by place so that "lapsed" can be said at all.
-const coversHere = "(de.live_key IS NULL OR (" + KeyMatches + "))"
+const coversHere = `("de"."live_key" IS NULL OR (` + KeyMatches + "))"
 
 // byState joins what each place has been decided as, for the conditions
 // statesHaving asks of a group.
@@ -160,10 +204,10 @@ func (f Filter) byState(q *bun.SelectQuery) *bun.SelectQuery {
 	decided := f.flagColumns(decisionsOutward(q))
 	if f.decidedIssues != nil {
 		// On the decisions, for the reason decidedBeside gives.
-		decided = f.amongDecidedIssues(decided, "dv.issue_id")
+		decided = f.amongDecidedIssues(decided, `"dv"."issue_id"`)
 	}
-	decided = decided.Where("de.product_id = ?", f.ProductID)
-	return q.Join(`LEFT JOIN (?) AS "dd" ON dd.finding_id = f.id`, decided)
+	decided = decided.Where(`"de"."product_id" = ?`, f.ProductID)
+	return q.Join(`LEFT JOIN (?) AS "dd" ON "dd"."finding_id" = "f"."id"`, decided)
 }
 
 // asksDecided is whether any condition the filter asks of a group reads the
@@ -214,27 +258,27 @@ func (f Filter) flagColumns(q *bun.SelectQuery) *bun.SelectQuery {
 		// all. Both are the same question and have to be the same condition.
 		// A proposal that needs nobody is in force rather than waiting, and
 		// counts with the agreed ones, as the row's own counts do.
-		ColumnExpr(`MAX(CASE WHEN de.state = ? AND de.needs_approval = ? AND de.live_key IS NOT NULL`+
+		ColumnExpr(`MAX(CASE WHEN "de"."state" = ? AND "de"."needs_approval" = ? AND "de"."live_key" IS NOT NULL`+
 			` THEN 1 ELSE 0 END) AS "waiting"`, proposed, true).
-		ColumnExpr(`MAX(CASE WHEN `+standingHere+` AND de.live_key IS NOT NULL`+
+		ColumnExpr(`MAX(CASE WHEN `+standingHere+` AND "de"."live_key" IS NOT NULL`+
 			` THEN 1 ELSE 0 END) AS "approved"`, inForce...).
-		ColumnExpr(`MAX(CASE WHEN de.state = ? THEN 1 ELSE 0 END) AS "lapsed"`, lapsed).
+		ColumnExpr(`MAX(CASE WHEN "de"."state" = ? THEN 1 ELSE 0 END) AS "lapsed"`, lapsed).
 		// A promise to upgrade standing over this place. Counted only for the
 		// claim that currently stands, like "approved" above: a promise that
 		// was withdrawn is not one, and a finding it covered is unplanned
 		// again with nothing to clean up. That is the whole argument for
 		// deriving this rather than writing a tag.
-		ColumnExpr("MAX(CASE WHEN de.live_key IS NOT NULL AND "+standingHere+
-			` AND cl.outcome = ? THEN 1 ELSE 0 END) AS "planned"`,
-			append(append([]any{}, inForce...), string(upgradeNeeded))...).
+		ColumnExpr(`MAX(CASE WHEN "de"."live_key" IS NOT NULL AND `+standingHere+
+			` AND "cl"."outcome" = ? THEN 1 ELSE 0 END) AS "planned"`,
+			append(append([]any{}, inForce...), OutcomeUpgradeNeeded)...).
 		// The kind of judgment standing here, counted only for the claim that
 		// currently stands: a dismissal withdrawn eighteen months ago must not
 		// answer for its place, which is the same rule "approved" above holds
 		// — and neither must one still waiting for a second person, or asking
 		// what has been dismissed answers with what somebody has merely
 		// proposed dismissing.
-		ColumnExpr("MAX(CASE WHEN de.live_key IS NOT NULL AND "+standingHere+
-			` AND cl.outcome IN (?) THEN 1 ELSE 0 END) AS "this_outcome"`,
+		ColumnExpr(`MAX(CASE WHEN "de"."live_key" IS NOT NULL AND `+standingHere+
+			` AND "cl"."outcome" IN (?) THEN 1 ELSE 0 END) AS "this_outcome"`,
 			append(append([]any{}, inForce...), bun.List(outcomes))...)
 }
 
@@ -309,17 +353,17 @@ func (s *Store) decidedIssuesFor(ctx context.Context, filter *Filter, products [
 		}
 		// Every flag flagColumns computes needs one of the two: lapsed is the
 		// state, and the rest require the key.
-		needed, args, into = "(de.state = ? OR de.live_key IS NOT NULL)", []any{"lapsed"}, &filter.placedIssues
+		needed, args, into = `("de"."state" = ? OR "de"."live_key" IS NOT NULL)`, []any{"lapsed"}, &filter.placedIssues
 	}
 	q := s.db.NewSelect().TableExpr(Decisions).
-		ColumnExpr("dv.issue_id").Distinct().
+		ColumnExpr(`"dv"."issue_id"`).Distinct().
 		Where(needed, args...)
 	if !all {
 		if len(products) == 0 {
 			*into = []int64{}
 			return nil
 		}
-		q = q.Where("de.product_id IN (?)", bun.List(products))
+		q = q.Where(`"de"."product_id" IN (?)`, bun.List(products))
 	}
 	issues := []int64{}
 	if err := q.Scan(ctx, &issues); err != nil {

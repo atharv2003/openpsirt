@@ -48,9 +48,9 @@ func TestAClaimNobodyHasJudgedIsStillAnUnansweredLetter(t *testing.T) {
 			t.Fatal(err)
 		}
 		// And somebody who may read work nobody has announced but not argue
-		// about it. They are the role the rule actually turns on: the
-		// condition used to be sent to whoever could read the flaw, and a
-		// report refuses them, so the notice named a report they cannot open.
+		// about it. They are the role the rule turns on: a report refuses
+		// them, so a notice sent to them would name a report they cannot
+		// open.
 		reads, err := rights.Ensure(ctx, "reads@example.com", "Reads", nil, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -105,9 +105,9 @@ func TestAClaimNobodyHasJudgedIsStillAnUnansweredLetter(t *testing.T) {
 
 		// Answering it clears the condition, with nobody dismissing anything.
 		if _, err := db.DB.NewUpdate().Model((*finding.FlawReport)(nil)).
-			Set("acknowledged_at = ?", time.Now().UTC().Truncate(time.Microsecond)).
-			Set("acknowledged_by = ?", answers.ID).
-			Where("id = ?", report.ID).Exec(ctx); err != nil {
+			Set(`"acknowledged_at" = ?`, time.Now().UTC().Truncate(time.Microsecond)).
+			Set(`"acknowledged_by" = ?`, answers.ID).
+			Where(`"id" = ?`, report.ID).Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if _, cleared, err := watch.Once(ctx); err != nil || cleared != 1 {

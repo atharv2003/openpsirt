@@ -13,6 +13,7 @@ import (
 
 	"github.com/nexthop-ai/openpsirt/internal/database"
 	"github.com/nexthop-ai/openpsirt/internal/refusal"
+	"github.com/nexthop-ai/openpsirt/internal/typedname"
 )
 
 // Identity is how a person signs in.
@@ -59,7 +60,7 @@ type Identity struct {
 // compares the same under any engine, which is what keeps this from depending
 // on a collation (REQ-08).
 func Folded(username string) string {
-	return strings.ToLower(strings.TrimSpace(username))
+	return typedname.Matching(username)
 }
 
 // DefaultClaimWindow is how long an unredeemed authorization stays redeemable
@@ -113,7 +114,7 @@ func (s *Store) claim(ctx context.Context, personID int64, username string) erro
 	until := at.Add(s.window())
 
 	existing := new(Identity)
-	err := s.db.NewSelect().Model(existing).Where("username = ?", username).Scan(ctx)
+	err := s.db.NewSelect().Model(existing).Where(`"username" = ?`, username).Scan(ctx)
 	if err != nil && !database.IsNoRows(err) {
 		return fmt.Errorf("look up who may sign in as %q: %w", username, err)
 	}
@@ -133,8 +134,8 @@ func (s *Store) claim(ctx context.Context, personID int64, username string) erro
 		// is left alone.
 		if existing.Subject == nil {
 			if _, err := s.db.NewUpdate().Model((*Identity)(nil)).
-				Set("claimable_until = ?", until).
-				Where("id = ?", existing.ID).Where("subject IS NULL").
+				Set(`"claimable_until" = ?`, until).
+				Where(`"id" = ?`, existing.ID).Where(`"subject" IS NULL`).
 				Exec(ctx); err != nil {
 				return fmt.Errorf("renew the window on %q: %w", username, err)
 			}
@@ -188,7 +189,7 @@ func (s *Store) MatchProvider(ctx context.Context, provider, subject, username s
 
 	bound := new(Identity)
 	switch err := s.db.NewSelect().Model(bound).
-		Where("subject = ?", subject).Scan(ctx); {
+		Where(`"subject" = ?`, subject).Scan(ctx); {
 	case err != nil && !database.IsNoRows(err):
 		// A lookup that failed falls through to matching by name otherwise,
 		// which is the reinterpretation binding the identifier prevents.
@@ -237,9 +238,9 @@ func (s *Store) MatchProvider(ctx context.Context, provider, subject, username s
 		}
 		at := s.now().Truncate(time.Microsecond)
 		result, err := s.db.NewUpdate().Model((*Identity)(nil)).
-			Set("subject = ?", subject).Set("provider = ?", provider).
-			Set("bound_at = ?", at).
-			Where("id = ?", claimed.ID).Where("subject IS NULL").Exec(ctx)
+			Set(`"subject" = ?`, subject).Set(`"provider" = ?`, provider).
+			Set(`"bound_at" = ?`, at).
+			Where(`"id" = ?`, claimed.ID).Where(`"subject" IS NULL`).Exec(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("pin %q: %w", username, err)
 		}
@@ -278,11 +279,11 @@ func (s *Store) BoundProviders(ctx context.Context) ([]string, error) {
 	var names []string
 	if err := s.db.NewSelect().Model((*Identity)(nil)).
 		Column("provider").
-		Where("provider IS NOT NULL").
+		Where(`"provider" IS NOT NULL`).
 		// A row nobody has bound holds nothing hostage. Both halves are
 		// cleared together by an unbind, and requiring the identifier as well
 		// means a half-cleared row cannot stop a deployment starting.
-		Where("subject IS NOT NULL").
+		Where(`"subject" IS NOT NULL`).
 		Distinct().Scan(ctx, &names); err != nil {
 		return nil, fmt.Errorf("read which providers have bound an identity: %w", err)
 	}
@@ -337,7 +338,7 @@ func lapsed(claimed *Identity, now time.Time) bool {
 func (s *Store) claimedBy(ctx context.Context, username string) (*Identity, error) {
 	claimed := new(Identity)
 	if err := s.db.NewSelect().Model(claimed).
-		Where("username = ?", username).Scan(ctx); err != nil {
+		Where(`"username" = ?`, username).Scan(ctx); err != nil {
 		return nil, database.FromRead(err, ErrDenied, "look up who may sign in by that name")
 	}
 	return claimed, nil
@@ -352,7 +353,7 @@ func (s *Store) claimedBy(ctx context.Context, username string) (*Identity, erro
 func (s *Store) rename(ctx context.Context, identity *Identity, username string) error {
 	username = Folded(username)
 	taken, err := s.db.NewSelect().Model((*Identity)(nil)).
-		Where("username = ?", username).Where("id <> ?", identity.ID).Count(ctx)
+		Where(`"username" = ?`, username).Where(`"id" <> ?`, identity.ID).Count(ctx)
 	if err != nil {
 		return fmt.Errorf("check whether %q is taken: %w", username, err)
 	}
@@ -360,7 +361,7 @@ func (s *Store) rename(ctx context.Context, identity *Identity, username string)
 		return nil
 	}
 	if _, err := s.db.NewUpdate().Model((*Identity)(nil)).
-		Set("username = ?", username).Where("id = ?", identity.ID).Exec(ctx); err != nil {
+		Set(`"username" = ?`, username).Where(`"id" = ?`, identity.ID).Exec(ctx); err != nil {
 		return fmt.Errorf("follow a username that moved: %w", err)
 	}
 	identity.Username = username
@@ -395,9 +396,9 @@ func (s *Store) UnbindIdentifier(ctx context.Context, personID int64) error {
 		// The window restarts with them. Unbinding says the authorization is
 		// standing and redeemable again, and a row that came back carrying a
 		// window which lapsed while it was bound is redeemable by nobody.
-		Set("subject = NULL").Set("provider = NULL").Set("bound_at = NULL").
-		Set("claimable_until = ?", s.now().Truncate(time.Microsecond).Add(s.window())).
-		Where("person_id = ?", personID).Where("subject IS NOT NULL").Exec(ctx)
+		Set(`"subject" = NULL`).Set(`"provider" = NULL`).Set(`"bound_at" = NULL`).
+		Set(`"claimable_until" = ?`, s.now().Truncate(time.Microsecond).Add(s.window())).
+		Where(`"person_id" = ?`, personID).Where(`"subject" IS NOT NULL`).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("unbind how they sign in: %w", err)
 	}
@@ -416,16 +417,32 @@ func (s *Store) window() time.Duration {
 func (s *Store) Identities(ctx context.Context, personID int64) ([]Identity, error) {
 	var identities []Identity
 	if err := s.db.NewSelect().Model(&identities).
-		Where("person_id = ?", personID).Order("username ASC").Scan(ctx); err != nil {
+		Where(`"person_id" = ?`, personID).Order("username ASC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read how they sign in: %w", err)
 	}
 	return identities, nil
 }
 
+// EveryIdentity is how every person signs in, keyed by person, each person's
+// in the order Identities answers them. One read for a list of everybody, where
+// Identities per person is a query a row.
+func (s *Store) EveryIdentity(ctx context.Context) (map[int64][]Identity, error) {
+	var identities []Identity
+	if err := s.db.NewSelect().Model(&identities).
+		Order("person_id ASC", "username ASC").Scan(ctx); err != nil {
+		return nil, fmt.Errorf("read how everybody signs in: %w", err)
+	}
+	by := make(map[int64][]Identity)
+	for _, each := range identities {
+		by[each.PersonID] = append(by[each.PersonID], each)
+	}
+	return by, nil
+}
+
 // byID reads a person by row.
 func (s *Store) byID(ctx context.Context, id int64) (*Account, error) {
 	person := new(Account)
-	if err := s.db.NewSelect().Model(person).Where("id = ?", id).Scan(ctx); err != nil {
+	if err := s.db.NewSelect().Model(person).Where(`"id" = ?`, id).Scan(ctx); err != nil {
 		return nil, database.FromRead(err, ErrDenied, "look up a person")
 	}
 	return person, nil
@@ -465,4 +482,47 @@ func (s *Store) match(ctx context.Context, who Arrival) (*Account, error) {
 // one human two accounts, which is the defect that settled this (REQ-41).
 func (a Arrival) handle() string {
 	return Folded(a.Username)
+}
+
+// Deactivate records that somebody has left, and Reactivate that they are
+// back.
+//
+// Never a deletion. The record names them as the proposer of judgments and the
+// approver of others, and an assignment may point at them; deleting the row
+// would either break those or rewrite what happened. So leaving is a date, and
+// every path in reads it (REQ-45).
+//
+// Their roles are left where they are. What somebody held is part of why
+// the record reads as it does, and restoring an account should not mean
+// reconstructing its grants from memory. What stops them is the date, which is
+// read before anything else about them.
+//
+// Reports whether it changed anything, so a caller can tell "done" from
+// "already". Deactivating somebody twice is not an error — an administrator
+// clicking again, or two of them acting at once, is the ordinary case — but
+// the second one does not move the date, because the date is when they left.
+func (s *Store) Deactivate(ctx context.Context, personID int64) (bool, error) {
+	res, err := s.db.NewUpdate().Model((*Account)(nil)).
+		Set(`"deactivated_at" = ?`, s.now().Truncate(time.Microsecond)).
+		Where(`"id" = ?`, personID).
+		Where(`"deactivated_at" IS NULL`).
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("record that they left: %w", err)
+	}
+	return database.Changed(res, "record that they left")
+}
+
+// Reactivate clears the date, so they may sign in again with whatever they
+// still hold.
+func (s *Store) Reactivate(ctx context.Context, personID int64) (bool, error) {
+	res, err := s.db.NewUpdate().Model((*Account)(nil)).
+		Set(`"deactivated_at" = ?`, nil).
+		Where(`"id" = ?`, personID).
+		Where(`"deactivated_at" IS NOT NULL`).
+		Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("record that they are back: %w", err)
+	}
+	return database.Changed(res, "record that they are back")
 }

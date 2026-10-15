@@ -92,16 +92,16 @@ func visibilityOf(ctx context.Context, db bun.IDB, productID, vulnerabilityID in
 	}
 	err := db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "target" AS "tg" ON tg.id = f.target_id`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
+		Join(`JOIN "target" AS "tg" ON "tg"."id" = "f"."target_id"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
 		ColumnExpr(`COUNT(*) AS "here"`).
 		// Counted rather than summed over a CASE. That shape comes back as a
 		// decimal on two of the four engines and the cast that fixes it is
 		// spelled per engine, which is why the rule says to write two counts
 		// — and this was the second copy of a shape recorded as removed.
-		ColumnExpr(access.PrivateCountAs("f.visibility", "undisclosed")).
-		Where("st.product_id = ?", productID).
-		Where(finding.HeldAs("f.vulnerability_id"), vulnerabilityID).
+		ColumnExpr(access.PrivateCountAs(`"f"."visibility"`, "undisclosed")).
+		Where(`"st"."product_id" = ?`, productID).
+		Where(finding.HeldAs(`"f"."vulnerability_id"`), vulnerabilityID).
 		Scan(ctx, &counted)
 	if err != nil {
 		return access.Private, false, fmt.Errorf("read how disclosed an issue is: %w", err)
@@ -247,8 +247,8 @@ func mayReachReport(ctx context.Context, db bun.IDB, subject access.Subject,
 	err := db.NewSelect().
 		TableExpr(`"flaw_report" AS "fr"`).
 		ColumnExpr("COUNT(*)").
-		Where("fr.id = ?", reportID).
-		Where("fr.product_id = ?", productID).
+		Where(`"fr"."id" = ?`, reportID).
+		Where(`"fr"."product_id" = ?`, productID).
 		Scan(ctx, &here)
 	if err != nil {
 		return fmt.Errorf("read what a report is about: %w", err)
@@ -439,12 +439,8 @@ func roomIn(ctx context.Context, db bun.IDB, size, quota int64) error {
 	if quota <= 0 {
 		return nil
 	}
-	var held int64
-	if err := db.NewSelect().
-		TableExpr(`"attachment" AS "at"`).
-		ColumnExpr("COALESCE(SUM(at.size_bytes), 0)").
-		Where("at.redacted_at IS NULL").
-		Scan(ctx, &held); err != nil {
+	held, err := heldBytes(ctx, db, 0)
+	if err != nil {
 		return fmt.Errorf("read how much is stored: %w", err)
 	}
 	if held+size > quota {
@@ -464,19 +460,29 @@ func shareLeft(ctx context.Context, db bun.IDB, personID, size, share int64) err
 	if share <= 0 || personID == 0 {
 		return nil
 	}
-	var held int64
-	if err := db.NewSelect().
-		TableExpr(`"attachment" AS "at"`).
-		ColumnExpr("COALESCE(SUM(at.size_bytes), 0)").
-		Where("at.redacted_at IS NULL").
-		Where("at.uploaded_by = ?", personID).
-		Scan(ctx, &held); err != nil {
+	held, err := heldBytes(ctx, db, personID)
+	if err != nil {
 		return fmt.Errorf("read how much they are holding: %w", err)
 	}
 	if held+size > share {
 		return ErrNoRoom
 	}
 	return nil
+}
+
+// heldBytes is how many bytes the store holds that nobody redacted: every
+// upload, or one person's where personID is not zero.
+func heldBytes(ctx context.Context, db bun.IDB, personID int64) (int64, error) {
+	var held int64
+	q := db.NewSelect().
+		TableExpr(`"attachment" AS "at"`).
+		ColumnExpr(`COALESCE(SUM("at"."size_bytes"), 0)`).
+		Where(`"at"."redacted_at" IS NULL`)
+	if personID != 0 {
+		q = q.Where(`"at"."uploaded_by" = ?`, personID)
+	}
+	err := q.Scan(ctx, &held)
+	return held, err
 }
 
 // holds reports whether one of these visibilities is the one wanted.

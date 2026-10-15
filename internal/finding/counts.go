@@ -32,11 +32,11 @@ const (
 func (l Level) column() (string, bool) {
 	switch l {
 	case ByProduct:
-		return "st.product_id", true
+		return `"st"."product_id"`, true
 	case ByStream:
-		return "tg.stream_id", true
+		return `"tg"."stream_id"`, true
 	case ByVariant:
-		return "tg.variant_id", true
+		return `"tg"."variant_id"`, true
 	}
 	return "", false
 }
@@ -65,14 +65,14 @@ func (s *Store) OpenBy(ctx context.Context, subject access.Subject, scope Scope,
 	inner := s.db.NewSelect().
 		Distinct().
 		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "target" AS "tg" ON tg.id = f.target_id`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
+		Join(`JOIN "target" AS "tg" ON "tg"."id" = "f"."target_id"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
 		ColumnExpr(column + ` AS "grouped_by"`).
-		ColumnExpr(`f.vulnerability_id AS "vulnerability_id"`).
-		ColumnExpr(`f.component_id AS "component_id"`).
-		Where("f.closed_at IS NULL")
+		ColumnExpr(`"f"."vulnerability_id" AS "vulnerability_id"`).
+		ColumnExpr(`"f"."component_id" AS "component_id"`).
+		Where(`"f"."closed_at" IS NULL`)
 	if !all {
-		inner = inner.Where("st.product_id IN (?)", bun.List(products))
+		inner = inner.Where(`"st"."product_id" IN (?)`, bun.List(products))
 	}
 	inner = scope.Narrow(onlyVisible(inner, subject, products, all))
 
@@ -82,9 +82,9 @@ func (s *Store) OpenBy(ctx context.Context, subject access.Subject, scope Scope,
 	}
 	err := s.db.NewSelect().
 		TableExpr(`(?) AS "counted"`, inner).
-		ColumnExpr(`counted.grouped_by AS "grouped_by"`).
+		ColumnExpr(`"counted"."grouped_by" AS "grouped_by"`).
 		ColumnExpr(`COUNT(*) AS "open"`).
-		GroupExpr("counted.grouped_by").
+		GroupExpr(`"counted"."grouped_by"`).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("count what is open: %w", err)

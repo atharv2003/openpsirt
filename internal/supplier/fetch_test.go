@@ -283,14 +283,14 @@ func shipping(t *testing.T, fn func(t *testing.T, f *ships)) {
 		held := graph.Described{
 			Purl: "pkg:deb/debian/libnl-3-200@3.7.0", Name: "libnl-3-200", Version: "3.7.0",
 		}
-		if _, err := graph.NewStore(db.DB).Apply(ctx, target.ID, scan.ID, graph.Snapshot{
+		if _, err := fixture.ApplyGraph(ctx, db.DB, target.ID, scan.ID, graph.Snapshot{
 			Root: root, Components: []graph.Described{held},
 			Dependencies: []graph.Dependency{{Parent: root, Child: held}},
 		}); err != nil {
 			t.Fatal(err)
 		}
 		who, err := access.NewStore(db.DB).Ensure(ctx, "ana@example.com", "Ana",
-			access.Stated(true), nil)
+			new(true), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -328,7 +328,7 @@ func (f *ships) reported(t *testing.T, issue, component, version string) int64 {
 	}
 	var id int64
 	if err := f.db.DB.NewSelect().Model((*finding.Finding)(nil)).
-		ColumnExpr("f.id").Where("f.target_id = ?", f.target).
+		ColumnExpr(`"f"."id"`).Where(`"f"."target_id" = ?`, f.target).
 		Limit(1).Scan(ctx, &id); err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func passOver(t *testing.T, f *ships, p *publisher, replica string) (*supplier.S
 		t.Fatal(err)
 	}
 	if _, err := f.db.DB.NewUpdate().Model((*supplier.Source)(nil)).
-		Set("caught_up_to = ?", long).Where("id = ?", row.ID).Exec(t.Context()); err != nil {
+		Set(`"caught_up_to" = ?`, long).Where(`"id" = ?`, row.ID).Exec(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	pass := supplier.NewPass(f.db.DB, quiet(), replica, sbom.Limits{}, outward.Excluded{})
@@ -447,7 +447,7 @@ func TestWhatAPublisherSaysIsFixedDecidesNothingHere(t *testing.T) {
 
 		var after finding.Finding
 		if err := f.db.DB.NewSelect().Model(&after).
-			Where("id = ?", open).Scan(ctx); err != nil {
+			Where(`"id" = ?`, open).Scan(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if after.ClosedAt != nil {
@@ -673,6 +673,39 @@ func TestAPublisherWhoseDirectoryNamesNothingIsReportedRatherThanSilent(t *testi
 		}
 		if !strings.Contains(err.Error(), "names nothing to read") {
 			t.Errorf("it was reported as %v", err)
+		}
+	})
+}
+
+func TestAListingWithMisshapedFieldsNobodyReadsIsStillRead(t *testing.T) {
+	// A publisher writing a field the reader does not use in a shape the
+	// standard does not allow, in the description and in the feed, still has
+	// its documents read.
+	shipping(t, func(t *testing.T, f *ships) {
+		ctx := t.Context()
+		p := serving(t)
+		p.override = func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/.well-known/csaf/provider-metadata.json":
+				_, _ = fmt.Fprintf(w, `{"publisher":"Example Linux","role":7,"distributions":[{"rolie":{"feeds":[
+					{"summary":["public"],"tlp_label":"WHITE","url":%q}]}}]}`, p.server.URL+"/feed.json")
+			case "/feed.json":
+				_, _ = fmt.Fprintf(w, `{"feed":{"id":"f","title":"t","entry":[
+					{"summary":"text","format":"csaf","link":[{"rel":"self","href":%q}],
+					 "updated":"2026-09-20T00:00:00Z","content":{"type":"application/json","src":%q}}]}}`,
+					p.server.URL+"/2026/EL-6.json", p.server.URL+"/2026/EL-6.json")
+			case "/2026/EL-6.json":
+				_, _ = fmt.Fprint(w, advisory("EL-2026-0006", "libnl-3-200", "3.7.1", "CVE-2026-6666"))
+			default:
+				http.NotFound(w, r)
+			}
+		}
+		took, err := fetching(t, f, p).From(ctx, f.by, from(t, f, p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if took.Documents != 1 || took.Recorded != 1 {
+			t.Fatalf("the pass read %d documents and recorded %d claims", took.Documents, took.Recorded)
 		}
 	})
 }

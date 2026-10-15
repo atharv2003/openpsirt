@@ -123,9 +123,6 @@ func registerReadiness(api huma.API, in core.Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if in.DB == nil {
-			return nil, core.NoDatabase(in.Logger)
-		}
 		named, err := core.LocatedVisibly(ctx, in, subject, input.Product, input.Stream, input.Variant)
 		if err != nil {
 			return nil, err
@@ -188,11 +185,8 @@ func buildCounts(s finding.Standing) BuildCountsBody {
 		Stream: s.Stream, Variant: s.Variant, Kind: core.LineKind(s.Kind), Total: s.Total,
 		StreamName:  s.StreamName,
 		VariantName: s.VariantName,
-		Critical:    s.ByBand["critical"], High: s.ByBand["high"],
-		Medium: s.ByBand["medium"], Low: s.ByBand["low"],
 	}
-	if s.LastScanned != nil {
-		body.LastScannedAt = s.LastScanned.UTC().Format(time.RFC3339)
-	}
+	body.Critical, body.High, body.Medium, body.Low = core.BandCounts(s.ByBand)
+	body.LastScannedAt = core.StampAt(s.LastScanned)
 	return body
 }

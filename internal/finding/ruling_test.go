@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	world "github.com/nexthop-ai/openpsirt/internal/dbtest/fixture"
+
 	"github.com/nexthop-ai/openpsirt/internal/access"
 	"github.com/nexthop-ai/openpsirt/internal/catalog"
 	"github.com/nexthop-ai/openpsirt/internal/finding"
@@ -242,9 +244,9 @@ func TestADuplicateOfAnIssueThatIsNotOpenIsRefused(t *testing.T) {
 		}
 
 		if _, err := f.db.DB.NewUpdate().Model((*finding.Finding)(nil)).
-			Set("closed_at = ?", time.Now().UTC()).
-			Set("closed_because = ?", finding.Upgraded).
-			Where("vulnerability_id = ?", issue).
+			Set(`"closed_at" = ?`, time.Now().UTC()).
+			Set(`"closed_because" = ?`, finding.Upgraded).
+			Where(`"vulnerability_id" = ?`, issue).
 			Exec(t.Context()); err != nil {
 			t.Fatal(err)
 		}
@@ -542,7 +544,7 @@ func TestADuplicateOfAnIssueDismissedOrSuppressedEverywhereIsRefused(t *testing.
 	each(t, func(t *testing.T, f *fixture) {
 		ctx := t.Context()
 		f.shipped(t, twoConsumers())
-		if _, err := f.store.RecordClaims(ctx, f.target, f.lastScan,
+		if _, err := world.RecordClaims(ctx, f.db, f.target, f.lastScan,
 			[]sbom.Suppression{aClaim("CVE-2026-1", sbom.NotAffected, libnl, sbom.FromStatement)},
 			everyOrigin); err != nil {
 			t.Fatal(err)

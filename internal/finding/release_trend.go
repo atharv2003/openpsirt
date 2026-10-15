@@ -82,9 +82,9 @@ func (s *Store) ReleaseTrend(ctx context.Context, subject access.Subject, scope 
 		// products' tags interleave by date and mean nothing side by side.
 		//
 		// Refused rather than answered empty. An empty list is what a product
-		// with no releases looks like, so a request that named no product got
-		// the same answer as one whose product has nothing to plot — and the
-		// route's own description says a product must be named.
+		// with no releases looks like, and a request naming no product is a
+		// different answer: the route's own description says a product must
+		// be named.
 		return nil, ErrNoProductNamed
 	}
 	limit = database.APlot.Of(limit)
@@ -104,40 +104,40 @@ func (s *Store) ReleaseTrend(ctx context.Context, subject access.Subject, scope 
 	// is already distinct once it carries one.
 	issues := s.db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "target" AS "tg" ON tg.id = f.target_id`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		ColumnExpr(`tg.stream_id AS "stream_id"`).
-		ColumnExpr(`f.vulnerability_id AS "vulnerability_id"`).
-		Where("st.kind = ?", "tag").
-		Where("f.closed_at IS NULL").
-		GroupExpr("tg.stream_id, f.vulnerability_id")
+		Join(`JOIN "target" AS "tg" ON "tg"."id" = "f"."target_id"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		ColumnExpr(`"tg"."stream_id" AS "stream_id"`).
+		ColumnExpr(`"f"."vulnerability_id" AS "vulnerability_id"`).
+		Where(`"st"."kind" = ?`, catalog.Tag).
+		Where(`"f"."closed_at" IS NULL`).
+		GroupExpr(`"tg"."stream_id", "f"."vulnerability_id"`)
 	issues = scope.Narrow(onlyReadable(issues, subject, products, all))
 
 	inner := s.db.NewSelect().
 		TableExpr(`(?) AS "grouped"`, issues).
-		Join(`JOIN "stream" AS "st" ON st.id = grouped.stream_id`).
-		Join(`JOIN "vulnerability" AS "v" ON v.id = grouped.vulnerability_id`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "grouped"."stream_id"`).
+		Join(`JOIN "vulnerability" AS "v" ON "v"."id" = "grouped"."vulnerability_id"`).
 		Join(rating.For(rating.OnStream)).
-		ColumnExpr(`st.name AS "stream"`).
+		ColumnExpr(`"st"."name" AS "stream"`).
 		ColumnExpr(catalog.ShownExpr("st") + ` AS "stream_name"`).
 		// The day it went out, where somebody said, and the day it was declared
 		// here otherwise. Ordered by the declaration alone, the chart is an
 		// accident of administration: a release recorded months after it
 		// shipped sorts after ones that came out later, and a year
 		// backfilled in an afternoon plots as a single day.
-		ColumnExpr(`COALESCE(st.released_on, st.created_at) AS "created_at"`).
+		ColumnExpr(`COALESCE("st"."released_on", "st"."created_at") AS "created_at"`).
 		ColumnExpr(rating.BandExpr + ` AS "band"`)
 
 	if err := s.db.NewSelect().
 		TableExpr(`(?) AS "per_release"`, inner).
-		ColumnExpr(`per_release.stream AS "stream"`).
-		ColumnExpr(`per_release.stream_name AS "stream_name"`).
-		ColumnExpr(`per_release.created_at AS "created_at"`).
-		ColumnExpr(`per_release.band AS "band"`).
+		ColumnExpr(`"per_release"."stream" AS "stream"`).
+		ColumnExpr(`"per_release"."stream_name" AS "stream_name"`).
+		ColumnExpr(`"per_release"."created_at" AS "created_at"`).
+		ColumnExpr(`"per_release"."band" AS "band"`).
 		ColumnExpr(`COUNT(*) AS "open"`).
-		GroupExpr("per_release.stream, per_release.stream_name, per_release.created_at, per_release.band").
+		GroupExpr(`"per_release"."stream", "per_release"."stream_name", "per_release"."created_at", "per_release"."band"`).
 		// Newest last, so the chart reads left to right the way time does.
-		OrderExpr("created_at, stream, band").
+		OrderExpr(`"created_at", stream, band`).
 		Scan(ctx, &rows); err != nil {
 		return nil, fmt.Errorf("read what each release shipped with: %w", err)
 	}

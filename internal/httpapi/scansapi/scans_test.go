@@ -545,7 +545,7 @@ func TestEveryDoorThatTurnsAnUploadAwayRecordsIt(t *testing.T) {
 			want: http.StatusRequestEntityTooLarge, said: "larger than"},
 		{what: "a variant that is retired",
 			before: func(t *testing.T, f *httpapitest.IngestFixture) {
-				if _, err := f.DB.DB.NewUpdate().Table("variant").Set("retired_at = ?",
+				if _, err := f.DB.DB.NewUpdate().Table("variant").Set(`"retired_at" = ?`,
 					time.Now().UTC()).Where("1 = 1").Exec(t.Context()); err != nil {
 					t.Fatal(err)
 				}
@@ -556,7 +556,7 @@ func TestEveryDoorThatTurnsAnUploadAwayRecordsIt(t *testing.T) {
 			want: http.StatusConflict, said: "retired"},
 		{what: "a full backlog",
 			before: func(t *testing.T, f *httpapitest.IngestFixture) {
-				if err := setting.NewStore(f.DB.DB).Set(t.Context(), setting.QueueBacklog,
+				if _, _, err := setting.NewStore(f.DB.DB).Change(t.Context(), setting.QueueBacklog,
 					"1"); err != nil {
 					t.Fatal(err)
 				}

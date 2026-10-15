@@ -6,6 +6,7 @@ package finding
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/uptrace/bun"
 )
@@ -28,7 +29,7 @@ import (
 // A source-package expression in its place cannot see three of the collisions
 // a real image contains: one source shipped at two versions in one build, and
 // two ecosystems using one word for different packages.
-const FoldedOn = "c.fold_key"
+const FoldedOn = `"c"."fold_key"`
 
 // GroupedOn is the grain the findings list, its hidden count and its
 // cross-product form all group by: one issue at one fold.
@@ -37,11 +38,11 @@ const FoldedOn = "c.fold_key"
 // the page it belongs to changes the figure above the list depending on which
 // page is being looked at. The grain of a page and the grain of the number
 // above it are one fact.
-const GroupedOn = "f.vulnerability_id, " + FoldedOn
+const GroupedOn = `"f"."vulnerability_id", ` + FoldedOn
 
 // GroupedAcross is the same grain across products, where a row is an issue at
 // a fold in one product.
-const GroupedAcross = "st.product_id, " + GroupedOn
+const GroupedAcross = `"st"."product_id", ` + GroupedOn
 
 // SourceName and SourceVersion are what a fold is called and what it is at:
 // what the producer said the component was built from, and the component's own
@@ -51,16 +52,22 @@ const GroupedAcross = "st.product_id, " + GroupedOn
 // was derived from, so they do not vary within a fold in any way a person can
 // see — but the key folds capitals and the column does not, so grouping on
 // them as well could split a fold that two producers spelled differently.
-const (
-	SourceName = `CASE WHEN COALESCE(c.upstream_name, '') <> '' THEN c.upstream_name
-		ELSE c.name END`
-	// The two fall back independently, which is the rule
-	// ComponentUpstreamExpr already applies to the version a decision expires
-	// on. One fold and one expiry disagreeing about which version a component
-	// is at is the shape worth not having.
-	SourceVersion = `CASE WHEN COALESCE(c.upstream_version, '') <> ''
-		THEN c.upstream_version ELSE c.version END`
-)
+const SourceName = `CASE WHEN COALESCE("c"."upstream_name", '') <> '' THEN "c"."upstream_name"
+		ELSE "c"."name" END`
+
+// SourceVersion falls back independently of SourceName, through the same
+// expression the version a decision expires on is read with: one fold and one
+// expiry disagreeing about which version a component is at is the shape worth
+// not having.
+var SourceVersion = upstreamVersionOf("c")
+
+// upstreamVersionOf is the version a component joined under the alias given
+// is at: the upstream version it states, and its own where it states none.
+// ComponentUpstreamExpr is this over "c" and ConsumerUpstreamExpr over "uc",
+// spelled as constants because other constants are built from them.
+func upstreamVersionOf(alias string) string {
+	return strings.ReplaceAll(ComponentUpstreamExpr, `"c".`, `"`+alias+`".`)
+}
 
 // PerFold puts one of those expressions under an aggregate, for a query that
 // groups on the fold. MIN rather than MAX for no reason beyond having to pick
@@ -78,8 +85,8 @@ func PerFold(expression string) string { return "MIN(" + expression + ")" }
 // rule that placed a third of a fold reported as no rule at all under one
 // name and as the whole thing under another.
 func InTheFoldOf(q *bun.SelectQuery, componentID int64) *bun.SelectQuery {
-	return q.Join(`JOIN "component" AS "c" ON c.id = f.component_id`).
-		Where(FoldedOn+` = (SELECT "c2".fold_key FROM "component" AS "c2" WHERE "c2".id = ?)`,
+	return q.Join(`JOIN "component" AS "c" ON "c"."id" = "f"."component_id"`).
+		Where(FoldedOn+` = (SELECT "c2"."fold_key" FROM "component" AS "c2" WHERE "c2"."id" = ?)`,
 			componentID)
 }
 
@@ -100,10 +107,10 @@ func InTheFold(ctx context.Context, db bun.IDB, componentID int64) ([]int64, err
 	var ids []int64
 	err := db.NewSelect().
 		TableExpr(`"component" AS "c"`).
-		ColumnExpr("c.id").
-		Where(FoldedOn+` = (SELECT "c2".fold_key FROM "component" AS "c2" WHERE "c2".id = ?)`,
+		ColumnExpr(`"c"."id"`).
+		Where(FoldedOn+` = (SELECT "c2"."fold_key" FROM "component" AS "c2" WHERE "c2"."id" = ?)`,
 			componentID).
-		OrderExpr("c.id").
+		OrderExpr(`"c"."id"`).
 		Scan(ctx, &ids)
 	if err != nil {
 		return nil, fmt.Errorf("read the packages of this fold: %w", err)

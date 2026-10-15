@@ -44,11 +44,11 @@ func HeldOpenIn(ctx context.Context, db bun.IDB, subject access.Subject, product
 	var scanned []int64
 	if err := db.NewSelect().
 		TableExpr(`"target" AS "tg"`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		ColumnExpr("DISTINCT tg.stream_id").
-		Where("tg.stream_id IN (?)", bun.List(streams)).
-		Where("st.product_id = ?", productID).
-		Where("tg.last_run_id IS NOT NULL").
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		ColumnExpr(`DISTINCT "tg"."stream_id"`).
+		Where(`"tg"."stream_id" IN (?)`, bun.List(streams)).
+		Where(`"st"."product_id" = ?`, productID).
+		Where(`"tg"."last_run_id" IS NOT NULL`).
 		Scan(ctx, &scanned); err != nil {
 		return nil, fmt.Errorf("read which releases have been scanned: %w", err)
 	}
@@ -62,13 +62,13 @@ func HeldOpenIn(ctx context.Context, db bun.IDB, subject access.Subject, product
 	}
 	q := db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "target" AS "tg" ON tg.id = f.target_id`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		ColumnExpr("DISTINCT tg.stream_id").
-		Where("tg.stream_id IN (?)", bun.List(streams)).
-		Where("st.product_id = ?", productID).
-		Where("f.closed_at IS NULL").
-		Where(HeldAs("f.vulnerability_id"), vulnerabilityID)
+		Join(`JOIN "target" AS "tg" ON "tg"."id" = "f"."target_id"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		ColumnExpr(`DISTINCT "tg"."stream_id"`).
+		Where(`"tg"."stream_id" IN (?)`, bun.List(streams)).
+		Where(`"st"."product_id" = ?`, productID).
+		Where(`"f"."closed_at" IS NULL`).
+		Where(HeldAs(`"f"."vulnerability_id"`), vulnerabilityID)
 	if !onCase {
 		_, all := subject.Products()
 		q = inOneProduct(q, subject, productID, all)

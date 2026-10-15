@@ -119,10 +119,10 @@ func (f *fixture) filed(t *testing.T, identifier string, target int64, place str
 	var componentID int64
 	if err := f.db.DB.NewSelect().
 		TableExpr(`"graph_node" AS "n"`).
-		Join(`JOIN "component" AS "c" ON c.id = n.component_id`).
-		ColumnExpr("c.id").
-		Where("n.target_id = ?", target).
-		Where("c.name = ?", carrier.Name).
+		Join(`JOIN "component" AS "c" ON "c"."id" = "n"."component_id"`).
+		ColumnExpr(`"c"."id"`).
+		Where(`"n"."target_id" = ?`, target).
+		Where(`"c"."name" = ?`, carrier.Name).
 		Limit(1).Scan(ctx, &componentID); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func (f *fixture) filed(t *testing.T, identifier string, target int64, place str
 	row := &finding.Finding{
 		TargetID: target, Kind: finding.Vulnerable, Visibility: access.Private,
 		VulnerabilityID: f.issueOf(t, identifier), ComponentID: componentID,
-		PlaceIdentity: place, LastChangedAt: now, OpenedAt: now,
+		PlaceIdentity: place, OpenedAt: now,
 		ClosedAt: closed, ClosedBecause: because,
 	}
 	if _, err := f.db.DB.NewInsert().Model(row).Exec(ctx); err != nil {
@@ -460,9 +460,9 @@ func TestMarkingAReleaseAffectedIsAnEditionOfWhatTheAdvisorySays(t *testing.T) {
 			t.Helper()
 			var highest int
 			if err := f.db.DB.NewSelect().TableExpr(`"advisory_edition" AS "ae"`).
-				Join(`JOIN "advisory" AS "ad" ON ad.id = ae.advisory_id`).
-				ColumnExpr("MAX(ae.ordinal)").
-				Where("ad.identifier = ?", named).Scan(ctx, &highest); err != nil {
+				Join(`JOIN "advisory" AS "ad" ON "ad"."id" = "ae"."advisory_id"`).
+				ColumnExpr(`MAX("ae"."ordinal")`).
+				Where(`"ad"."identifier" = ?`, named).Scan(ctx, &highest); err != nil {
 				t.Fatal(err)
 			}
 			return highest

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/nexthop-ai/openpsirt/internal/catalog"
+	"github.com/nexthop-ai/openpsirt/internal/dbtest/fixture"
 	"github.com/nexthop-ai/openpsirt/internal/finding"
 	"github.com/nexthop-ai/openpsirt/internal/graph"
 	"github.com/nexthop-ai/openpsirt/internal/ingest"
@@ -27,8 +28,8 @@ import (
 // AdvisoryOver mints an advisory, names one issue in one product on it, and
 // answers the identifier it was minted under.
 //
-// Two requests where there used to be none: an advisory is a record of its own
-// now, so what a document is about is stated rather than read off the path.
+// Two requests, because an advisory is a record of its own: what a document is
+// about is stated rather than read off the path.
 func AdvisoryOver(t *testing.T, r *Reach, who, product, identifier string) string {
 	t.Helper()
 	made := AsPerson(t, r, who, http.MethodPost, "/v1/advisories", `{}`)
@@ -233,7 +234,7 @@ func (r *Reach) scannedUnder(t *testing.T, first, second graph.Described) {
 	library := graph.Described{
 		Purl: "pkg:deb/debian/libnl-3-200@3.7.0", Name: "libnl-3-200", Version: "3.7.0",
 	}
-	if _, err := graph.NewStore(r.DB.DB).Apply(ctx, target.ID, scan.ID, graph.Snapshot{
+	if _, err := fixture.ApplyGraph(ctx, r.DB.DB, target.ID, scan.ID, graph.Snapshot{
 		Root:       product,
 		Components: []graph.Described{first, second, library},
 		Dependencies: []graph.Dependency{
@@ -297,8 +298,8 @@ func (r *Reach) ScannedBeneathAProduct(t *testing.T, root string) {
 		t.Fatalf("record scan: %v %v", outcome, err)
 	}
 	if root != "" {
-		if _, err := r.DB.DB.NewUpdate().Table("scan").Set("root_identifier = ?", root).
-			Where("id = ?", scan.ID).Exec(ctx); err != nil {
+		if _, err := r.DB.DB.NewUpdate().Table("scan").Set(`"root_identifier" = ?`, root).
+			Where(`"id" = ?`, scan.ID).Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -310,7 +311,7 @@ func (r *Reach) ScannedBeneathAProduct(t *testing.T, root string) {
 	library := graph.Described{
 		Purl: "pkg:deb/debian/libnl-3-200@3.7.0", Name: "libnl-3-200", Version: "3.7.0",
 	}
-	if _, err := graph.NewStore(r.DB.DB).Apply(ctx, target.ID, scan.ID, graph.Snapshot{
+	if _, err := fixture.ApplyGraph(ctx, r.DB.DB, target.ID, scan.ID, graph.Snapshot{
 		Root:       product,
 		Components: []graph.Described{curl, libssh, app, library},
 		Dependencies: []graph.Dependency{
@@ -369,7 +370,7 @@ func (r *Reach) FixedIn(t *testing.T) map[string][]string {
 			} `json:"products"`
 		} `json:"statements"`
 	}
-	Read(t, r, "triager", "/v1/products/mine/streams/master/variants/broadcom/vex", &doc)
+	Read(t, r, "triager", ABuild, &doc)
 	fixed := map[string][]string{}
 	for _, one := range doc.Statements {
 		if one.Status != "fixed" {
@@ -410,7 +411,7 @@ func (r *Reach) VexStatements(t *testing.T) [][3]string {
 			} `json:"products"`
 		} `json:"statements"`
 	}
-	Read(t, r, "triager", "/v1/products/mine/streams/master/variants/broadcom/vex", &doc)
+	Read(t, r, "triager", ABuild, &doc)
 	var out [][3]string
 	for _, one := range doc.Statements {
 		inside := ""

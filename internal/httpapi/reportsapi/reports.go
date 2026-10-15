@@ -284,9 +284,6 @@ func registerReleaseTrend(api huma.API, in core.Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if in.DB == nil {
-			return nil, core.NoDatabase(in.Logger)
-		}
 		scope, err := core.Scoped(ctx, in, subject, input.ScopeQuery)
 		if err != nil {
 			return nil, err
@@ -312,7 +309,7 @@ func registerReleaseTrend(api huma.API, in core.Deps) {
 		out.Body.Items = make([]ReleasePointBody, 0, len(points))
 		for _, point := range points {
 			out.Body.Items = append(out.Body.Items, ReleasePointBody{
-				Stream: point.Stream, Cut: point.Cut.UTC().Format(time.RFC3339),
+				Stream: point.Stream, Cut: core.Stamp(point.Cut),
 				StreamName: point.StreamName,
 				Open:       point.Open, BySeverity: point.BySeverity,
 			})
@@ -353,9 +350,6 @@ func registerNotes(api huma.API, in core.Deps) {
 		subject, err := core.Reading(ctx)
 		if err != nil {
 			return nil, err
-		}
-		if in.DB == nil {
-			return nil, core.NoDatabase(in.Logger)
 		}
 		names := catalog.NewStore(in.DB.DB)
 		from, to, err := input.targets(ctx, in, subject, input.Product)

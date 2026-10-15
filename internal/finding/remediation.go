@@ -95,7 +95,7 @@ var agingBuckets = []agingBucket{
 // beside it: a value in a placeholder is the rule, and a literal here is the
 // shape somebody copies to a place where it does matter.
 func resolved(q *bun.SelectQuery) *bun.SelectQuery {
-	return q.Where("f.closed_because IN (?)", bun.List(Resolving()))
+	return q.Where(`"f"."closed_because" IN (?)`, bun.List(Resolving()))
 }
 
 // Remediation reports how fast issues are being closed and what is aging.
@@ -128,9 +128,10 @@ func (s *Store) Remediation(ctx context.Context, subject access.Subject, scope S
 	out := &Remediation{TimeToFix: map[string]time.Duration{}}
 
 	// spans is how long each issue took, averaged per severity band.
-	// Averaged over the issue rather than over its rows: an issue is
-	// closed when the last of its places is, and the places are what fans
-	// out.
+	// Averaged over the issue rather than over its rows, because the places
+	// are what fans out: an issue counts once where any of its places closed
+	// by a fix in the window, and took from the first of those places to
+	// open to the last of them to close.
 	var spans []struct {
 		Rank    int     `bun:"band_rank"`
 		Seconds float64 `bun:"seconds"`
@@ -140,21 +141,21 @@ func (s *Store) Remediation(ctx context.Context, subject access.Subject, scope S
 	// product and every narrowing is a condition on a place.
 	closed := s.db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "target" AS "tg" ON tg.id = f.target_id`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		ColumnExpr(`f.vulnerability_id AS "vulnerability_id"`).
-		ColumnExpr(`st.product_id AS "product_id"`).
-		ColumnExpr(`MAX(f.closed_at) AS "closed_at"`).
-		ColumnExpr(`MIN(f.opened_at) AS "opened_at"`).
-		Where("f.closed_at IS NOT NULL").
+		Join(`JOIN "target" AS "tg" ON "tg"."id" = "f"."target_id"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		ColumnExpr(`"f"."vulnerability_id" AS "vulnerability_id"`).
+		ColumnExpr(`"st"."product_id" AS "product_id"`).
+		ColumnExpr(`MAX("f"."closed_at") AS "closed_at"`).
+		ColumnExpr(`MIN("f"."opened_at") AS "opened_at"`).
+		Where(`"f"."closed_at" IS NOT NULL`).
 		Where(wasOpen).
 		WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
 			if !since.IsZero() {
-				q = q.Where("f.closed_at >= ?", since)
+				q = q.Where(`"f"."closed_at" >= ?`, since)
 			}
-			return q.Where("f.closed_at < ?", until)
+			return q.Where(`"f"."closed_at" < ?`, until)
 		}).
-		GroupExpr("f.vulnerability_id, st.product_id")
+		GroupExpr(`"f"."vulnerability_id", "st"."product_id"`)
 	closed = resolved(scope.Narrow(onlyReadable(closed, subject, products, all)))
 
 	// Then one row per issue, in the strictest band any product it closed in
@@ -162,21 +163,21 @@ func (s *Store) Remediation(ctx context.Context, subject access.Subject, scope S
 	// two products is one fix, in the same unit as what opened.
 	perIssue := s.db.NewSelect().
 		TableExpr(`(?) AS "grouped"`, closed).
-		Join(`JOIN "vulnerability" AS "v" ON v.id = grouped.vulnerability_id`).
+		Join(`JOIN "vulnerability" AS "v" ON "v"."id" = "grouped"."vulnerability_id"`).
 		Join(rating.For(rating.OnGrouped)).
 		ColumnExpr(`MAX(` + rankCase(rating.BandExpr, 0) + `) AS "band_rank"`).
-		ColumnExpr(`MAX(grouped.closed_at) AS "closed_at"`).
-		ColumnExpr(`MIN(grouped.opened_at) AS "opened_at"`).
-		GroupExpr("grouped.vulnerability_id")
+		ColumnExpr(`MAX("grouped"."closed_at") AS "closed_at"`).
+		ColumnExpr(`MIN("grouped"."opened_at") AS "opened_at"`).
+		GroupExpr(`"grouped"."vulnerability_id"`)
 
 	// The averaging happens over the grouped issues, in a statement of its
 	// own, because averaging inside the grouping would average the places.
 	if err := s.db.NewSelect().
 		TableExpr(`(?) AS "per_issue"`, perIssue).
-		ColumnExpr(`per_issue.band_rank AS "band_rank"`).
+		ColumnExpr(`"per_issue"."band_rank" AS "band_rank"`).
 		ColumnExpr(`COUNT(*) AS "issues"`).
 		ColumnExpr(secondsBetween(s.db)+` AS "seconds"`).
-		GroupExpr("per_issue.band_rank").
+		GroupExpr(`"per_issue"."band_rank"`).
 		Scan(ctx, &spans); err != nil {
 		return nil, fmt.Errorf("read how long fixes took: %w", err)
 	}
@@ -191,17 +192,17 @@ func (s *Store) Remediation(ctx context.Context, subject access.Subject, scope S
 	// figures are in the same unit and can be read against each other.
 	opened := s.db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "target" AS "tg" ON tg.id = f.target_id`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		ColumnExpr("f.vulnerability_id").
+		Join(`JOIN "target" AS "tg" ON "tg"."id" = "f"."target_id"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		ColumnExpr(`"f"."vulnerability_id"`).
 		Where(wasOpen).
 		WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
 			if !since.IsZero() {
-				q = q.Where("f.opened_at >= ?", since)
+				q = q.Where(`"f"."opened_at" >= ?`, since)
 			}
-			return q.Where("f.opened_at < ?", until)
+			return q.Where(`"f"."opened_at" < ?`, until)
 		}).
-		GroupExpr("f.vulnerability_id")
+		GroupExpr(`"f"."vulnerability_id"`)
 	count, err := s.db.NewSelect().
 		TableExpr(`(?) AS "grouped"`, scope.Narrow(onlyReadable(opened, subject, products, all))).Count(ctx)
 	if err != nil {
@@ -249,34 +250,34 @@ func (s *Store) aging(ctx context.Context, subject access.Subject, products []in
 		TableExpr(`"decision" AS "de"`).
 		Join(DecisionIssue).
 		Join(`CROSS JOIN "finding" AS "f2"`).
-		Where("f2.vulnerability_id = dv.issue_id AND f2.place_identity = de.place_identity").
-		Join(`JOIN "target" AS "tg2" ON tg2.id = f2.target_id`).
-		Join(`JOIN "stream" AS "st2" ON st2.id = tg2.stream_id`).
-		ColumnExpr(`f2.id AS "finding_id"`).
-		Where("de.product_id = st2.product_id").
-		Where("de.live_key IS NOT NULL").
+		Where(DecisionAtPlace("f2")).
+		Join(`JOIN "target" AS "tg2" ON "tg2"."id" = "f2"."target_id"`).
+		Join(`JOIN "stream" AS "st2" ON "st2"."id" = "tg2"."stream_id"`).
+		ColumnExpr(`"f2"."id" AS "finding_id"`).
+		Where(`"de"."product_id" = "st2"."product_id"`).
+		Where(`"de"."live_key" IS NOT NULL`).
 		Where(standing, held...).
-		Where("f2.closed_at IS NULL").
-		GroupExpr("f2.id")
+		Where(`"f2"."closed_at" IS NULL`).
+		GroupExpr(`"f2"."id"`)
 
 	// One row per issue and product, with the flags. Every narrowing is a
 	// condition on a place, so each applies here, before the places are
 	// reduced.
 	places := s.db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "target" AS "tg" ON tg.id = f.target_id`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		Join(`LEFT JOIN (?) AS "answered" ON answered.finding_id = f.id`, answered).
-		ColumnExpr(`f.vulnerability_id AS "vulnerability_id"`).
-		ColumnExpr(`st.product_id AS "product_id"`).
-		Where("f.closed_at IS NULL").
-		Where("f.opened_at <= ?", now).
-		GroupExpr("f.vulnerability_id, st.product_id")
+		Join(`JOIN "target" AS "tg" ON "tg"."id" = "f"."target_id"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		Join(`LEFT JOIN (?) AS "answered" ON "answered"."finding_id" = "f"."id"`, answered).
+		ColumnExpr(`"f"."vulnerability_id" AS "vulnerability_id"`).
+		ColumnExpr(`"st"."product_id" AS "product_id"`).
+		Where(`"f"."closed_at" IS NULL`).
+		Where(`"f"."opened_at" <= ?`, now).
+		GroupExpr(`"f"."vulnerability_id", "st"."product_id"`)
 	for i, bucket := range agingBuckets {
 		in, args := bucket.holds(now)
 		places = places.
 			ColumnExpr(`MAX(CASE WHEN `+in+` THEN 1 ELSE 0 END) AS "open_`+bucketName(i)+`"`, args...).
-			ColumnExpr(`MAX(CASE WHEN `+in+` AND answered.finding_id IS NULL THEN 1 ELSE 0 END)`+
+			ColumnExpr(`MAX(CASE WHEN `+in+` AND "answered"."finding_id" IS NULL THEN 1 ELSE 0 END)`+
 				` AS "undecided_`+bucketName(i)+`"`, args...)
 	}
 	places = scope.Narrow(onlyReadable(places, subject, products, all))
@@ -287,9 +288,9 @@ func (s *Store) aging(ctx context.Context, subject access.Subject, products []in
 	// the highest rank, with a word that ranks nothing below every band.
 	issues := s.db.NewSelect().
 		TableExpr(`(?) AS "grouped"`, places).
-		Join(`JOIN "vulnerability" AS "v" ON v.id = grouped.vulnerability_id`).
+		Join(`JOIN "vulnerability" AS "v" ON "v"."id" = "grouped"."vulnerability_id"`).
 		Join(rating.For(rating.OnGrouped)).
-		GroupExpr("grouped.vulnerability_id")
+		GroupExpr(`"grouped"."vulnerability_id"`)
 	counted := s.db.NewSelect().
 		TableExpr(`(?) AS "per_issue"`, issues).
 		ColumnExpr(`COUNT(*) AS "issues"`)
@@ -297,13 +298,13 @@ func (s *Store) aging(ctx context.Context, subject access.Subject, products []in
 	for i := range agingBuckets {
 		name := bucketName(i)
 		issues = issues.
-			ColumnExpr(`MAX(grouped.open_` + name + `) AS "open_` + name + `"`).
-			ColumnExpr(`MAX(grouped.undecided_` + name + `) AS "undecided_` + name + `"`).
-			ColumnExpr(`MAX(CASE WHEN grouped.open_` + name + ` = 1 THEN ` + rankCase(rating.EffectiveExpr, 0) +
+			ColumnExpr(`MAX("grouped"."open_` + name + `") AS "open_` + name + `"`).
+			ColumnExpr(`MAX("grouped"."undecided_` + name + `") AS "undecided_` + name + `"`).
+			ColumnExpr(`MAX(CASE WHEN "grouped"."open_` + name + `" = 1 THEN ` + rankCase(rating.EffectiveExpr, 0) +
 				` END) AS "band_` + name + `"`)
 		for _, column := range []string{"open_", "undecided_", "band_"} {
-			counted = counted.ColumnExpr(`per_issue.` + column + name + ` AS "` + column + name + `"`)
-			keys = append(keys, "per_issue."+column+name)
+			counted = counted.ColumnExpr(`"per_issue"."` + column + name + `" AS "` + column + name + `"`)
+			keys = append(keys, `"per_issue"."`+column+name+`"`)
 		}
 	}
 	counted = counted.GroupExpr(strings.Join(keys, ", "))
@@ -357,9 +358,9 @@ func (s *Store) aging(ctx context.Context, subject access.Subject, products []in
 func (b agingBucket) holds(now time.Time) (string, []any) {
 	older := now.Add(-time.Duration(b.from) * 24 * time.Hour)
 	if b.to == 0 {
-		return "f.opened_at <= ?", []any{older}
+		return `"f"."opened_at" <= ?`, []any{older}
 	}
-	return "f.opened_at <= ? AND f.opened_at > ?",
+	return `"f"."opened_at" <= ? AND "f"."opened_at" > ?`,
 		[]any{older, now.Add(-time.Duration(b.to) * 24 * time.Hour)}
 }
 

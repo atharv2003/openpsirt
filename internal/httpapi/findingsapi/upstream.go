@@ -6,7 +6,6 @@ package findingsapi
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -78,9 +77,6 @@ func registerUpstream(api huma.API, in core.Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if in.DB == nil {
-			return nil, core.NoDatabase(in.Logger)
-		}
 		// Classified against every root, because that is what the pass held
 		// names back against. Read against a narrower list, a name the pass
 		// never sent is reported as sent.
@@ -108,7 +104,7 @@ func registerUpstream(api huma.API, in core.Deps) {
 		for _, row := range rows {
 			out.Body.Items = append(out.Body.Items, UnansweredBody{
 				Purl: row.Purl, Ecosystem: row.Ecosystem, Why: core.Unanswered(row.Why),
-				Checked: row.Checked.UTC().Format(time.RFC3339),
+				Checked: core.Stamp(row.Checked),
 			})
 		}
 		out.Body.Total = total

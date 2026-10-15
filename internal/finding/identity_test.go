@@ -39,7 +39,7 @@ func TestOneIssueUnderTwoNamesIsOneIssue(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !applied.Unchanged() {
+		if !changedNothing(applied) {
 			t.Errorf("the same issue under another name wrote %+v", applied)
 		}
 
@@ -71,7 +71,7 @@ func TestAnAliasSuppliedLaterFindsTheIssueAlreadyHeld(t *testing.T) {
 		if err != nil {
 			t.Fatalf("an issue reported under a second name: %v", err)
 		}
-		if !applied.Unchanged() {
+		if !changedNothing(applied) {
 			t.Errorf("the same issue under a second name wrote %+v", applied)
 		}
 
@@ -140,8 +140,8 @@ func TestWhatKindOfFlawAnIssueIsIsAddedToAndNeverTakenAway(t *testing.T) {
 			t.Helper()
 			var rows []string
 			if err := f.db.DB.NewSelect().TableExpr("\"vulnerability_weakness\" AS \"vw\"").
-				Join("JOIN \"vulnerability\" AS \"v\" ON v.id = vw.vulnerability_id").
-				ColumnExpr("vw.cwe").Where("v.identifier = ?", "CVE-2026-1").
+				Join(`JOIN "vulnerability" AS "v" ON "v"."id" = "vw"."vulnerability_id"`).
+				ColumnExpr(`"vw"."cwe"`).Where(`"v"."identifier" = ?`, "CVE-2026-1").
 				Order("vw.cwe").Scan(ctx, &rows); err != nil {
 				t.Fatal(err)
 			}

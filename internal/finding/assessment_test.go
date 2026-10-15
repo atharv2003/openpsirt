@@ -303,7 +303,7 @@ func TestAnApproverIsToldWhatAgreeingTakesOffTheList(t *testing.T) {
 	each(t, func(t *testing.T, f *fixture) {
 		ctx := t.Context()
 		settings := setting.NewStore(f.db.DB)
-		if err := settings.Set(ctx, setting.TriageFloor, "medium"); err != nil {
+		if _, _, err := settings.Change(ctx, setting.TriageFloor, "medium"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -376,7 +376,7 @@ func TestWhatAgreeingWouldDoCountsOnlyWhatTheReaderMaySee(t *testing.T) {
 	// undisclosed work.
 	each(t, func(t *testing.T, f *fixture) {
 		ctx := t.Context()
-		if err := setting.NewStore(f.db.DB).Set(ctx, setting.TriageFloor, "medium"); err != nil {
+		if _, _, err := setting.NewStore(f.db.DB).Change(ctx, setting.TriageFloor, "medium"); err != nil {
 			t.Fatal(err)
 		}
 		f.shipped(t, twoConsumers())
@@ -391,8 +391,8 @@ func TestWhatAgreeingWouldDoCountsOnlyWhatTheReaderMaySee(t *testing.T) {
 		// could only fail by returning something it should not.
 		one := f.open(t)[0]
 		if _, err := f.db.DB.NewUpdate().Model((*finding.Finding)(nil)).
-			Set("visibility = ?", access.Private).
-			Where("id = ?", one.ID).Exec(ctx); err != nil {
+			Set(`"visibility" = ?`, access.Private).
+			Where(`"id" = ?`, one.ID).Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
 
@@ -426,7 +426,7 @@ func TestAgreeingIsMeasuredOnlyInsideTheRatingsOwnProduct(t *testing.T) {
 	each(t, func(t *testing.T, f *fixture) {
 		ctx := t.Context()
 		products := catalog.NewStore(f.db.DB)
-		if err := setting.NewStore(f.db.DB).Set(ctx, setting.TriageFloor, "medium"); err != nil {
+		if _, _, err := setting.NewStore(f.db.DB).Change(ctx, setting.TriageFloor, "medium"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -943,7 +943,7 @@ func TestAnAgreementLosingToAWithdrawalDoesNotResurrectTheClaim(t *testing.T) {
 		}
 		var state string
 		if err := f.db.DB.NewSelect().Table("assessment").Column("state").
-			Where("id = ?", claim.ID).Scan(t.Context(), &state); err != nil {
+			Where(`"id" = ?`, claim.ID).Scan(t.Context(), &state); err != nil {
 			t.Fatal(err)
 		}
 		if state != string(finding.AssessmentWithdrawn) {
@@ -1011,7 +1011,7 @@ func TestARatingIsListedByWhatItsOwnIssueReachesAndNotByAnotherIssue(t *testing.
 func (f *fixture) pageOfRatings(t *testing.T) (access.Subject, []int64) {
 	t.Helper()
 	ctx := t.Context()
-	if err := setting.NewStore(f.db.DB).Set(ctx, setting.TriageFloor, "medium"); err != nil {
+	if _, _, err := setting.NewStore(f.db.DB).Change(ctx, setting.TriageFloor, "medium"); err != nil {
 		t.Fatal(err)
 	}
 	f.shipped(t, twoConsumers())
@@ -1106,7 +1106,7 @@ func TestReclockingLeavesATagAndARetiredReleaseOffTheClock(t *testing.T) {
 		retired := f.anotherBranch(t, "release-23")
 		var stream int64
 		if err := f.db.DB.NewSelect().TableExpr(`"target"`).Column("stream_id").
-			Where("id = ?", retired).Scan(ctx, &stream); err != nil {
+			Where(`"id" = ?`, retired).Scan(ctx, &stream); err != nil {
 			t.Fatal(err)
 		}
 		yesterday := time.Now().UTC().AddDate(0, 0, -1)

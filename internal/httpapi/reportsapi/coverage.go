@@ -127,14 +127,7 @@ func registerCoverage(api huma.API, in core.Deps) {
 		out.Body.Quiet, out.Body.Never = counted.quiet, counted.never
 		out.Body.Unsupported, out.Body.Retired = counted.unsupported, counted.retired
 		out.Body.Scanned = counted.scanned
-		if input.Offset < len(rows) {
-			rows = rows[input.Offset:]
-		} else {
-			rows = nil
-		}
-		if len(rows) > input.Limit {
-			rows = rows[:input.Limit]
-		}
+		rows = core.Window(rows, input.Limit, input.Offset)
 		out.Body.Items = make([]CoverageBody, 0, len(rows))
 		for _, row := range rows {
 			body := CoverageBody{
@@ -168,9 +161,6 @@ func scanningRows(ctx context.Context, in core.Deps, q core.ScopeQuery) ([]inges
 	subject, err := core.Reading(ctx)
 	if err != nil {
 		return nil, 0, err
-	}
-	if in.DB == nil {
-		return nil, 0, core.NoDatabase(in.Logger)
 	}
 	scope, err := core.Scoped(ctx, in, subject, q)
 	if err != nil {
@@ -235,12 +225,9 @@ func registerCoverageExport(api huma.API, in core.Deps) {
 				"quiet_days", "quiet", "out_of_support", "retired",
 			},
 			Rows: func(_ context.Context, limit, offset int) ([][]string, error) {
-				if offset >= len(rows) {
+				page := core.Window(rows, limit, offset)
+				if len(page) == 0 {
 					return nil, nil
-				}
-				page := rows[offset:]
-				if len(page) > limit {
-					page = page[:limit]
 				}
 				written := make([][]string, 0, len(page))
 				for _, row := range page {

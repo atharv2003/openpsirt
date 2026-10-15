@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	world "github.com/nexthop-ai/openpsirt/internal/dbtest/fixture"
+
 	"github.com/nexthop-ai/openpsirt/internal/access"
 	"github.com/nexthop-ai/openpsirt/internal/finding"
 	"github.com/nexthop-ai/openpsirt/internal/graph"
@@ -159,7 +161,7 @@ func TestASuppliersStatementClosesTheFindingInsideItsProductAndNoOther(t *testin
 		}
 
 		again, _ := f.reported(t, found(inside, zlib))
-		if !again.Unchanged() {
+		if !changedNothing(again) {
 			t.Errorf("re-scanning wrote %+v", again)
 		}
 	})
@@ -367,11 +369,11 @@ func TestAPlaceSomebodyMarkedAffectedStaysOpen(t *testing.T) {
 		}
 		var issueID int64
 		if err := f.db.DB.NewSelect().TableExpr(`"vulnerability" AS "v"`).Column("v.id").
-			Where("v.identifier = ?", inside).Scan(ctx, &issueID); err != nil {
+			Where(`"v"."identifier" = ?`, inside).Scan(ctx, &issueID); err != nil {
 			t.Fatal(err)
 		}
 		row := map[string]any{
-			"claim_id":   claimSaying(t, f.db, somebody.ID, finding.AffectedOutcome),
+			"claim_id":   claimSaying(t, f.db, somebody.ID, finding.OutcomeAffected),
 			"product_id": f.productID, "vulnerability_id": issueID,
 			"place_identity": finding.PlaceIdentity(zlib.Name, acmeY.Name), "visibility": "public",
 			"state": "proposed", "needs_approval": false, "proposed_by": somebody.ID,
@@ -399,7 +401,7 @@ func TestAStatementTheBuildsOwnPatchAlreadyAnswersClosesNothing(t *testing.T) {
 	// The build's word about its own code is asked first.
 	each(t, func(t *testing.T, f *fixture) {
 		f.shipped(t, beside(acmeY))
-		if _, err := f.store.RecordClaims(t.Context(), f.target, f.lastScan, []sbom.Suppression{{
+		if _, err := world.RecordClaims(t.Context(), f.db, f.target, f.lastScan, []sbom.Suppression{{
 			Vulnerability: inside, Status: sbom.AlreadyFixed, Origin: sbom.FromStatement,
 			Targets: []sbom.Target{{Purl: zlib.Purl}},
 		}}, everyOrigin); err != nil {
@@ -474,7 +476,7 @@ func TestAStatementAboutAComponentInsideAProductIsEvidenceOnlyBeneathIt(t *testi
 			}
 			var componentID int64
 			if err := f.db.DB.NewSelect().TableExpr(`"component" AS "c"`).Column("c.id").
-				Where("c.purl = ?", zlib.Purl).Scan(ctx, &componentID); err != nil {
+				Where(`"c"."purl" = ?`, zlib.Purl).Scan(ctx, &componentID); err != nil {
 				t.Fatal(err)
 			}
 			got, err := f.store.SaidAbout(ctx, who, f.productID, interned[issue],
@@ -619,7 +621,7 @@ func TestAStatementAboutAPlatformNothingHereShipsIsEvidenceByPackage(t *testing.
 		}
 		var componentID int64
 		if err := f.db.DB.NewSelect().TableExpr(`"component" AS "c"`).Column("c.id").
-			Where("c.purl = ?", zlib.Purl).Scan(ctx, &componentID); err != nil {
+			Where(`"c"."purl" = ?`, zlib.Purl).Scan(ctx, &componentID); err != nil {
 			t.Fatal(err)
 		}
 		said, err := f.store.SaidAbout(ctx, who, f.productID, interned[inside],
@@ -769,7 +771,7 @@ func TestAStatementAboutOneReleaseOfTheProductIsEvidenceOnAnother(t *testing.T) 
 		}
 		var componentID int64
 		if err := f.db.DB.NewSelect().TableExpr(`"component" AS "c"`).Column("c.id").
-			Where("c.purl = ?", zlib.Purl).Scan(ctx, &componentID); err != nil {
+			Where(`"c"."purl" = ?`, zlib.Purl).Scan(ctx, &componentID); err != nil {
 			t.Fatal(err)
 		}
 		said, err := f.store.SaidAbout(ctx, f.planner(t, access.PublicTriage), f.productID,
@@ -848,12 +850,11 @@ func TestRescanningADisclaimedBuildTouchesNoRow(t *testing.T) {
 		f.shipped(t, beside(acmeY))
 		f.acmeSays(t)
 		f.reported(t, found(inside, zlib))
-		before := placedAt(t, f, f.every(t))["zlib under acme-y"]
+		asked := &matchedStatements{}
+		f.db.AddQueryHook(asked)
 		f.reported(t, found(inside, zlib))
-		after := placedAt(t, f, f.every(t))["zlib under acme-y"]
-		if !after.LastChangedAt.Equal(before.LastChangedAt) {
-			t.Errorf("a rescan rewrote the closed row: changed %v, was %v",
-				after.LastChangedAt, before.LastChangedAt)
+		if count, matched := asked.matching(`UPDATE "finding" AS "f" SET "stated_by" = `); count != 0 {
+			t.Errorf("a rescan rewrote the closed row: %d statements matching %d rows", count, matched)
 		}
 	})
 }
@@ -941,7 +942,7 @@ func TestARevisionRepeatingAClaimKeepsItsRow(t *testing.T) {
 			t.Errorf("the revision recorded %d and set aside %d, want 2 and none", recorded, superseded)
 		}
 		var kept finding.Statement
-		if err := f.db.DB.NewSelect().Model(&kept).Where("ss.id = ?", first).Scan(ctx); err != nil {
+		if err := f.db.DB.NewSelect().Model(&kept).Where(`"ss"."id" = ?`, first).Scan(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if kept.Superseded != nil || kept.Digest != "sha256:second" {
@@ -968,8 +969,8 @@ func TestNoDeadlineComesBackToAPlaceTheSupplierAnswers(t *testing.T) {
 		answered("the scan")
 
 		issue := f.issueID(t, inside)
-		if _, err := f.db.DB.NewUpdate().Table("vulnerability").Set("exploited = ?", true).
-			Where("id = ?", issue).Exec(ctx); err != nil {
+		if _, err := f.db.DB.NewUpdate().Table("vulnerability").Set(`"exploited" = ?`, true).
+			Where(`"id" = ?`, issue).Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if err := finding.Reranked(ctx, f.db.DB, []int64{issue}, time.Now().UTC(), 0); err != nil {
@@ -1003,7 +1004,7 @@ func TestEveryOtherClosureTakesTheSuppliersAnswerOffThePlace(t *testing.T) {
 			f.reported(t, r)
 		}},
 		{"the build patches it", func(t *testing.T, f *fixture) {
-			if _, err := f.store.RecordClaims(t.Context(), f.target, f.lastScan, []sbom.Suppression{{
+			if _, err := world.RecordClaims(t.Context(), f.db, f.target, f.lastScan, []sbom.Suppression{{
 				Vulnerability: inside, Status: sbom.AlreadyFixed, Origin: sbom.FromStatement,
 				Targets: []sbom.Target{{Purl: zlib.Purl}},
 			}}, everyOrigin); err != nil {
@@ -1088,7 +1089,7 @@ func TestAClaimMovedToAnotherReleaseOfTheProductIsSetAside(t *testing.T) {
 			t.Fatalf("adding 4.10 set aside %d: %v", superseded, err)
 		}
 		var kept finding.Statement
-		if err := f.db.DB.NewSelect().Model(&kept).Where("ss.id = ?", first).Scan(ctx); err != nil {
+		if err := f.db.DB.NewSelect().Model(&kept).Where(`"ss"."id" = ?`, first).Scan(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if kept.Superseded != nil || kept.WithinAbout != "4.9" {
@@ -1101,7 +1102,7 @@ func TestAClaimMovedToAnotherReleaseOfTheProductIsSetAside(t *testing.T) {
 			[]finding.Statement{at("4.10"), at("4.11")}); err != nil || superseded != 1 {
 			t.Fatalf("moving 4.9 to 4.11 set aside %d: %v", superseded, err)
 		}
-		if err := f.db.DB.NewSelect().Model(&kept).Where("ss.id = ?", first).Scan(ctx); err != nil {
+		if err := f.db.DB.NewSelect().Model(&kept).Where(`"ss"."id" = ?`, first).Scan(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if kept.Superseded == nil || kept.WithinAbout != "4.9" {

@@ -153,10 +153,6 @@ func complete(w http.ResponseWriter, r *http.Request, in core.Deps) {
 		return
 	}
 
-	if in.DB == nil {
-		refuseSignIn(w, in)
-		return
-	}
 	rights := access.NewStore(in.DB.DB)
 
 	// Authenticating is not being authorized. The question asked here follows
@@ -376,9 +372,6 @@ func openPending(ctx context.Context, in core.Deps, value string) ([]byte, error
 // whichever answers the callback, and a key per process would refuse half of
 // them for no reason a person could act on.
 func signingKey(ctx context.Context, in core.Deps) ([]byte, error) {
-	if in.DB == nil {
-		return nil, errors.New("no database, so a sign-in cannot be signed")
-	}
 	settings := setting.NewStore(in.DB.DB)
 	held, found, err := settings.Get(ctx, setting.SignInKey)
 	if err != nil {
@@ -440,9 +433,10 @@ type inProgress struct {
 // domain vouch for somebody else's page, and it is the classic bug in exactly
 // this flow. So the address is a path here or it is discarded:
 //
-//   - it starts with a single "/", so no scheme and no host;
-//   - it does not start with "//" or "/", which browsers read as
-//     protocol-relative and would send the browser to another host;
+//   - it starts with "/", so no scheme and no host;
+//   - it does not start with two slashes, or with a slash and a backslash,
+//     which browsers read as protocol-relative and would send the browser to
+//     another host;
 //   - it parses, and carries no scheme or host of its own.
 //
 // Anything else becomes the home page. Refusing to sign somebody in over it
@@ -494,11 +488,7 @@ func wentWrongHere(w http.ResponseWriter, in core.Deps, what string, err error) 
 // seen from the other side. Written twice they drift, and the pair is only
 // meaningful while they agree.
 func sessionWindow(ctx context.Context, in core.Deps) (time.Duration, error) {
-	var settings *setting.Store
-	if in.DB != nil {
-		settings = setting.NewStore(in.DB.DB)
-	}
-	return SessionWindow(ctx, settings, in.SessionLifetime)
+	return SessionWindow(ctx, setting.NewStore(in.DB.DB), in.SessionLifetime)
 }
 
 // SessionWindow is sessionWindow for a caller holding the pieces rather than

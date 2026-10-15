@@ -15,6 +15,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/nexthop-ai/openpsirt/internal/catalog"
+	"github.com/nexthop-ai/openpsirt/internal/dbtest/fixture"
 	"github.com/nexthop-ai/openpsirt/internal/finding"
 	"github.com/nexthop-ai/openpsirt/internal/graph"
 	"github.com/nexthop-ai/openpsirt/internal/ingest"
@@ -34,12 +35,12 @@ func (f *runFixture) scheduling(t *testing.T, replica string) *scanner.Schedule 
 func (f *runFixture) queued(t *testing.T) int {
 	t.Helper()
 	n, err := f.db.NewSelect().Model((*queue.Job)(nil)).
-		Where("kind = ?", queue.Scan).
-		Where("reference = ?", strconv.FormatInt(f.target, 10)).
+		Where(`"kind" = ?`, queue.Scan).
+		Where(`"reference" = ?`, strconv.FormatInt(f.target, 10)).
 		// Wrapped, because two arguments to one placeholder binds the first
 		// and drops the second: this counted pending work alone, and every
 		// assertion built on it read a running job as an absent one.
-		Where("state IN (?)", bun.List([]queue.State{queue.Pending, queue.Running})).
+		Where(`"state" IN (?)`, bun.List([]queue.State{queue.Pending, queue.Running})).
 		Count(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +84,7 @@ func (f *runFixture) withInventory(t *testing.T, target int64, hash string) {
 	if err != nil || outcome != ingest.Accept {
 		t.Fatalf("record scan: %v %v", outcome, err)
 	}
-	if _, err := graph.NewStore(f.db.DB).Apply(ctx, target, scan.ID, graph.Snapshot{
+	if _, err := fixture.ApplyGraph(ctx, f.db.DB, target, scan.ID, graph.Snapshot{
 		Root: root, Components: []graph.Described{swss, libnl},
 		Dependencies: []graph.Dependency{
 			{Parent: root, Child: swss}, {Parent: swss, Child: libnl},
@@ -130,7 +131,7 @@ func TestABuildScannedRecentlyIsNotAskedForAgain(t *testing.T) {
 
 		// And it is asked for once the interval has passed, so the check above
 		// is an interval rather than a refusal to ask at all.
-		if err := setting.NewStore(f.db.DB).Set(ctx, setting.ScanEvery, "1ns"); err != nil {
+		if _, _, err := setting.NewStore(f.db.DB).Change(ctx, setting.ScanEvery, "1ns"); err != nil {
 			t.Fatal(err)
 		}
 		asked, err = f.scheduling(t, "one").Once(ctx)
@@ -182,8 +183,8 @@ func TestABuildAlreadyOnTheQueueIsNotAskedForTwice(t *testing.T) {
 		queuedFor := func(target int64) int {
 			t.Helper()
 			n, err := f.db.NewSelect().Model((*queue.Job)(nil)).
-				Where("kind = ?", queue.Scan).
-				Where("reference = ?", strconv.FormatInt(target, 10)).
+				Where(`"kind" = ?`, queue.Scan).
+				Where(`"reference" = ?`, strconv.FormatInt(target, 10)).
 				Count(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -216,8 +217,8 @@ func TestABuildWithNoInventoryIsNotAskedFor(t *testing.T) {
 			t.Fatalf("asked for %d, want only the build that holds an inventory", asked)
 		}
 		n, err := f.db.NewSelect().Model((*queue.Job)(nil)).
-			Where("kind = ?", queue.Scan).
-			Where("reference = ?", strconv.FormatInt(empty, 10)).
+			Where(`"kind" = ?`, queue.Scan).
+			Where(`"reference" = ?`, strconv.FormatInt(empty, 10)).
 			Count(t.Context())
 		if err != nil {
 			t.Fatal(err)
@@ -282,7 +283,7 @@ func TestAReplicaThatStopsDoesNotHoldTheReScansForADay(t *testing.T) {
 			t.Fatal(err)
 		}
 		var held queue.Lease
-		if err := f.db.NewSelect().Model(&held).Where("name = ?", scanner.ScheduleLease).
+		if err := f.db.NewSelect().Model(&held).Where(`"name" = ?`, scanner.ScheduleLease).
 			Scan(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -413,7 +414,7 @@ func TestTheScheduleAsksOnItsOwnAndReturnsWhenCancelled(t *testing.T) {
 
 		waitFor(t, func() bool {
 			n, err := f.db.DB.NewSelect().Model((*queue.Job)(nil)).
-				Where("kind = ?", queue.Scan).Count(ctx)
+				Where(`"kind" = ?`, queue.Scan).Count(ctx)
 			return err == nil && n > 0
 		}, "the schedule to ask for a scan on its own")
 

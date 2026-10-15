@@ -646,9 +646,9 @@ func TestAWrongMatchPublishesAsNotAffectedAndStaysThereWhenTheVersionMoves(t *te
 		// judgment about risk would be gone from this document; this one is
 		// a claim about the match, and the match is as wrong as it was.
 		if _, err := r.DB.DB.NewUpdate().Table("component").
-			Set("version = ?", "5.11").
-			Set("upstream_version = ?", "5.11").
-			Where("name = ?", "linux-image").Exec(t.Context()); err != nil {
+			Set(`"version" = ?`, "5.11").
+			Set(`"upstream_version" = ?`, "5.11").
+			Where(`"name" = ?`, "linux-image").Exec(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		var after struct {
@@ -755,11 +755,11 @@ func TestAVEXDocumentSaysNothingFixedWhileAPlaceIsOpen(t *testing.T) {
 		r.PatchedRows(t, `INSERT INTO "finding" ("target_id", "kind", "vulnerability_id",
 				"visibility", "component_id", "place_identity", "urgency",
 				"urgency_exploited", "urgency_exploited_here", "urgency_shipped",
-				"opened_at", "last_changed_at")
+				"opened_at")
 			SELECT "target_id", "kind", "vulnerability_id", "visibility",
 				(SELECT "id" FROM "component" WHERE "identity" = '`+hash+`'),
 				"place_identity", "urgency", "urgency_exploited", "urgency_exploited_here",
-				"urgency_shipped", "opened_at", "last_changed_at"
+				"urgency_shipped", "opened_at"
 			FROM "finding" WHERE "closed_because" = 'patched'`)
 		if fixed := r.FixedIn(t); len(fixed) != 0 {
 			t.Errorf("an issue open at another version of the component is said as %v fixed", fixed)

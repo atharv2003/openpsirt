@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -53,9 +52,6 @@ func registerVEX(api huma.API, in core.Deps) {
 			if err != nil {
 				return nil, err
 			}
-			if in.DB == nil {
-				return nil, core.NoDatabase(in.Logger)
-			}
 			doc, err := vex.NewStoreCarrying(in.DB.DB, in.VexCeiling).For(ctx, subject, in.Publisher,
 				input.Product, input.Stream, input.Variant, input.Undisclosed, input.Kind.kind())
 			if err != nil {
@@ -93,9 +89,6 @@ func registerVEX(api huma.API, in core.Deps) {
 			if err != nil {
 				return nil, err
 			}
-			if in.DB == nil {
-				return nil, core.NoDatabase(in.Logger)
-			}
 			store := vex.NewStoreCarrying(in.DB.DB, in.VexCeiling)
 			gone, err := store.Issuances(ctx, subject,
 				input.Product, input.Stream, input.Variant, input.Kind.kind())
@@ -119,7 +112,7 @@ func registerVEX(api huma.API, in core.Deps) {
 			for _, one := range gone {
 				out.Body.Items = append(out.Body.Items, VEXIssuanceBody{
 					Version: one.Ordinal, Digest: one.Digest, IssuedBy: one.IssuedBy,
-					IssuedAt: one.IssuedAt.UTC().Format(time.RFC3339),
+					IssuedAt: core.Stamp(one.IssuedAt),
 				})
 			}
 			return out, nil
@@ -160,9 +153,6 @@ func registerVEX(api huma.API, in core.Deps) {
 			if err != nil {
 				return nil, err
 			}
-			if in.DB == nil {
-				return nil, core.NoDatabase(in.Logger)
-			}
 			recorded, err := vex.NewStoreCarrying(in.DB.DB, in.VexCeiling).Issued(ctx, subject, in.Publisher,
 				input.Product, input.Stream, input.Variant, input.Kind.kind())
 			if err != nil {
@@ -175,7 +165,7 @@ func registerVEX(api huma.API, in core.Deps) {
 				VEXIssuanceBody: VEXIssuanceBody{
 					Version: recorded.Ordinal, Digest: recorded.Digest,
 					IssuedBy: subject.Identity,
-					IssuedAt: recorded.IssuedAt.UTC().Format(time.RFC3339),
+					IssuedAt: core.Stamp(recorded.IssuedAt),
 				},
 				Document: json.RawMessage(recorded.Document),
 			}}, nil
@@ -203,9 +193,6 @@ func registerVEX(api huma.API, in core.Deps) {
 			subject, err := core.Reading(ctx)
 			if err != nil {
 				return nil, err
-			}
-			if in.DB == nil {
-				return nil, core.NoDatabase(in.Logger)
 			}
 			sent, err := vex.NewStoreCarrying(in.DB.DB, in.VexCeiling).Sent(ctx, subject,
 				input.Product, input.Stream, input.Variant, input.Kind.kind(), input.Version)

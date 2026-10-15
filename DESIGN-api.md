@@ -202,11 +202,11 @@ A read that could not be made is a fault rather than a 404. The split is one
 helper rather than a judgment made per route: made per route, it is made
 differently per route.
 
-A process with no database answers with one sentence. Every handler guards
-against it, because a nil pointer inside one is worse than a refusal, and each
-guard writing its own wording reads as that many different conditions. It says
-nothing about what the caller asked for, because the caller did not cause it
-and cannot fix it.
+A process with no database or no queue answers every request but the probes
+with one sentence, a 500 written by the router before a caller is resolved. No
+handler guards against either, because no handler is reached without both. The
+sentence says nothing about what the caller asked for, because the caller did
+not cause it and cannot fix it.
 
 ## Paging
 
@@ -431,8 +431,14 @@ renderer's to apply. The rules are in `DESIGN-text.md`.
 A moment is stated in UTC, in RFC 3339, in a response and in its file alike. A
 driver hands back a time in the process's own zone, so a moment is converted
 before it is written rather than formatted behind a literal `Z`. A day is the
-UTC day of its moment, in a response, a report and an export alike, and a field
-answered as a time is converted to UTC before it is answered.
+UTC day of its moment, in a response, a report and an export alike. No API body
+carries a time value for the encoder to write: a test refuses one.
+
+A moment that is not known is left out of a response. A field that can be
+without one is optional, and a missing time is never written as the year 1 or
+as an empty string. Every moment an API body states goes through one renderer,
+which holds both rules. A published document states its dates as its format
+requires, in UTC.
 
 ## Addresses and labels
 

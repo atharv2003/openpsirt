@@ -82,17 +82,17 @@ func (s *Store) CommitWithin(ctx context.Context, db bun.IDB, subject access.Sub
 	// two paths that drift. A commitment another claim argued for is that
 	// claim's to move, so it is kept: its decisions still stand on it.
 	remove := db.NewDelete().Model((*Upgrade)(nil)).
-		Where("fold_key = ?", fold).
+		Where(`"fold_key" = ?`, fold).
 		Where(inThisProduct, productID)
 	if claimID != nil {
 		remove = remove.WhereGroup(" AND ", func(q *bun.DeleteQuery) *bun.DeleteQuery {
-			return q.Where("claim_id IS NULL").WhereOr("claim_id = ?", *claimID)
+			return q.Where(`"claim_id" IS NULL`).WhereOr(`"claim_id" = ?`, *claimID)
 		})
 	} else {
-		remove = remove.Where("claim_id IS NULL")
+		remove = remove.Where(`"claim_id" IS NULL`)
 	}
 	if len(wanted) > 0 {
-		remove = remove.Where("target_id NOT IN (?)", bun.List(wanted))
+		remove = remove.Where(`"target_id" NOT IN (?)`, bun.List(wanted))
 	}
 	if _, err := remove.Exec(ctx); err != nil {
 		return 0, fmt.Errorf("withdraw what is no longer committed: %w", err)
@@ -107,9 +107,9 @@ func (s *Store) CommitWithin(ctx context.Context, db bun.IDB, subject access.Sub
 	var already []int64
 	if err := db.NewSelect().
 		TableExpr(`"upgrade" AS "ug"`).
-		ColumnExpr("ug.target_id").
-		Where("ug.fold_key = ?", fold).
-		Where(inThisProductAs("ug.target_id"), productID).
+		ColumnExpr(`"ug"."target_id"`).
+		Where(`"ug"."fold_key" = ?`, fold).
+		Where(inThisProductAs(`"ug"."target_id"`), productID).
 		Scan(ctx, &already); err != nil {
 		return 0, fmt.Errorf("read what is already committed: %w", err)
 	}
@@ -224,10 +224,11 @@ type Planned struct {
 	// By is the date the promise named, where a judgment promised one. Read
 	// from the commitment, which is the record a release plan is kept in.
 	By *time.Time
-	// HeldBy is the party carrying it, where one party carries all of what is
+	// HeldBy is the identity or team name of the party carrying it, and
+	// HeldByName what it is called, where one party carries all of what is
 	// still open under it. A bump split between two people is nobody's, and
 	// saying it is somebody's would hand them work that is half theirs.
-	HeldBy string
+	HeldBy, HeldByName string
 	// State is where this stands, derived from the scans and the date and set
 	// by nobody.
 	State UpgradeState
@@ -258,7 +259,7 @@ func (s *Store) PendingUpgrades(ctx context.Context, subject access.Subject,
 
 	var rows []Upgrade
 	if err := s.db.NewSelect().Model(&rows).
-		Where("target_id = ?", targetID).Order("declared_at ASC", "id ASC").
+		Where(`"target_id" = ?`, targetID).Order("declared_at ASC", "id ASC").
 		Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read what this build is waiting on: %w", err)
 	}
@@ -282,13 +283,13 @@ func (s *Store) PendingUpgrades(ctx context.Context, subject access.Subject,
 	}
 	if err := s.db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "component" AS "c" ON c.id = f.component_id`).
+		Join(`JOIN "component" AS "c" ON "c"."id" = "f"."component_id"`).
 		ColumnExpr(FoldedOn+` AS "fold"`).
-		ColumnExpr(`COUNT(DISTINCT f.vulnerability_id) AS "issues"`).
+		ColumnExpr(`COUNT(DISTINCT "f"."vulnerability_id") AS "issues"`).
 		ColumnExpr(`COUNT(*) AS "places"`).
-		Where("f.target_id = ?", targetID).
-		Where("f.closed_at IS NULL").
-		Where("f.visibility IN (?)", bun.List(visible)).
+		Where(`"f"."target_id" = ?`, targetID).
+		Where(`"f"."closed_at" IS NULL`).
+		Where(`"f"."visibility" IN (?)`, bun.List(visible)).
 		Where(FoldedOn+" IN (?)", bun.List(folds)).
 		GroupExpr(FoldedOn).
 		Scan(ctx, &open); err != nil {
@@ -339,7 +340,7 @@ func (s *Store) movedTo(ctx context.Context, db bun.IDB, fold string, targetID i
 
 	var standing Upgrade
 	if err := db.NewSelect().Model(&standing).
-		Where("fold_key = ?", fold).Where("target_id = ?", targetID).
+		Where(`"fold_key" = ?`, fold).Where(`"target_id" = ?`, targetID).
 		Scan(ctx); err != nil {
 		return fmt.Errorf("read what is already committed: %w", err)
 	}
@@ -356,10 +357,10 @@ func (s *Store) movedTo(ctx context.Context, db bun.IDB, fold string, targetID i
 			standing.ToVersion, *standing.ClaimID)
 	}
 	if _, err := db.NewUpdate().Model((*Upgrade)(nil)).
-		Set("to_version = ?", to).
-		Set("committed_to = ?", by).
-		Set("claim_id = ?", claimID).
-		Where("fold_key = ?", fold).Where("target_id = ?", targetID).Exec(ctx); err != nil {
+		Set(`"to_version" = ?`, to).
+		Set(`"committed_to" = ?`, by).
+		Set(`"claim_id" = ?`, claimID).
+		Where(`"fold_key" = ?`, fold).Where(`"target_id" = ?`, targetID).Exec(ctx); err != nil {
 		return fmt.Errorf("change what this release is moving to: %w", err)
 	}
 	return nil
@@ -382,15 +383,15 @@ func (s *Store) packagesIn(ctx context.Context, targetID int64,
 	}
 	if err := s.db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "component" AS "c" ON c.id = f.component_id`).
+		Join(`JOIN "component" AS "c" ON "c"."id" = "f"."component_id"`).
 		ColumnExpr(FoldedOn+` AS "fold"`).
 		ColumnExpr(PerFold(SourceName)+` AS "upstream"`).
-		ColumnExpr(`c.name AS "name"`).
-		Where("f.target_id = ?", targetID).
-		Where("f.visibility IN (?)", bun.List(visible)).
+		ColumnExpr(`"c"."name" AS "name"`).
+		Where(`"f"."target_id" = ?`, targetID).
+		Where(`"f"."visibility" IN (?)`, bun.List(visible)).
 		Where(FoldedOn+" IN (?)", bun.List(folds)).
-		GroupExpr(FoldedOn+", c.name").
-		OrderExpr("c.name").
+		GroupExpr(FoldedOn+`, "c"."name"`).
+		OrderExpr(`"c"."name"`).
 		Scan(ctx, &rows); err != nil {
 		return nil, fmt.Errorf("read which packages a bump moves: %w", err)
 	}
@@ -424,22 +425,22 @@ func (s *Store) heldPerFold(ctx context.Context, targetID int64,
 	}
 	if err := s.db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "component" AS "c" ON c.id = f.component_id`).
+		Join(`JOIN "component" AS "c" ON "c"."id" = "f"."component_id"`).
 		ColumnExpr(FoldedOn+` AS "fold"`).
 		// The party rather than a name: the column holds a party, which may be
 		// a person or a team, and the name is looked up once for the few that
 		// come back rather than joined per row.
-		ColumnExpr(`MIN(f.assigned_to) AS "least_holder"`).
-		ColumnExpr(`MAX(f.assigned_to) AS "most_holder"`).
+		ColumnExpr(`MIN("f"."assigned_to") AS "least_holder"`).
+		ColumnExpr(`MAX("f"."assigned_to") AS "most_holder"`).
 		// Two counts rather than a conditional sum: that sum comes back as a
 		// decimal on two of the four engines, and the cast that makes it an
 		// integer is spelled per engine. Counted, a group is wholly held when
 		// the count of holders is the count of rows.
 		ColumnExpr(`COUNT(*) AS "places"`).
-		ColumnExpr(`COUNT(f.assigned_to) AS "held"`).
-		Where("f.target_id = ?", targetID).
-		Where("f.closed_at IS NULL").
-		Where("f.visibility IN (?)", bun.List(visible)).
+		ColumnExpr(`COUNT("f"."assigned_to") AS "held"`).
+		Where(`"f"."target_id" = ?`, targetID).
+		Where(`"f"."closed_at" IS NULL`).
+		Where(`"f"."visibility" IN (?)`, bun.List(visible)).
 		Where(FoldedOn+" IN (?)", bun.List(folds)).
 		GroupExpr(FoldedOn).
 		Scan(ctx, &rows); err != nil {
@@ -467,13 +468,18 @@ func (s *Store) holders(ctx context.Context, planned []Planned, held map[string]
 	if len(parties) == 0 {
 		return nil
 	}
-	named, err := s.partiesNamed(ctx, parties)
+	ids := make([]int64, 0, len(parties))
+	for id := range parties {
+		ids = append(ids, id)
+	}
+	// A person or a team, named the way every other screen names a holder.
+	named, err := access.NewStore(s.db).WhoHolds(ctx, ids)
 	if err != nil {
 		return err
 	}
 	for i := range planned {
 		if who := held[planned[i].Fold].party; who != nil {
-			planned[i].HeldBy = named[*who]
+			planned[i].HeldBy, planned[i].HeldByName = named[*who].Address, named[*who].Name
 		}
 	}
 	return nil
@@ -500,53 +506,6 @@ func upgradeStanding(one Planned, now time.Time) UpgradeState {
 	return UpgradePlanned
 }
 
-// partiesNamed is what to call each of these parties: a person by the identity
-// they sign in as, a team by its name.
-//
-// Both, because the column holds a party and a team is a perfectly good holder
-// of work — a lookup that knew only people would report a team's upgrade as
-// held by nobody, which is the opposite of what it is.
-func (s *Store) partiesNamed(ctx context.Context, parties map[int64]bool) (map[int64]string, error) {
-	ids := make([]int64, 0, len(parties))
-	for id := range parties {
-		ids = append(ids, id)
-	}
-	var rows []struct {
-		PartyID int64  `bun:"party_id"`
-		Name    string `bun:"name"`
-	}
-	err := s.db.NewSelect().
-		TableExpr(`"person" AS "p"`).
-		ColumnExpr(`p.party_id AS "party_id"`).
-		ColumnExpr(`p.identity AS "name"`).
-		Where("p.party_id IN (?)", bun.List(ids)).
-		Scan(ctx, &rows)
-	if err != nil {
-		return nil, fmt.Errorf("read who is carrying it: %w", err)
-	}
-	named := make(map[int64]string, len(ids))
-	for _, row := range rows {
-		named[row.PartyID] = row.Name
-	}
-	var teams []struct {
-		PartyID int64  `bun:"party_id"`
-		Name    string `bun:"name"`
-	}
-	err = s.db.NewSelect().
-		TableExpr(`"team" AS "t"`).
-		ColumnExpr(`t.party_id AS "party_id"`).
-		ColumnExpr(`t.name AS "name"`).
-		Where("t.party_id IN (?)", bun.List(ids)).
-		Scan(ctx, &teams)
-	if err != nil {
-		return nil, fmt.Errorf("read which team is carrying it: %w", err)
-	}
-	for _, row := range teams {
-		named[row.PartyID] = row.Name
-	}
-	return named, nil
-}
-
 // foldOf reads what a component folds to, and the version it is at.
 //
 // Both come from the row rather than from the caller: the fold is written as a
@@ -559,9 +518,9 @@ func (s *Store) foldOf(ctx context.Context, db bun.IDB, componentID int64) (key,
 	}
 	err = db.NewSelect().
 		TableExpr(`"component" AS "c"`).
-		ColumnExpr(`c.fold_key AS "fold_key"`).
-		ColumnExpr(`COALESCE(NULLIF(c.upstream_version, ''), c.version, '') AS "from_version"`).
-		Where("c.id = ?", componentID).Scan(ctx, &row)
+		ColumnExpr(`"c"."fold_key" AS "fold_key"`).
+		ColumnExpr(ComponentUpstreamExpr+` AS "from_version"`).
+		Where(`"c"."id" = ?`, componentID).Scan(ctx, &row)
 	if err != nil {
 		return "", "", fmt.Errorf("read what that component folds to: %w", err)
 	}
@@ -617,11 +576,11 @@ func (s *Store) buildsOf(ctx context.Context, db bun.IDB, productID int64,
 	var here []int64
 	err := db.NewSelect().
 		TableExpr(`"target" AS "tg"`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		ColumnExpr("tg.id").
-		Where("st.product_id = ?", productID).
-		Where("tg.id IN (?)", bun.List(builds)).
-		OrderExpr("tg.id").
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		ColumnExpr(`"tg"."id"`).
+		Where(`"st"."product_id" = ?`, productID).
+		Where(`"tg"."id" IN (?)`, bun.List(builds)).
+		OrderExpr(`"tg"."id"`).
 		Scan(ctx, &here)
 	if err != nil {
 		return nil, fmt.Errorf("check the builds named are this product's: %w", err)
@@ -652,11 +611,11 @@ func (s *Store) retired(ctx context.Context, db bun.IDB, ids []int64) (map[int64
 	}
 	err = db.NewSelect().
 		TableExpr(`"target" AS "tg"`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		ColumnExpr(`tg.id AS "id"`).
-		ColumnExpr(`st.name AS "release"`).
-		Where("tg.id IN (?)", bun.List(ids)).
-		Where("tg.stream_id IN (?)", bun.List(past)).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		ColumnExpr(`"tg"."id" AS "id"`).
+		ColumnExpr(`"st"."name" AS "release"`).
+		Where(`"tg"."id" IN (?)`, bun.List(ids)).
+		Where(`"tg"."stream_id" IN (?)`, bun.List(past)).
 		Scan(ctx, &retired)
 	if err != nil {
 		return nil, fmt.Errorf("read which of these builds are out of support: %w", err)

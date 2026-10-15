@@ -38,11 +38,11 @@ func types(ctx context.Context) (*columnTypes, error) {
 // apply runs a migration's statements in order, naming the one that failed.
 //
 // It also makes a re-run resume rather than collide, on the two engines that
-// cannot roll one back. Every migration here is registered in the library's
-// transactional form and takes a transaction, and on MySQL and MariaDB that
-// transaction is decorative: both commit implicitly before and after every
-// data-definition statement. A failure at statement N leaves 1 to N-1
-// committed, the rollback removes nothing, and no version row is written — so
+// cannot roll one back. The baseline is registered in the library's
+// transactional form, and every migration after it opens a transaction of its
+// own. On MySQL and MariaDB a transaction is decorative: both commit
+// implicitly before and after every data-definition statement. A failure at
+// statement N leaves 1 to N-1 committed, the rollback removes nothing, and no version row is written — so
 // the next start runs the same migration from statement 1 and fails on "table
 // already exists". Nothing recovers from that on its own, and every
 // replacement process fails its startup probe in turn.
@@ -145,19 +145,17 @@ var (
 // Only what this can name for certain. A statement it does not recognize is
 // run, which is what every statement did before this existed.
 func alreadyMade(ctx context.Context, tx *sql.Tx, stmt string) (bool, error) {
+	const asking = "this was already created"
 	if m := createsTable.FindStringSubmatch(stmt); m != nil {
-		return exists(ctx, tx,
+		return exists(ctx, tx, asking,
 			`SELECT 1 FROM "information_schema"."TABLES"
 			 WHERE "TABLE_SCHEMA" = DATABASE() AND "TABLE_NAME" = ?`, m[1])
 	}
 	if m := createsIndex.FindStringSubmatch(stmt); m != nil {
-		return exists(ctx, tx,
-			`SELECT 1 FROM "information_schema"."STATISTICS"
-			 WHERE "TABLE_SCHEMA" = DATABASE() AND "TABLE_NAME" = ? AND "INDEX_NAME" = ?`,
-			m[2], m[1])
+		return exists(ctx, tx, asking, mysqlIndexProbe, m[2], m[1])
 	}
 	if m := addsColumn.FindStringSubmatch(stmt); m != nil {
-		return exists(ctx, tx,
+		return exists(ctx, tx, asking,
 			`SELECT 1 FROM "information_schema"."COLUMNS"
 			 WHERE "TABLE_SCHEMA" = DATABASE() AND "TABLE_NAME" = ? AND "COLUMN_NAME" = ?`,
 			m[1], m[2])
@@ -165,14 +163,26 @@ func alreadyMade(ctx context.Context, tx *sql.Tx, stmt string) (bool, error) {
 	return false, nil
 }
 
-func exists(ctx context.Context, tx *sql.Tx, query string, args ...any) (bool, error) {
+// mysqlIndexProbe asks MySQL or MariaDB whether a table holds an index of a
+// name: the table, then the index.
+const mysqlIndexProbe = `SELECT 1 FROM "information_schema"."STATISTICS"
+			WHERE "TABLE_SCHEMA" = DATABASE() AND "TABLE_NAME" = ? AND "INDEX_NAME" = ? LIMIT 1`
+
+// exists reports whether a query answers a row. Asking names the question in
+// an error.
+//
+// A transaction of the driver's own passes the query as it is written, and
+// one of bun's writes each placeholder the way the engine spells it.
+func exists(ctx context.Context, tx interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, asking, query string, args ...any) (bool, error) {
 	var probe int
 	err := tx.QueryRowContext(ctx, query, args...).Scan(&probe)
 	if database.IsNoRows(err) {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("ask whether this was already created: %w", err)
+		return false, fmt.Errorf("ask whether %s: %w", asking, err)
 	}
 	return true, nil
 }

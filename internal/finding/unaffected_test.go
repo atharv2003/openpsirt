@@ -81,7 +81,7 @@ func TestAFindingFirstSeenExcludedIsRecordedClosed(t *testing.T) {
 		if applied.Unaffected != 2 {
 			t.Errorf("unaffected %d, want 2", applied.Unaffected)
 		}
-		if applied.Unchanged() {
+		if changedNothing(applied) {
 			t.Error("a run that recorded two unaffected findings reads as having changed nothing")
 		}
 		for _, row := range f.every(t) {
@@ -98,7 +98,7 @@ func TestRescanningAnExcludedBuildWritesNothing(t *testing.T) {
 		f.shipped(t, twoConsumers())
 		f.reported(t, unaffectedBy(libnl, recordSays))
 		applied, _ := f.reported(t, unaffectedBy(libnl, recordSays))
-		if !applied.Unchanged() {
+		if !changedNothing(applied) {
 			t.Errorf("re-scanning an excluded build wrote %+v", applied)
 		}
 		if rows := f.every(t); len(rows) != 2 {
@@ -227,8 +227,8 @@ func TestAFindingTheRecordClosedMetAndMissedNoDeadline(t *testing.T) {
 		f.shipped(t, twoConsumers())
 		f.reported(t, found("CVE-2026-1", libnl))
 		if _, err := f.db.DB.NewUpdate().Model((*finding.Finding)(nil)).
-			Set("due_at = ?", time.Now().UTC().Add(-48*time.Hour)).
-			Where("target_id = ?", f.target).Exec(t.Context()); err != nil {
+			Set(`"due_at" = ?`, time.Now().UTC().Add(-48*time.Hour)).
+			Where(`"target_id" = ?`, f.target).Exec(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		f.reported(t, unaffectedBy(libnl, recordSays))

@@ -43,8 +43,8 @@ func (s *Store) moveWork(ctx context.Context, db bun.IDB, subject access.Subject
 
 	return s.moveWhere(ctx, db, subject, productID, to, dispatches,
 		func(q *bun.UpdateQuery) *bun.UpdateQuery {
-			return q.Where("vulnerability_id = ?", vulnerabilityID).
-				Where("component_id = ?", componentID)
+			return q.Where(`"vulnerability_id" = ?`, vulnerabilityID).
+				Where(`"component_id" = ?`, componentID)
 		})
 }
 
@@ -75,7 +75,7 @@ func (s *Store) moveWhere(ctx context.Context, db bun.IDB, subject access.Subjec
 		// beside it, which is how a person ends up holding half of
 		// what they think they hold.
 		Where(inThisProduct, productID).
-		Where("closed_at IS NULL"))
+		Where(`"closed_at" IS NULL`))
 
 	// Which rows this caller may move, asked here rather than beforehand so
 	// that the engine answers it at the moment of the write: there is no
@@ -101,20 +101,20 @@ func (s *Store) moveWhere(ctx context.Context, db bun.IDB, subject access.Subjec
 	read := bun.List(access.Visible(subject, productID))
 	update = update.WhereGroup(" AND ", func(q *bun.UpdateQuery) *bun.UpdateQuery {
 		if dispatches {
-			q = q.WhereOr("visibility IN (?)", triaged)
+			q = q.WhereOr(`"visibility" IN (?)`, triaged)
 		}
 		if selfward {
-			q = q.WhereOr(`((assigned_to IS NULL OR assigned_to IN (?))
-				AND (visibility IN (?) OR (visibility = ? AND assigned_to IN (?))))`,
+			q = q.WhereOr(`(("assigned_to" IS NULL OR "assigned_to" IN (?))
+				AND ("visibility" IN (?) OR ("visibility" = ? AND "assigned_to" IN (?))))`,
 				mine, read, access.Public, mine)
 		}
 		return q
 	})
 
 	if to == nil {
-		update = update.Set("assigned_to = ?", nil).Set("assigned_at = ?", nil)
+		update = update.Set(`"assigned_to" = ?`, nil).Set(`"assigned_at" = ?`, nil)
 	} else {
-		update = update.Set("assigned_to = ?", *to).Set("assigned_at = ?", now)
+		update = update.Set(`"assigned_to" = ?`, *to).Set(`"assigned_at" = ?`, now)
 	}
 
 	result, err := update.Exec(ctx)
@@ -137,6 +137,17 @@ func mayMove(subject access.Subject, productID int64, to *int64, dispatches bool
 				"and hand back your own", productID))
 	}
 	return nil
+}
+
+// mayHandOver refuses deciding who deals with findings in a product to a
+// subject who does not triage there, and answers whether they may dispatch:
+// put work on somebody else, or take what somebody else holds.
+func mayHandOver(subject access.Subject, productID int64) (dispatches bool, err error) {
+	if !subject.TriagesIn(productID) {
+		return false, access.Denied(fmt.Sprintf(
+			"decide who deals with findings in product %d", productID))
+	}
+	return subject.Holds(access.Assigner, productID), nil
 }
 
 // triagedIn is the visibilities this subject triages in one product.
@@ -164,11 +175,10 @@ func triagedIn(subject access.Subject, productID int64) []access.Visibility {
 func (s *Store) HandOverWithin(ctx context.Context, tx bun.IDB, subject access.Subject,
 	productID int64, work [][2]int64, to *int64) (int64, error) {
 
-	if !subject.TriagesIn(productID) {
-		return 0, access.Denied(fmt.Sprintf(
-			"decide who deals with findings in product %d", productID))
+	dispatches, err := mayHandOver(subject, productID)
+	if err != nil {
+		return 0, err
 	}
-	dispatches := subject.Holds(access.Assigner, productID)
 	var moved int64
 	for _, each := range work {
 		n, err := s.moveWork(ctx, tx, subject, productID, each[0], each[1], to,
@@ -243,15 +253,15 @@ func (s *Store) assign(ctx context.Context, subject access.Subject, targetID, vu
 	// otherwise need somebody's attention before anybody could start.
 	// Putting work on somebody else, or taking what they are holding, is a
 	// different act and asks for the right that names it.
-	if !subject.TriagesIn(productID) {
-		return 0, false, access.Denied(fmt.Sprintf("decide who deals with findings in product %d", productID))
-	}
-	// This caller's right to put work on somebody else, or to take what
-	// somebody else holds. Where they may not, the rule is carried into the
-	// write below rather than checked before it: a check and a write that are
-	// two statements are two moments, and a colleague's assignment landing
+	//
+	// Where the caller may not dispatch, the rule is carried into the write
+	// below rather than checked before it: a check and a write that are two
+	// statements are two moments, and a colleague's assignment landing
 	// between them is all it takes to reassign what the rule just refused.
-	dispatches := subject.Holds(access.Assigner, productID)
+	dispatches, err := mayHandOver(subject, productID)
+	if err != nil {
+		return 0, false, err
+	}
 	if err := mayMove(subject, productID, to, dispatches); err != nil {
 		return 0, false, err
 	}
@@ -289,12 +299,12 @@ func (s *Store) assign(ctx context.Context, subject access.Subject, targetID, vu
 			held, err := s.db.NewSelect().Model((*Finding)(nil)).
 				Column("id").
 				Where(inThisProduct, productID).
-				Where("vulnerability_id = ?", vulnerabilityID).
-				Where("component_id = ?", componentID).
-				Where("closed_at IS NULL").
-				Where("visibility IN (?)", bun.List(visible)).
-				Where("assigned_to IS NOT NULL").
-				Where("assigned_to NOT IN (?)", bun.List(subject.Mine())).
+				Where(`"vulnerability_id" = ?`, vulnerabilityID).
+				Where(`"component_id" = ?`, componentID).
+				Where(`"closed_at" IS NULL`).
+				Where(`"visibility" IN (?)`, bun.List(visible)).
+				Where(`"assigned_to" IS NOT NULL`).
+				Where(`"assigned_to" NOT IN (?)`, bun.List(subject.Mine())).
 				Exists(ctx)
 			if err != nil {
 				return 0, false, fmt.Errorf("read who is dealing with this: %w", err)
@@ -316,18 +326,37 @@ func (s *Store) assign(ctx context.Context, subject access.Subject, targetID, vu
 	// way, so it describes what actually moved. Any one row answers: they
 	// are one issue at one component in one build, and visibility belongs
 	// to the finding rather than to the place.
-	private, err := s.db.NewSelect().Model((*Finding)(nil)).
-		Column("id").
-		Where(inThisProduct, productID).
-		Where("vulnerability_id = ?", vulnerabilityID).
-		Where("component_id = ?", componentID).
-		Where("closed_at IS NULL").
-		Where("visibility = ?", access.Private).
-		Exists(ctx)
+	//
+	// Asked of every visibility rather than of what the caller may read: what
+	// moved carries its visibility to whoever now holds it, whether or not the
+	// caller can see every row of it.
+	every := []access.Visibility{access.Public, access.Private}
+	private, err := anyUndisclosed(ctx, s.db, every, oneFinding(productID, vulnerabilityID, componentID))
 	if err != nil {
 		return moved, false, fmt.Errorf("read whether that finding is disclosed: %w", err)
 	}
 	return moved, private, nil
+}
+
+// anyUndisclosed reports whether any open finding naming selects is
+// undisclosed, among the visibilities given.
+func anyUndisclosed(ctx context.Context, db bun.IDB, visible []access.Visibility,
+	naming func(*bun.SelectQuery) *bun.SelectQuery) (bool, error) {
+
+	return naming(db.NewSelect().Model((*Finding)(nil)).Column("id")).
+		Where(`"closed_at" IS NULL`).
+		Where(`"visibility" IN (?)`, bun.List(visible)).
+		Where(`"visibility" = ?`, access.Private).
+		Exists(ctx)
+}
+
+// oneFinding names one issue at one component across a product's builds.
+func oneFinding(productID, vulnerabilityID, componentID int64) func(*bun.SelectQuery) *bun.SelectQuery {
+	return func(q *bun.SelectQuery) *bun.SelectQuery {
+		return q.Where(inThisProduct, productID).
+			Where(`"vulnerability_id" = ?`, vulnerabilityID).
+			Where(`"component_id" = ?`, componentID)
+	}
 }
 
 // strictestOf is the tightest visibility any open place of this finding
@@ -344,15 +373,7 @@ func (s *Store) assign(ctx context.Context, subject access.Subject, targetID, vu
 func (s *Store) strictestOf(ctx context.Context, productID int64, visible []access.Visibility,
 	vulnerabilityID, componentID int64) (access.Visibility, error) {
 
-	private, err := s.db.NewSelect().Model((*Finding)(nil)).
-		Column("id").
-		Where(inThisProduct, productID).
-		Where("vulnerability_id = ?", vulnerabilityID).
-		Where("component_id = ?", componentID).
-		Where("closed_at IS NULL").
-		Where("visibility IN (?)", bun.List(visible)).
-		Where("visibility = ?", access.Private).
-		Exists(ctx)
+	private, err := anyUndisclosed(ctx, s.db, visible, oneFinding(productID, vulnerabilityID, componentID))
 	if err != nil {
 		return access.Public, fmt.Errorf("read how far this is disclosed: %w", err)
 	}
@@ -390,15 +411,11 @@ func (s *Store) StrictestOnComponent(ctx context.Context, subject access.Subject
 	// Matched on the fold, the way the upgrade itself resolves what it covers:
 	// naming any binary of a source package reaches all of them, so asking
 	// about the binary alone would miss the embargo sitting on its sibling.
-	private, err := s.db.NewSelect().Model((*Finding)(nil)).
-		Column("id").
-		Where("target_id IN (?)", bun.List(targets)).
-		Where("closed_at IS NULL").
-		Where("visibility IN (?)", bun.List(visible)).
-		Where("visibility = ?", access.Private).
-		Where(`component_id IN (SELECT c.id FROM "component" AS "c"
-			WHERE `+FoldedOn+` IN (?))`, bun.List(folds)).
-		Exists(ctx)
+	private, err := anyUndisclosed(ctx, s.db, visible, func(q *bun.SelectQuery) *bun.SelectQuery {
+		return q.Where(`"target_id" IN (?)`, bun.List(targets)).
+			Where(`"component_id" IN (SELECT "c"."id" FROM "component" AS "c"
+			WHERE `+FoldedOn+` IN (?))`, bun.List(folds))
+	})
 	if err != nil {
 		return access.Public, fmt.Errorf("read how far this is disclosed: %w", err)
 	}
@@ -449,9 +466,9 @@ func (s *Store) ReleaseIn(ctx context.Context, subject access.Subject, party, pr
 	var moved int64
 	err := database.Within(ctx, s.db, func(ctx context.Context, tx bun.IDB) error {
 		result, err := tx.NewUpdate().Model((*Finding)(nil)).
-			Set("assigned_to = ?", nil).Set("assigned_at = ?", nil).
-			Where("assigned_to = ?", party).
-			Where("closed_at IS NULL").
+			Set(`"assigned_to" = ?`, nil).Set(`"assigned_at" = ?`, nil).
+			Where(`"assigned_to" = ?`, party).
+			Where(`"closed_at" IS NULL`).
 			Where(inThisProduct, productID).
 			Exec(ctx)
 		if err != nil {
@@ -482,12 +499,12 @@ func (s *Store) handOver(ctx context.Context, subject access.Subject, from int64
 			}
 		}
 		update := tx.NewUpdate().Model((*Finding)(nil)).
-			Where("assigned_to = ?", from).
-			Where("closed_at IS NULL")
+			Where(`"assigned_to" = ?`, from).
+			Where(`"closed_at" IS NULL`)
 		if to == nil {
-			update = update.Set("assigned_to = ?", nil).Set("assigned_at = ?", nil)
+			update = update.Set(`"assigned_to" = ?`, nil).Set(`"assigned_at" = ?`, nil)
 		} else {
-			update = update.Set("assigned_to = ?", *to).Set("assigned_at = ?", now)
+			update = update.Set(`"assigned_to" = ?`, *to).Set(`"assigned_at" = ?`, now)
 		}
 		result, err := update.Exec(ctx)
 		if err != nil {
@@ -512,10 +529,10 @@ func mayReadAllOf(ctx context.Context, tx bun.IDB, from, to int64) error {
 	var products []int64
 	if err := tx.NewSelect().
 		TableExpr(`"target" AS "tg"`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		ColumnExpr("DISTINCT st.product_id").
-		Where(`tg.id IN (SELECT f.target_id FROM "finding" AS "f"
-			WHERE f.assigned_to = ? AND f.closed_at IS NULL AND f.visibility = ?)`,
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		ColumnExpr(`DISTINCT "st"."product_id"`).
+		Where(`"tg"."id" IN (SELECT "f"."target_id" FROM "finding" AS "f"
+			WHERE "f"."assigned_to" = ? AND "f"."closed_at" IS NULL AND "f"."visibility" = ?)`,
 			from, access.Private).
 		Scan(ctx, &products); err != nil {
 		return fmt.Errorf("read where their undisclosed work is: %w", err)
@@ -526,7 +543,7 @@ func mayReadAllOf(ctx context.Context, tx bun.IDB, from, to int64) error {
 	var people []int64
 	if err := tx.NewSelect().Model((*access.Account)(nil)).
 		Column("id").
-		Where("party_id = ?", to).
+		Where(`"party_id" = ?`, to).
 		Limit(1).
 		Scan(ctx, &people); err != nil {
 		return fmt.Errorf("read who is taking the work on: %w", err)
@@ -595,18 +612,18 @@ func (s *Store) HeldBy(ctx context.Context, subject access.Subject,
 	mine := func() *bun.SelectQuery {
 		query := s.db.NewSelect().
 			TableExpr(`"finding" AS "f"`).
-			Join(`JOIN "target" AS "tg" ON tg.id = f.target_id`).
-			Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-			Where("f.closed_at IS NULL").
-			Where("f.assigned_to IS NOT NULL")
+			Join(`JOIN "target" AS "tg" ON "tg"."id" = "f"."target_id"`).
+			Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+			Where(`"f"."closed_at" IS NULL`).
+			Where(`"f"."assigned_to" IS NOT NULL`)
 		// One product where the caller named one, for a screen that is about
 		// one. Zero is every product, which is what the people tab of the
 		// assignments screen asks for.
 		if productID != 0 {
-			query = query.Where("st.product_id = ?", productID)
+			query = query.Where(`"st"."product_id" = ?`, productID)
 		}
 		if !all {
-			query = query.Where("st.product_id IN (?)", bun.List(products))
+			query = query.Where(`"st"."product_id" IN (?)`, bun.List(products))
 		}
 		// The same narrowing every other query here carries. A count is as
 		// much a disclosure as a row: "somebody holds six" tells a reader
@@ -619,8 +636,8 @@ func (s *Store) HeldBy(ctx context.Context, subject access.Subject,
 	// GROUPS is a reserved word in MySQL 8 and the obvious alias is a
 	// syntax error on one engine and fine on the other three.
 	pieces := mine().
-		ColumnExpr(`f.assigned_to AS "person_id"`).
-		GroupExpr("f.assigned_to, f.vulnerability_id, f.component_id, st.product_id")
+		ColumnExpr(`"f"."assigned_to" AS "person_id"`).
+		GroupExpr(`"f"."assigned_to", "f"."vulnerability_id", "f"."component_id", "st"."product_id"`)
 
 	// Bounded like every other list. It is a name-yielding projection —
 	// one row per person holding open work the caller can see — and it was
@@ -631,12 +648,12 @@ func (s *Store) HeldBy(ctx context.Context, subject access.Subject,
 	var held []Holding
 	if err := s.db.NewSelect().
 		TableExpr(`(?) AS "work"`, pieces).
-		ColumnExpr(`"work".person_id AS "person_id"`).
+		ColumnExpr(`"work"."person_id" AS "person_id"`).
 		ColumnExpr(`COUNT(*) AS "open"`).
 		ColumnExpr(`0 AS "places"`).
 		ColumnExpr(`0 AS "overdue"`).
-		GroupExpr(`"work".person_id`).
-		OrderExpr("open DESC, person_id").
+		GroupExpr(`"work"."person_id"`).
+		OrderExpr(`open DESC, "person_id"`).
 		Limit(database.InBulk.Most).
 		Scan(ctx, &held); err != nil {
 		return nil, fmt.Errorf("read who is holding what: %w", err)
@@ -651,9 +668,9 @@ func (s *Store) HeldBy(ctx context.Context, subject access.Subject,
 		Places   int   `bun:"places"`
 	}
 	if err := mine().
-		ColumnExpr(`f.assigned_to AS "person_id"`).
+		ColumnExpr(`"f"."assigned_to" AS "person_id"`).
 		ColumnExpr(`COUNT(*) AS "places"`).
-		GroupExpr("f.assigned_to").
+		GroupExpr(`"f"."assigned_to"`).
 		Scan(ctx, &spread); err != nil {
 		return nil, fmt.Errorf("read how far what they hold reaches: %w", err)
 	}
@@ -684,21 +701,21 @@ func (s *Store) HeldBy(ctx context.Context, subject access.Subject,
 	// when any of its places is. The alternative reads worse in both
 	// directions — a group with one late place among forty is late, and
 	// calling it a fortieth of one is a number nobody acts on.
-	standing, args := OffTheClock("st.product_id", s.now())
+	standing, args := OffTheClock(`"st"."product_id"`, s.now())
 	late := mine().
-		Join(`JOIN "component" AS "c" ON c.id = f.component_id`).
-		Join(`LEFT JOIN "component" AS "uc" ON uc.id = f.consumer_id`).
-		ColumnExpr(`f.assigned_to AS "person_id"`).
-		Where("f.due_at IS NOT NULL").
-		Where("f.due_at < ?", s.now().UTC()).
+		Join(`JOIN "component" AS "c" ON "c"."id" = "f"."component_id"`).
+		Join(`LEFT JOIN "component" AS "uc" ON "uc"."id" = "f"."consumer_id"`).
+		ColumnExpr(`"f"."assigned_to" AS "person_id"`).
+		Where(`"f"."due_at" IS NOT NULL`).
+		Where(`"f"."due_at" < ?`, s.now().UTC()).
 		Where(NotArguedAway).
 		Where("NOT "+standing, args...).
-		GroupExpr("f.assigned_to, f.vulnerability_id, f.component_id, st.product_id")
+		GroupExpr(`"f"."assigned_to", "f"."vulnerability_id", "f"."component_id", "st"."product_id"`)
 	err := s.db.NewSelect().
 		TableExpr(`(?) AS "work"`, late).
-		ColumnExpr(`"work".person_id AS "person_id"`).
+		ColumnExpr(`"work"."person_id" AS "person_id"`).
 		ColumnExpr(`COUNT(*) AS "overdue"`).
-		GroupExpr(`"work".person_id`).
+		GroupExpr(`"work"."person_id"`).
 		Scan(ctx, &counted)
 	if err != nil {
 		return nil, fmt.Errorf("read how much of it is late: %w", err)
@@ -841,23 +858,23 @@ func (s *Store) workSince(ctx context.Context, subject access.Subject, scope Sco
 	// gives it content is what it has been assigned: an assignment is
 	// itself a grant of visibility of what was assigned. So this answers
 	// for somebody who reads nothing, where they hold something.
-	if subject.Kind != access.Person || (!all && len(products) == 0 && len(mine) == 0) {
+	if !all && len(products) == 0 && len(mine) == 0 {
 		return nil, 0, nil
 	}
 	limit = database.AList.Of(limit)
 
 	narrow := func(q *bun.SelectQuery) *bun.SelectQuery {
 		q = q.TableExpr(`"finding" AS "f"`).
-			Join(`JOIN "target" AS "tg" ON tg.id = f.target_id`).
-			Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-			Where("f.closed_at IS NULL")
+			Join(`JOIN "target" AS "tg" ON "tg"."id" = "f"."target_id"`).
+			Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+			Where(`"f"."closed_at" IS NULL`)
 		if since != nil {
-			q = q.Where("f.opened_at > ?", *since)
+			q = q.Where(`"f"."opened_at" > ?`, *since)
 		}
 		if len(holders) == 0 {
-			q = q.Where("f.assigned_to IS NULL")
+			q = q.Where(`"f"."assigned_to" IS NULL`)
 		} else {
-			q = q.Where("f.assigned_to IN (?)", bun.List(holders))
+			q = q.Where(`"f"."assigned_to" IN (?)`, bun.List(holders))
 		}
 		// A product they read at the row's visibility, or a disclosed row
 		// that is theirs. The product half is inside both.
@@ -902,17 +919,17 @@ func (s *Store) workSince(ctx context.Context, subject access.Subject, scope Sco
 		OpenedAt        time.Time `bun:"opened_at"`
 	}
 	err := narrow(s.db.NewSelect()).
-		ColumnExpr(`f.vulnerability_id AS "vulnerability_id"`).
-		ColumnExpr(`f.component_id AS "component_id"`).
-		ColumnExpr(`st.product_id AS "product_id"`).
+		ColumnExpr(`"f"."vulnerability_id" AS "vulnerability_id"`).
+		ColumnExpr(`"f"."component_id" AS "component_id"`).
+		ColumnExpr(`"st"."product_id" AS "product_id"`).
 		// One of the builds, and how many there are. The one is what a link
 		// and an action need somewhere to point; the count is what stops a
 		// screen presenting it as the only one. MIN rather than any other
 		// choice because it is stable: a row that named a different build
 		// between two reads would move under somebody.
-		ColumnExpr(`MIN(f.target_id) AS "target_id"`).
-		ColumnExpr(`COUNT(DISTINCT f.target_id) AS "builds"`).
-		ColumnExpr(`MAX(f.urgency) AS "urgency"`).
+		ColumnExpr(`MIN("f"."target_id") AS "target_id"`).
+		ColumnExpr(`COUNT(DISTINCT "f"."target_id") AS "builds"`).
+		ColumnExpr(`MAX("f"."urgency") AS "urgency"`).
 		ColumnExpr(exploitedAcross+` AS "exploited"`).
 		ColumnExpr(exploitedHereAcross+` AS "exploited_here"`).
 		// The oldest place decides, as it does everywhere else here: a group
@@ -920,18 +937,18 @@ func (s *Store) workSince(ctx context.Context, subject access.Subject, scope Sco
 		// problem for a month, and a maximum made it read as a day old — so
 		// the unassigned queue and the digest built on it sorted a six-week
 		// backlog item as new work.
-		ColumnExpr(`MIN(f.opened_at) AS "opened_at"`).
+		ColumnExpr(`MIN("f"."opened_at") AS "opened_at"`).
 		// Any undisclosed row makes the group undisclosed. Written as a sum
 		// rather than a boolean aggregate: the four engines do not agree on
 		// one, and counting is the same question asked portably.
-		ColumnExpr(access.AnyPrivateAs("f.visibility", "undisclosed")).
+		ColumnExpr(access.AnyPrivateAs(`"f"."visibility"`, "undisclosed")).
 		ColumnExpr(`COUNT(*) AS "places"`).
 		// The total rides on the page, as the findings list's does: the
 		// groups the narrowing admits, counted after the grouping and before
 		// the limit, in the statement that groups them.
 		ColumnExpr(`COUNT(*) OVER () AS "total"`).
-		GroupExpr("f.vulnerability_id, f.component_id, st.product_id").
-		OrderExpr("urgency DESC, f.vulnerability_id, f.component_id, st.product_id").
+		GroupExpr(`"f"."vulnerability_id", "f"."component_id", "st"."product_id"`).
+		OrderExpr(`"urgency" DESC, "f"."vulnerability_id", "f"."component_id", "st"."product_id"`).
 		Limit(limit).Offset(offset).
 		Scan(ctx, &heads)
 	if err != nil {
@@ -943,8 +960,8 @@ func (s *Store) workSince(ctx context.Context, subject access.Subject, scope Sco
 	} else {
 		if total, err = s.db.NewSelect().
 			TableExpr(`(?) AS "grouped"`, narrow(s.db.NewSelect()).
-				ColumnExpr("f.vulnerability_id").
-				GroupExpr("f.vulnerability_id, f.component_id, st.product_id")).
+				ColumnExpr(`"f"."vulnerability_id"`).
+				GroupExpr(`"f"."vulnerability_id", "f"."component_id", "st"."product_id"`)).
 			Count(ctx); err != nil {
 			return nil, 0, fmt.Errorf("count what nobody is dealing with: %w", err)
 		}
@@ -1034,12 +1051,12 @@ func targetsNamed(ctx context.Context, db bun.IDB, ids []int64) (map[int64]build
 	var builds []buildName
 	err := db.NewSelect().
 		TableExpr(`"target" AS "tg"`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		Join(`JOIN "variant" AS "va" ON va.id = tg.variant_id`).
-		Join(`JOIN "product" AS "p" ON p.id = st.product_id`).
-		ColumnExpr(`tg.id AS "target_id"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		Join(`JOIN "variant" AS "va" ON "va"."id" = "tg"."variant_id"`).
+		Join(`JOIN "product" AS "p" ON "p"."id" = "st"."product_id"`).
+		ColumnExpr(`"tg"."id" AS "target_id"`).
 		Apply(catalog.BuildNames("p", "st", "va")).
-		Where("tg.id IN (?)", bun.List(ids)).
+		Where(`"tg"."id" IN (?)`, bun.List(ids)).
 		Scan(ctx, &builds)
 	if err != nil {
 		return nil, fmt.Errorf("name the builds on the page: %w", err)
@@ -1067,7 +1084,7 @@ func targetsNamed(ctx context.Context, db bun.IDB, ids []int64) (map[int64]build
 // the reason the two names exist rather than one function and a comment.
 func onlyReadable(q *bun.SelectQuery, subject access.Subject, products []int64, all bool) *bun.SelectQuery {
 	if !all {
-		q = q.Where("st.product_id IN (?)", bun.List(products))
+		q = q.Where(`"st"."product_id" IN (?)`, bun.List(products))
 	}
 	return onlyVisible(q, subject, products, all)
 }
@@ -1101,7 +1118,7 @@ func onlyVisible(q *bun.SelectQuery, subject access.Subject, products []int64, a
 		return q
 	}
 	both, public, private := access.Split(products, subject.Reads)
-	where, args := access.VisibleWhere("st.product_id", "f.visibility", both, public, private)
+	where, args := access.VisibleWhere(`"st"."product_id"`, `"f"."visibility"`, both, public, private)
 	return q.Where(where, args...)
 }
 
@@ -1120,9 +1137,9 @@ func orCarried(q *bun.SelectQuery, subject access.Subject, products []int64, all
 		return q
 	}
 	both, public, private := access.Split(products, subject.Reads)
-	where, args := access.VisibleWhere("st.product_id", "f.visibility", both, public, private)
+	where, args := access.VisibleWhere(`"st"."product_id"`, `"f"."visibility"`, both, public, private)
 	if mine := subject.Mine(); len(mine) > 0 {
-		where = "(" + where + " OR (f.assigned_to IN (?) AND f.visibility = ?))"
+		where = "(" + where + ` OR ("f"."assigned_to" IN (?) AND "f"."visibility" = ?))`
 		args = append(args, bun.List(mine), access.Public)
 	}
 	return q.Where(where, args...)

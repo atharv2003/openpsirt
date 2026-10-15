@@ -29,9 +29,31 @@ import (
 // and compared against them in another. Two spellings of the same expression
 // is how a decision starts lapsing on one path and standing on the other.
 const (
-	ComponentUpstreamExpr = "COALESCE(NULLIF(c.upstream_version, ''), c.version, '')"
-	ConsumerUpstreamExpr  = "COALESCE(NULLIF(uc.upstream_version, ''), uc.version, '')"
+	ComponentUpstreamExpr = `COALESCE(NULLIF("c"."upstream_version", ''), "c"."version", '')`
+	ConsumerUpstreamExpr  = `COALESCE(NULLIF("uc"."upstream_version", ''), "uc"."version", '')`
 )
+
+// inFoldOf narrows a read of findings `f` to the places one judgment about an
+// issue at a component in a build covers: every decidable place of the issue
+// in the component's fold, at the visibilities given.
+//
+// The fold rather than the one component named. One judgment covers the whole
+// fold, with no narrowing within it: curl and libcurl4t64 are one source
+// package, so a decision about the issue in one of them is a decision about it
+// in both, and offering the places of one binary alone would let somebody
+// answer a third of the work and read as having answered it.
+func inFoldOf(targetID, vulnerabilityID, componentID int64,
+	visible []access.Visibility) func(*bun.SelectQuery) *bun.SelectQuery {
+
+	return func(q *bun.SelectQuery) *bun.SelectQuery {
+		return q.Where(`"f"."target_id" = ?`, targetID).
+			Where(`"f"."vulnerability_id" = ?`, vulnerabilityID).
+			Where(FoldedOn+` = (SELECT c2."fold_key" FROM "component" AS "c2" WHERE "c2"."id" = ?)`,
+				componentID).
+			Where(Decidable).
+			Where(`"f"."visibility" IN (?)`, bun.List(visible))
+	}
+}
 
 // ErrNoOpenFinding is a place, or a component in a build, where nothing is
 // open against the issue asked about. A sentinel, so a caller can tell it from
@@ -119,11 +141,11 @@ func (s *Store) PlaceFor(ctx context.Context, subject access.Subject, targetID i
 
 	var rows []placeRow
 	err = placeColumns(s.db.NewSelect().TableExpr(`"finding" AS "f"`), productID).
-		Where("f.target_id = ?", targetID).
-		Where("f.vulnerability_id = ?", vulnerabilityID).
-		Where("f.place_identity = ?", placeIdentity).
+		Where(`"f"."target_id" = ?`, targetID).
+		Where(`"f"."vulnerability_id" = ?`, vulnerabilityID).
+		Where(`"f"."place_identity" = ?`, placeIdentity).
 		Where(Decidable).
-		Where("f.visibility IN (?)", bun.List(visible)).
+		Where(`"f"."visibility" IN (?)`, bun.List(visible)).
 		OrderExpr("component_upstream, consumer_upstream").
 		Scan(ctx, &rows)
 	if err != nil {
@@ -224,16 +246,16 @@ func (s *Store) DeadlineAt(ctx context.Context, db bun.IDB, subject access.Subje
 	}
 	if err := db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		ColumnExpr(`f.vulnerability_id AS "vulnerability_id"`).
-		ColumnExpr(`f.place_identity AS "place_identity"`).
-		ColumnExpr(`MIN(f.due_at) AS "due_at"`).
-		Where("f.target_id IN (?)", bun.List(targets)).
-		Where("f.vulnerability_id IN (?)", bun.List(issues)).
-		Where("f.place_identity IN (?)", bun.List(identities)).
-		Where("f.closed_at IS NULL").
-		Where("f.due_at IS NOT NULL").
-		Where("f.visibility IN (?)", bun.List(visible)).
-		GroupExpr("f.vulnerability_id, f.place_identity").
+		ColumnExpr(`"f"."vulnerability_id" AS "vulnerability_id"`).
+		ColumnExpr(`"f"."place_identity" AS "place_identity"`).
+		ColumnExpr(`MIN("f"."due_at") AS "due_at"`).
+		Where(`"f"."target_id" IN (?)`, bun.List(targets)).
+		Where(`"f"."vulnerability_id" IN (?)`, bun.List(issues)).
+		Where(`"f"."place_identity" IN (?)`, bun.List(identities)).
+		Where(`"f"."closed_at" IS NULL`).
+		Where(`"f"."due_at" IS NOT NULL`).
+		Where(`"f"."visibility" IN (?)`, bun.List(visible)).
+		GroupExpr(`"f"."vulnerability_id", "f"."place_identity"`).
 		Scan(ctx, &rows); err != nil {
 		return nil, fmt.Errorf("read the deadline this covers: %w", err)
 	}
@@ -353,15 +375,15 @@ func (s *Store) PlacesOnComponentWithin(ctx context.Context, db bun.IDB,
 		FixedIn         string `bun:"fixed_in"`
 	}
 	query := placeColumns(db.NewSelect().TableExpr(`"finding" AS "f"`), productID).
-		ColumnExpr(`f.vulnerability_id AS "vulnerability_id"`).
-		ColumnExpr(`f.component_id AS "component_id"`).
-		ColumnExpr(`f.target_id AS "target_id"`).
-		ColumnExpr(`f.place_identity AS "place_identity"`).
-		ColumnExpr(`COALESCE(uc.name, '') AS "consumer"`).
-		ColumnExpr(`COALESCE(f.fixed_in, '') AS "fixed_in"`).
-		Where("f.target_id IN (?)", bun.List(targets)).
-		Where("f.closed_at IS NULL").
-		Where("f.visibility IN (?)", bun.List(visible)).
+		ColumnExpr(`"f"."vulnerability_id" AS "vulnerability_id"`).
+		ColumnExpr(`"f"."component_id" AS "component_id"`).
+		ColumnExpr(`"f"."target_id" AS "target_id"`).
+		ColumnExpr(`"f"."place_identity" AS "place_identity"`).
+		ColumnExpr(`COALESCE("uc"."name", '') AS "consumer"`).
+		ColumnExpr(`COALESCE("f"."fixed_in", '') AS "fixed_in"`).
+		Where(`"f"."target_id" IN (?)`, bun.List(targets)).
+		Where(`"f"."closed_at" IS NULL`).
+		Where(`"f"."visibility" IN (?)`, bun.List(visible)).
 		// Everything open against the package, whatever version each
 		// finding records as its fix. An upgrade is a claim that
 		// moving the package answers what is open on it, and the next
@@ -380,7 +402,7 @@ func (s *Store) PlacesOnComponentWithin(ctx context.Context, db bun.IDB,
 		// fold it names in the builds asked about, so a source package named
 		// in two builds at two versions moves both.
 		Where(FoldedOn+` IN (?)`, bun.List(folds)).
-		OrderExpr("f.vulnerability_id, f.component_id, f.target_id, place_identity")
+		OrderExpr(`"f"."vulnerability_id", "f"."component_id", "f"."target_id", "place_identity"`)
 	err = query.Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("read where that bump would reach: %w", err)
@@ -459,22 +481,11 @@ func (s *Store) PlacesFor(ctx context.Context, subject access.Subject, targetID 
 		FixedIn       string `bun:"fixed_in"`
 	}
 	err = placeColumns(s.db.NewSelect().TableExpr(`"finding" AS "f"`), productID).
-		ColumnExpr(`f.place_identity AS "place_identity"`).
-		ColumnExpr(`COALESCE(uc.name, '') AS "consumer"`).
-		ColumnExpr(`COALESCE(f.fixed_in, '') AS "fixed_in"`).
-		Where("f.target_id = ?", targetID).
-		Where("f.vulnerability_id = ?", vulnerabilityID).
-		// The fold rather than the one component named. One judgment covers
-		// the whole fold, with no narrowing within it: curl and libcurl4t64
-		// are one source package, so a decision about the issue in one of them
-		// is a decision about it in both — and offering the places of one
-		// binary alone would let somebody answer a third of the work and read
-		// as having answered it.
-		Where(FoldedOn+` = (SELECT c2."fold_key" FROM "component" AS "c2" WHERE c2.id = ?)`,
-			componentID).
-		Where(Decidable).
-		Where("f.visibility IN (?)", bun.List(visible)).
-		OrderExpr("consumer, place_identity, component_upstream, consumer_upstream").
+		ColumnExpr(`"f"."place_identity" AS "place_identity"`).
+		ColumnExpr(`COALESCE("uc"."name", '') AS "consumer"`).
+		ColumnExpr(`COALESCE("f"."fixed_in", '') AS "fixed_in"`).
+		Apply(inFoldOf(targetID, vulnerabilityID, componentID, visible)).
+		OrderExpr(`consumer, "place_identity", component_upstream, consumer_upstream`).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("read where this sits: %w", err)
@@ -522,17 +533,18 @@ func (s *Store) PlacesFor(ctx context.Context, subject access.Subject, targetID 
 // which must not differ between the read that writes it and the read that
 // matches it.
 //
-// It does not take the ordering with it: the three order differently, and what
-// a decision is keyed on must not depend on what the database returned first.
+// It does not take the ordering with it: each reader orders its own way, and
+// what a decision is keyed on must not depend on what the database returned
+// first.
 func placeColumns(q *bun.SelectQuery, productID int64) *bun.SelectQuery {
 	return q.
-		Join(`JOIN "component" AS "c" ON c.id = f.component_id`).
-		Join(`LEFT JOIN "component" AS "uc" ON uc.id = f.consumer_id`).
-		Join(`JOIN "vulnerability" AS "v" ON v.id = f.vulnerability_id`).
+		Join(`JOIN "component" AS "c" ON "c"."id" = "f"."component_id"`).
+		Join(`LEFT JOIN "component" AS "uc" ON "uc"."id" = "f"."consumer_id"`).
+		Join(`JOIN "vulnerability" AS "v" ON "v"."id" = "f"."vulnerability_id"`).
 		Join(rating.Here, productID).
-		Join(`JOIN "target" AS "tg" ON tg.id = f.target_id`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		ColumnExpr(`f.visibility AS "visibility"`).
+		Join(`JOIN "target" AS "tg" ON "tg"."id" = "f"."target_id"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		ColumnExpr(`"f"."visibility" AS "visibility"`).
 		// The upstream version where one is stated, and the component's own
 		// where none is. Most packages are not forks and state no upstream at
 		// all — measured on a real image, 88% of them — so reading only the
@@ -555,17 +567,17 @@ func placeColumns(q *bun.SelectQuery, productID int64) *bun.SelectQuery {
 		// project's one rule rather than by a second one in SQL: an
 		// assessment writes the word and never the published score, so the
 		// score alone says an issue rated critical here is worth zero.
-		ColumnExpr(`COALESCE(v.severity, '') AS "published_severity"`).
-		ColumnExpr(`COALESCE(ir.severity, '') AS "rated_here"`).
-		ColumnExpr(`COALESCE(v.score_centi, 0) AS "score_centi"`).
+		ColumnExpr(`COALESCE("v"."severity", '') AS "published_severity"`).
+		ColumnExpr(`COALESCE("ir"."severity", '') AS "rated_here"`).
+		ColumnExpr(`COALESCE("v"."score_centi", 0) AS "score_centi"`).
 		// The deadline, because a promise to act is gated against the earliest
 		// one among what the act covers. Read from the rows rather than
 		// supplied, like the versions and the visibility: it is a fact about
 		// the place, and a caller free to state it would be choosing whether
 		// their own commitment needed a second person.
-		ColumnExpr(`f.due_at AS "due_at"`).
+		ColumnExpr(`"f"."due_at" AS "due_at"`).
 		// A release built once. A tag cannot change, so what may
 		// be said about a finding on one is narrower, and that is a fact about
 		// the build rather than about who is asking.
-		ColumnExpr(`CASE WHEN st.kind = ? THEN 1 ELSE 0 END AS "on_tag"`, catalog.Tag)
+		ColumnExpr(`CASE WHEN "st"."kind" = ? THEN 1 ELSE 0 END AS "on_tag"`, catalog.Tag)
 }

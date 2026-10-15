@@ -101,9 +101,7 @@ func Kinds() []Kind {
 }
 
 // Actor is what made a change: a person, the deployment's startup
-// configuration, a merge of two issues, or an upgrade. An upgrade's rows are
-// written by the migration that makes them, which holds its own copy of the
-// word "upgrade" as it holds its own copy of every rule it applies.
+// configuration, a merge of two issues, or an upgrade.
 type Actor string
 
 const (
@@ -346,6 +344,21 @@ func (s *Store) write(ctx context.Context, change *Change) error {
 	return nil
 }
 
+// onProduct joins a name to the product a change was made against.
+const onProduct = " on "
+
+// OnProduct is what a change made against one product is recorded about: the
+// name of what changed and the product. About reads a name's history back by
+// this shape, so every producer of a per-product row builds it here.
+func OnProduct(name, product string) string { return name + onProduct + product }
+
+// InCase is what a change to who is on one undisclosed case is recorded about:
+// the product, the issue and the person. The column is sized for three maximal
+// names joined this way.
+func InCase(product, issue, identity string) string {
+	return product + " · " + issue + " · " + identity
+}
+
 // Over is the stretch of time a read of the trail covers.
 //
 // A zero start is the beginning and a zero end is now, which is what an
@@ -367,23 +380,16 @@ type Over struct {
 func (s *Store) Changes(ctx context.Context, by access.Subject, kind Kind, over Over,
 	limit, offset int) ([]Change, int, error) {
 
-	if err := readable(by); err != nil {
-		return nil, 0, err
-	}
-	limit = database.AList.Of(limit)
 	narrow := func(q *bun.SelectQuery) *bun.SelectQuery {
-		if kind != "" {
-			q = q.Where("kind = ?", kind)
-		}
 		if !over.Since.IsZero() {
-			q = q.Where("at >= ?", over.Since)
+			q = q.Where(`"at" >= ?`, over.Since)
 		}
 		if !over.Until.IsZero() {
-			q = q.Where("at < ?", over.Until)
+			q = q.Where(`"at" < ?`, over.Until)
 		}
 		return q
 	}
-	return s.page(ctx, narrow, limit, offset, "what has been changed")
+	return s.page(ctx, by, kind, narrow, limit, offset, "what has been changed")
 }
 
 // About reads the trail for one subject of a change, newest first.
@@ -407,29 +413,36 @@ func (s *Store) Changes(ctx context.Context, by access.Subject, kind Kind, over 
 func (s *Store) About(ctx context.Context, by access.Subject, kind Kind, name string,
 	limit, offset int) ([]Change, int, error) {
 
+	narrow := func(q *bun.SelectQuery) *bun.SelectQuery {
+		return q.WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+			prefix := OnProduct(name, "")
+			return q.Where(`"about" = ?`, name).
+				WhereOr(`("about" LIKE ?`+database.LikeClause+` AND SUBSTR("about", 1, ?) = ?)`,
+					database.LikeEscaped(name)+onProduct+"%", utf8.RuneCountInString(prefix), prefix)
+		})
+	}
+	return s.page(ctx, by, kind, narrow, limit, offset, fmt.Sprintf("what changed about %q", name))
+}
+
+// page is one page of the trail under a narrowing, newest first, with how many
+// the narrowing holds in all. what names the reading, for its errors.
+//
+// Every read of the trail comes through here, so who may read it, how long a
+// page may be and the kind filter are each asked once.
+func (s *Store) page(ctx context.Context, by access.Subject, kind Kind,
+	narrowing func(*bun.SelectQuery) *bun.SelectQuery,
+	limit, offset int, what string) ([]Change, int, error) {
+
 	if err := readable(by); err != nil {
 		return nil, 0, err
 	}
 	limit = database.AList.Of(limit)
 	narrow := func(q *bun.SelectQuery) *bun.SelectQuery {
 		if kind != "" {
-			q = q.Where("kind = ?", kind)
+			q = q.Where(`"kind" = ?`, kind)
 		}
-		return q.WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
-			prefix := name + " on "
-			return q.Where("about = ?", name).
-				WhereOr(`(about LIKE ?`+database.LikeClause+` AND SUBSTR(about, 1, ?) = ?)`,
-					database.LikeEscaped(name)+" on %", utf8.RuneCountInString(prefix), prefix)
-		})
+		return narrowing(q)
 	}
-	return s.page(ctx, narrow, limit, offset, fmt.Sprintf("what changed about %q", name))
-}
-
-// page is one page of the trail under a narrowing, newest first, with how many
-// the narrowing holds in all. what names the reading, for its errors.
-func (s *Store) page(ctx context.Context, narrow func(*bun.SelectQuery) *bun.SelectQuery,
-	limit, offset int, what string) ([]Change, int, error) {
-
 	total, err := narrow(s.db.NewSelect().Model((*Change)(nil))).Count(ctx)
 	if err != nil {
 		return nil, 0, fmt.Errorf("count %s: %w", what, err)

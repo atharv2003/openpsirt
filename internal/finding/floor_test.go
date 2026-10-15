@@ -134,7 +134,7 @@ func TestAProductsOwnLineIsWhatAppliesToIt(t *testing.T) {
 		}
 
 		// The deployment states one, and the product inherits it.
-		if err := settings.Set(ctx, setting.TriageFloor, "medium"); err != nil {
+		if _, _, err := settings.Change(ctx, setting.TriageFloor, "medium"); err != nil {
 			t.Fatal(err)
 		}
 		line, err = finding.FloorFor(ctx, f.db.DB, f.productID)
@@ -159,7 +159,7 @@ func TestAProductsOwnLineIsWhatAppliesToIt(t *testing.T) {
 
 		// The deployment changes its mind and the product does not follow,
 		// because it has an opinion of its own.
-		if err := settings.Set(ctx, setting.TriageFloor, "low"); err != nil {
+		if _, _, err := settings.Change(ctx, setting.TriageFloor, "low"); err != nil {
 			t.Fatal(err)
 		}
 		line, err = finding.FloorFor(ctx, f.db.DB, f.productID)
@@ -360,8 +360,8 @@ func TestALineNothingCanEnforceReadsAsNoLine(t *testing.T) {
 		ctx := t.Context()
 		for _, word := range []string{"negligible", "Critical", "none", "  "} {
 			if _, err := f.db.DB.NewUpdate().TableExpr("\"product\"").
-				Set("triage_floor = ?", word).
-				Where("id = ?", f.productID).Exec(ctx); err != nil {
+				Set(`"triage_floor" = ?`, word).
+				Where(`"id" = ?`, f.productID).Exec(ctx); err != nil {
 				t.Fatal(err)
 			}
 			line, err := finding.FloorFor(ctx, f.db.DB, f.productID)

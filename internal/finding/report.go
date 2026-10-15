@@ -126,13 +126,12 @@ func (t Told) When() *time.Time {
 
 // ReportFor reads who told us about one issue, or nil where nobody did.
 //
-// Authorized here, against the product the report was made against. It was
-// authorized by the caller instead, which resolved the issue in whatever
-// product the request named — and an issue's identity spans its aliases, so
-// the moment a shared name is recorded the same issue is open in other
-// products. Somebody holding triage rights in any of those could read a
-// reporter's name, address and received date for a report made about a
-// product they hold nothing in.
+// Authorized here, against the product the report was made against, rather
+// than against the product a request names. An issue's identity spans its
+// aliases, so once a shared name is recorded the same issue is open in other
+// products, and triage rights in any of those would read a reporter's name,
+// address and received date for a report about a product the reader holds
+// nothing in.
 //
 // The same rule a report reached by its reference takes, because it is the
 // same row. Asked as the issue's own visibility instead, judging a claim
@@ -154,7 +153,7 @@ func (s *Store) ReportFor(ctx context.Context, subject access.Subject,
 	var rows []FlawReport
 	if err := s.db.NewSelect().Model(&rows).
 		Where(FiledUnder(filed.Issue), vulnerabilityID).
-		OrderExpr("id").Scan(ctx); err != nil {
+		OrderExpr(`"id"`).Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read who told us: %w", err)
 	}
 	for i := range rows {
@@ -189,7 +188,7 @@ func (s *Store) Acknowledge(ctx context.Context, subject access.Subject,
 	var rows []FlawReport
 	if err := s.db.NewSelect().Model(&rows).
 		Where(FiledUnder(filed.Issue), vulnerabilityID).
-		OrderExpr("id").Scan(ctx); err != nil {
+		OrderExpr(`"id"`).Scan(ctx); err != nil {
 		return fmt.Errorf("read who told us: %w", err)
 	}
 	var handled *FlawReport
@@ -225,10 +224,10 @@ func (s *Store) Acknowledge(ctx context.Context, subject access.Subject,
 func (s *Store) answered(ctx context.Context, subject access.Subject, reportID int64) error {
 	now := s.now().UTC().Truncate(time.Microsecond)
 	if _, err := s.db.NewUpdate().Model((*FlawReport)(nil)).
-		Set("acknowledged_at = ?", now).
-		Set("acknowledged_by = ?", subject.ID).
-		Where("id = ?", reportID).
-		Where("acknowledged_at IS NULL").
+		Set(`"acknowledged_at" = ?`, now).
+		Set(`"acknowledged_by" = ?`, subject.ID).
+		Where(`"id" = ?`, reportID).
+		Where(`"acknowledged_at" IS NULL`).
 		Exec(ctx); err != nil {
 		return fmt.Errorf("record that they were answered: %w", err)
 	}
@@ -295,31 +294,31 @@ func (s *Store) unacknowledgedOnIssues(ctx context.Context) ([]Unanswered, error
 	}
 	err := s.db.NewSelect().
 		TableExpr(`"flaw_report" AS "fr"`).
-		Join(`JOIN "vulnerability" AS "v" ON v.id = fr.vulnerability_id`).
-		Join(`JOIN "vulnerability" AS "ri" ON ri.id = fr.vulnerability_id`).
-		Join(`JOIN "finding" AS "f" ON f.vulnerability_id = ri.issue_id`).
-		Join(`JOIN "target" AS "tg" ON tg.id = f.target_id`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		Join(`JOIN "product" AS "p" ON p.id = st.product_id`).
-		ColumnExpr(`fr.id AS "report_id"`).
-		ColumnExpr(`MIN(fr.reference) AS "reference"`).
-		ColumnExpr(`fr.vulnerability_id AS "vulnerability_id"`).
-		ColumnExpr(`st.product_id AS "product_id"`).
-		ColumnExpr(`MIN(p.name) AS "product"`).
-		ColumnExpr(`MIN(v.identifier) AS "identifier"`).
-		ColumnExpr(`MIN(fr.reported_by) AS "reported_by"`).
-		ColumnExpr(`MIN(fr.received_on) AS "received_on"`).
-		ColumnExpr(access.PrivateCountAs("f.visibility", "private")).
-		Where("fr.acknowledged_at IS NULL").
+		Join(`JOIN "vulnerability" AS "v" ON "v"."id" = "fr"."vulnerability_id"`).
+		Join(`JOIN "vulnerability" AS "ri" ON "ri"."id" = "fr"."vulnerability_id"`).
+		Join(`JOIN "finding" AS "f" ON "f"."vulnerability_id" = "ri"."issue_id"`).
+		Join(`JOIN "target" AS "tg" ON "tg"."id" = "f"."target_id"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		Join(`JOIN "product" AS "p" ON "p"."id" = "st"."product_id"`).
+		ColumnExpr(`"fr"."id" AS "report_id"`).
+		ColumnExpr(`MIN("fr"."reference") AS "reference"`).
+		ColumnExpr(`"fr"."vulnerability_id" AS "vulnerability_id"`).
+		ColumnExpr(`"st"."product_id" AS "product_id"`).
+		ColumnExpr(`MIN("p"."name") AS "product"`).
+		ColumnExpr(`MIN("v"."identifier") AS "identifier"`).
+		ColumnExpr(`MIN("fr"."reported_by") AS "reported_by"`).
+		ColumnExpr(`MIN("fr"."received_on") AS "received_on"`).
+		ColumnExpr(access.PrivateCountAs(`"f"."visibility"`, "private")).
+		Where(`"fr"."acknowledged_at" IS NULL`).
 		// A flaw found here has nobody outside to answer.
-		Where("fr.found_here = ?", false).
-		Where("f.closed_at IS NULL").
+		Where(`"fr"."found_here" = ?`, false).
+		Where(`"f"."closed_at" IS NULL`).
 		// The product it was reported against, not every product the issue
 		// turns up in. One report is one letter to answer, and fanning it out
 		// across the products a shared name reaches told each of them about a
 		// reporter who wrote to one.
-		Where("st.product_id = fr.product_id").
-		GroupExpr("fr.id, fr.vulnerability_id, st.product_id").
+		Where(`"st"."product_id" = "fr"."product_id"`).
+		GroupExpr(`"fr"."id", "fr"."vulnerability_id", "st"."product_id"`).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("read which reports nobody has answered: %w", err)
@@ -354,16 +353,16 @@ func (s *Store) unacknowledgedWithoutIssue(ctx context.Context) ([]Unanswered, e
 	}
 	err := s.db.NewSelect().
 		TableExpr(`"flaw_report" AS "fr"`).
-		Join(`JOIN "product" AS "p" ON p.id = fr.product_id`).
-		ColumnExpr(`fr.id AS "report_id"`).
-		ColumnExpr(`fr.reference AS "reference"`).
-		ColumnExpr(`fr.product_id AS "product_id"`).
-		ColumnExpr(`p.name AS "product"`).
-		ColumnExpr(`fr.reported_by AS "reported_by"`).
-		ColumnExpr(`fr.received_on AS "received_on"`).
-		Where("fr.acknowledged_at IS NULL").
-		Where("fr.found_here = ?", false).
-		Where("fr.vulnerability_id IS NULL").
+		Join(`JOIN "product" AS "p" ON "p"."id" = "fr"."product_id"`).
+		ColumnExpr(`"fr"."id" AS "report_id"`).
+		ColumnExpr(`"fr"."reference" AS "reference"`).
+		ColumnExpr(`"fr"."product_id" AS "product_id"`).
+		ColumnExpr(`"p"."name" AS "product"`).
+		ColumnExpr(`"fr"."reported_by" AS "reported_by"`).
+		ColumnExpr(`"fr"."received_on" AS "received_on"`).
+		Where(`"fr"."acknowledged_at" IS NULL`).
+		Where(`"fr"."found_here" = ?`, false).
+		Where(`"fr"."vulnerability_id" IS NULL`).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("read which claims nobody has answered: %w", err)

@@ -982,12 +982,12 @@ func (f *Fetcher) shipped(ctx context.Context, productID int64) (map[string]bool
 		Distinct().
 		TableExpr(`"component" AS "c"`).
 		ColumnExpr(`"c"."name_folded"`).
-		Join(`JOIN "graph_node" AS "n" ON n.component_id = c.id`).
-		Join(`JOIN "target" AS "tg" ON tg.id = n.target_id`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		Where("st.product_id = ?", productID).
-		Where("n.closed_scan_id IS NULL").
-		Where("n.is_root = ?", false).
+		Join(`JOIN "graph_node" AS "n" ON "n"."component_id" = "c"."id"`).
+		Join(`JOIN "target" AS "tg" ON "tg"."id" = "n"."target_id"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		Where(`"st"."product_id" = ?`, productID).
+		Where(`"n"."closed_scan_id" IS NULL`).
+		Where(`"n"."is_root" = ?`, false).
 		Scan(ctx, &names)
 	if err != nil {
 		return nil, fmt.Errorf("read what this product ships: %w", err)
@@ -1071,51 +1071,6 @@ func later(status int) bool {
 func (t *Taken) bar(address string, err error) {
 	t.Barred++
 	t.BarredBy = fmt.Sprintf("%s: %v", address, err)
-}
-
-// The two JSON files a publisher serves to say what they offer and where. The
-// field names are the standard's rather than ours, which is why they are
-// spelled as it spells them.
-
-type providerMetadata struct {
-	Distributions []distribution `json:"distributions"`
-}
-
-type distribution struct {
-	DirectoryURL string `json:"directory_url,omitempty"`
-	ROLIE        *rolie `json:"rolie,omitempty"`
-}
-
-type rolie struct {
-	Feeds []feedDescription `json:"feeds"`
-}
-
-type feedDescription struct {
-	TLPLabel string `json:"tlp_label"`
-	URL      string `json:"url"`
-}
-
-type rolieFeed struct {
-	Feed feedBody `json:"feed"`
-}
-
-type feedBody struct {
-	Entries []feedEntry `json:"entry"`
-}
-
-type feedEntry struct {
-	Links   []link  `json:"link"`
-	Updated string  `json:"updated"`
-	Content content `json:"content"`
-}
-
-type link struct {
-	Rel  string `json:"rel"`
-	Href string `json:"href"`
-}
-
-type content struct {
-	Source string `json:"src"`
 }
 
 // steppedOver is whether the client refused an address in a way it repeats on

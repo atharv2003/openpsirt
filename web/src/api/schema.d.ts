@@ -6331,22 +6331,13 @@ export interface components {
             readonly $schema?: string;
             /** @description The reason the last attempt stopped, where one did */
             because?: string;
-            /**
-             * Format: date-time
-             * @description The newest moment in what they list that has been read
-             */
+            /** @description The newest moment in what they list that has been read */
             caught_up_to?: string;
             /** @description The name this supplier is configured under */
             name: string;
-            /**
-             * Format: date-time
-             * @description When a read of this supplier last succeeded
-             */
+            /** @description When a read of this supplier last succeeded */
             read?: string;
-            /**
-             * Format: date-time
-             * @description When this supplier was last tried
-             */
+            /** @description When this supplier was last tried */
             tried?: string;
             /** @description Where the supplier describes what they publish */
             url: string;
@@ -6666,6 +6657,15 @@ export interface components {
             /** @description Refer to this in text as attachment:<token>. It is the only identifier for a file, and never an address */
             token: string;
             uploaded_at: string;
+        };
+        AttachmentsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AttachmentsOutputBody.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["AttachmentBody"][] | null;
         };
         BecameBody: {
             /** @description The person who did it, where a person did, by sign-in identity */
@@ -7311,19 +7311,6 @@ export interface components {
             /** @description Names written after an @ that reached nobody. Either no such person is recorded, or they cannot read what the text is about — deliberately not said which */
             not_notified?: string[] | null;
         };
-        CommentBody: {
-            /** @description The comment text, in markdown */
-            body: string;
-            /** @description The moment the author last changed it, if they did */
-            edited_at?: string;
-            /** Format: int64 */
-            id: number;
-            written_at: string;
-            /** @description The author, by sign-in identity */
-            written_by: string;
-            /** @description Their display name, where it differs from their identity */
-            written_by_name?: string;
-        };
         ComparisonBody: {
             /**
              * Format: uri
@@ -7383,6 +7370,62 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["ComponentFindingBody"][] | null;
             /** Format: int64 */
+            total: number;
+        };
+        CountedListBodyBundleBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CountedListBodyBundleBody.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["BundleBody"][] | null;
+            /**
+             * Format: int64
+             * @description The total, so a page says what it is a page of
+             */
+            total: number;
+        };
+        CountedListBodyCarriedClaimBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CountedListBodyCarriedClaimBody.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["CarriedClaimBody"][] | null;
+            /**
+             * Format: int64
+             * @description The total, so a page says what it is a page of
+             */
+            total: number;
+        };
+        CountedListBodyJudgedBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CountedListBodyJudgedBody.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["JudgedBody"][] | null;
+            /**
+             * Format: int64
+             * @description The total, so a page says what it is a page of
+             */
+            total: number;
+        };
+        CountedListBodyJudgedClaimBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CountedListBodyJudgedClaimBody.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["JudgedClaimBody"][] | null;
+            /**
+             * Format: int64
+             * @description The total, so a page says what it is a page of
+             */
             total: number;
         };
         CounterBody: {
@@ -7971,8 +8014,8 @@ export interface components {
             on: string;
         };
         EndedReachBody: {
-            /** @description The latest moment one of them stopped */
-            at: string;
+            /** @description The latest moment one of them stopped. Absent where none of them says when */
+            at?: string;
             /** @description Every build holding an open finding at one of those places at the moment its decision stopped, as stream and variant */
             builds: string[] | null;
             /**
@@ -8549,10 +8592,7 @@ export interface components {
              * @description The number of things pulling this binary in here
              */
             consumers: number;
-            /**
-             * Format: date-time
-             * @description The moment a scan of this deployment first reported the package
-             */
+            /** @description The moment a scan of this deployment first reported the package */
             first_seen: string;
             /**
              * Format: int64
@@ -8565,10 +8605,7 @@ export interface components {
             name: string;
             /** @description The namespace the package identifier names, where it names one. Send it back with the version and ecosystem where a build holds one name at one version as two components */
             namespace?: string;
-            /**
-             * Format: date-time
-             * @description The date that version shipped, where the index said
-             */
+            /** @description The date that version shipped, where the index said */
             newest_released_at?: string;
             /** @description The newest version the ecosystem's index knows of. Absent where no index is asked, which is every distribution package */
             newest_version?: string;
@@ -9095,62 +9132,6 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
-        "List-attachmentsResponse": {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/List-attachmentsResponse.json
-             */
-            readonly $schema?: string;
-            items: components["schemas"]["AttachmentBody"][] | null;
-        };
-        "List-audit-claimsResponse": {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/List-audit-claimsResponse.json
-             */
-            readonly $schema?: string;
-            items: components["schemas"]["JudgedClaimBody"][] | null;
-            /** Format: int64 */
-            total: number;
-        };
-        "List-auditResponse": {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/List-auditResponse.json
-             */
-            readonly $schema?: string;
-            items: components["schemas"]["JudgedBody"][] | null;
-            /** Format: int64 */
-            total: number;
-        };
-        "List-carried-patchesResponse": {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/List-carried-patchesResponse.json
-             */
-            readonly $schema?: string;
-            items: components["schemas"]["CarriedClaimBody"][] | null;
-            /**
-             * Format: int64
-             * @description The total, so a page says what it is a page of
-             */
-            total: number;
-        };
-        "List-fix-bundlesResponse": {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/List-fix-bundlesResponse.json
-             */
-            readonly $schema?: string;
-            items: components["schemas"]["BundleBody"][] | null;
-            /** Format: int64 */
-            total: number;
-        };
         "List-issues-at-componentResponse": {
             /**
              * Format: uri
@@ -9173,15 +9154,6 @@ export interface components {
             place_limit: number;
             /** Format: int64 */
             total: number;
-        };
-        "List-report-attachmentsResponse": {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/List-report-attachmentsResponse.json
-             */
-            readonly $schema?: string;
-            items: components["schemas"]["AttachmentBody"][] | null;
         };
         "List-set-aside-workResponse": {
             /**
@@ -9269,17 +9241,6 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["CollaboratorBody"][] | null;
-            /** Format: int64 */
-            total?: number;
-        };
-        ListBodyCommentBody: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/ListBodyCommentBody.json
-             */
-            readonly $schema?: string;
-            items: components["schemas"]["CommentBody"][] | null;
             /** Format: int64 */
             total?: number;
         };
@@ -9401,17 +9362,6 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["NameableBody"][] | null;
-            /** Format: int64 */
-            total?: number;
-        };
-        ListBodyNoteBody: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/ListBodyNoteBody.json
-             */
-            readonly $schema?: string;
-            items: components["schemas"]["NoteBody"][] | null;
             /** Format: int64 */
             total?: number;
         };
@@ -9654,6 +9604,17 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["WasSaidBody"][] | null;
+            /** Format: int64 */
+            total?: number;
+        };
+        ListBodyWrittenBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ListBodyWrittenBody.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["WrittenBody"][] | null;
             /** Format: int64 */
             total?: number;
         };
@@ -9930,19 +9891,6 @@ export interface components {
             readonly $schema?: string;
             /** @description The text, in markdown */
             body: string;
-        };
-        NoteBody: {
-            /** @description The text, in markdown */
-            body: string;
-            /** @description The moment the author last changed it, where they have */
-            edited_at?: string;
-            /** Format: int64 */
-            id: number;
-            written_at: string;
-            /** @description The author, by sign-in identity */
-            written_by: string;
-            /** @description Their display name, where it differs from their identity */
-            written_by_name?: string;
         };
         NoteWritten: {
             /**
@@ -10488,20 +10436,14 @@ export interface components {
             by_severity?: {
                 [key: string]: number;
             };
-            /**
-             * Format: date-time
-             * @description The date the work promised here is due
-             */
+            /** @description The date the work promised here is due */
             committed_to?: string;
             /**
              * Format: int64
              * @description The number of things outside the source package pulling any of its binaries in here. One binary pulling in another is not counted
              */
             consumers: number;
-            /**
-             * Format: date-time
-             * @description The earliest deadline among what is open here. A commitment at or before it needs no approval; past it a second person agrees
-             */
+            /** @description The earliest deadline among what is open here. A commitment at or before it needs no approval; past it a second person agrees */
             due_at?: string;
             /** @description The ecosystem the package identifiers name */
             ecosystem?: string;
@@ -10635,8 +10577,10 @@ export interface components {
             /** @description The upgrade's own key: the source package at the version it was built at, in the ecosystem and distribution it came from */
             fold: string;
             from: string;
-            /** @description The party carrying it, where one party holds all of what is still open under it. An upgrade split between two is nobody's */
+            /** @description The identity or team name of the party carrying it, where one party holds all of what is still open under it. An upgrade split between two is nobody's */
             held_by?: string;
+            /** @description The carrying party's display name, where it differs from held_by */
+            held_by_name?: string;
             /**
              * Format: int64
              * @description Distinct issues still open under this upgrade here, which is what it would close. Nothing is declared done by hand: a build is clear when it stops holding them
@@ -11166,10 +11110,7 @@ export interface components {
             version: string;
         };
         RecordsDataBody: {
-            /**
-             * Format: date-time
-             * @description The moment the snapshot last moved: the most recent time any snapshot was read for the first time
-             */
+            /** @description The moment the snapshot last moved: the most recent time any snapshot was read for the first time */
             moved_at?: string;
             /** @description Whether it has gone the same span without moving that counts as stopped for the scanner's data */
             stale: boolean;
@@ -11920,10 +11861,7 @@ export interface components {
             last_error?: string;
             /** @description The subject of the work */
             reference: string;
-            /**
-             * Format: date-time
-             * @description The moment it was set aside
-             */
+            /** @description The moment it was set aside */
             stopped_at: string;
         };
         SettingBody: {
@@ -12235,17 +12173,11 @@ export interface components {
             statement?: string;
         };
         StatedVersionBody: {
-            /**
-             * Format: date-time
-             * @description The build time of the first scan that stated it
-             */
+            /** @description The build time of the first scan that stated it */
             from: string;
             /** @description The package identifier as the build stated it, version and qualifiers included */
             purl?: string;
-            /**
-             * Format: date-time
-             * @description The build time of the scan that stated something else. Absent while it is what the build states
-             */
+            /** @description The build time of the scan that stated something else. Absent while it is what the build states */
             until?: string;
             /** @description The version as the build stated it, empty where it stated none */
             version: string;
@@ -12764,10 +12696,7 @@ export interface components {
              * @example https://example.com/schemas/VulnerabilityDataBody.json
              */
             readonly $schema?: string;
-            /**
-             * Format: date-time
-             * @description The moment the data last moved: the most recent time any version was seen for the first time. A version that comes back is not a change
-             */
+            /** @description The moment the data last moved: the most recent time any version was seen for the first time. A version that comes back is not a change */
             moved_at?: string;
             /** @description The CVE record snapshot the scans narrowed their matches with */
             records: components["schemas"]["RecordsDataBody"];
@@ -13041,6 +12970,19 @@ export interface components {
              * @description Claims of theirs they took back
              */
             withdrawn: number;
+        };
+        WrittenBody: {
+            /** @description The text, in markdown */
+            body: string;
+            /** @description The moment the author last changed it, where they have */
+            edited_at?: string;
+            /** Format: int64 */
+            id: number;
+            written_at: string;
+            /** @description The author, by sign-in identity */
+            written_by: string;
+            /** @description Their display name, where it differs from their identity */
+            written_by_name?: string;
         };
     };
     responses: never;
@@ -13899,7 +13841,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["List-auditResponse"];
+                    "application/json": components["schemas"]["CountedListBodyJudgedBody"];
                 };
             };
             /** @description Error */
@@ -14013,7 +13955,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["List-audit-claimsResponse"];
+                    "application/json": components["schemas"]["CountedListBodyJudgedClaimBody"];
                 };
             };
             /** @description Error */
@@ -14170,7 +14112,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ListBodyCommentBody"];
+                    "application/json": components["schemas"]["ListBodyWrittenBody"];
                 };
             };
             /** @description Error */
@@ -17667,7 +17609,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["List-fix-bundlesResponse"];
+                    "application/json": components["schemas"]["CountedListBodyBundleBody"];
                 };
             };
             /** @description Error */
@@ -17890,7 +17832,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["List-attachmentsResponse"];
+                    "application/json": components["schemas"]["AttachmentsOutputBody"];
                 };
             };
             /** @description Error */
@@ -18339,7 +18281,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ListBodyNoteBody"];
+                    "application/json": components["schemas"]["ListBodyWrittenBody"];
                 };
             };
             /** @description Error */
@@ -18932,7 +18874,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["List-report-attachmentsResponse"];
+                    "application/json": components["schemas"]["AttachmentsOutputBody"];
                 };
             };
             /** @description Error */
@@ -19497,7 +19439,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["List-carried-patchesResponse"];
+                    "application/json": components["schemas"]["CountedListBodyCarriedClaimBody"];
                 };
             };
             /** @description Error */
@@ -20062,7 +20004,9 @@ export interface operations {
                 product: string;
                 stream: string;
                 variant: string;
+                /** @description The issue, by any name it is known under */
                 vulnerability: string;
+                /** @description The place, as the findings list gives it */
                 place: string;
             };
             cookie?: never;
@@ -20101,7 +20045,9 @@ export interface operations {
                 product: string;
                 stream: string;
                 variant: string;
+                /** @description The issue, by any name it is known under */
                 vulnerability: string;
+                /** @description The place, as the findings list gives it */
                 place: string;
             };
             cookie?: never;

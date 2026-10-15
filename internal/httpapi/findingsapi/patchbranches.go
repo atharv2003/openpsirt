@@ -6,7 +6,6 @@ package findingsapi
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -72,9 +71,6 @@ func registerPatchBranches(api huma.API, in core.Deps) {
 		}
 		out := &PatchBranchesOutput{}
 		out.Body.Repositories = []PatchRepositoryBody{}
-		if in.DB == nil {
-			return out, nil
-		}
 		out.Body.On = in.PatchBranches
 		repositories, totals, err := patchbranch.Progress(ctx, in.DB.DB, in.Excluded)
 		if err != nil {
@@ -84,9 +80,7 @@ func registerPatchBranches(api huma.API, in core.Deps) {
 		out.Body.Looked, out.Body.Found = totals.Looked, totals.Found
 		out.Body.HeldBytes = totals.HeldBytes
 		out.Body.Total = len(repositories)
-		start := min(input.Offset, len(repositories))
-		end := min(start+input.Limit, len(repositories))
-		for _, one := range repositories[start:end] {
+		for _, one := range core.Window(repositories, input.Limit, input.Offset) {
 			body := PatchRepositoryBody{
 				URL: one.URL, Host: one.Host, State: core.RepositoryState(one.State),
 				Position: one.Position, Step: core.VisitStep(one.Step), VisitLooked: one.VisitLooked,
@@ -94,15 +88,9 @@ func registerPatchBranches(api huma.API, in core.Deps) {
 				Commits: one.Commits, Looked: one.Looked, Found: one.Found,
 				Reason: one.Reason,
 			}
-			if one.RetryAt != nil {
-				body.RetryAt = one.RetryAt.UTC().Format(time.RFC3339)
-			}
-			if one.FetchedAt != nil {
-				body.FetchedAt = one.FetchedAt.UTC().Format(time.RFC3339)
-			}
-			if one.ReachedAt != nil {
-				body.ReachedAt = one.ReachedAt.UTC().Format(time.RFC3339)
-			}
+			body.RetryAt = core.StampAt(one.RetryAt)
+			body.FetchedAt = core.StampAt(one.FetchedAt)
+			body.ReachedAt = core.StampAt(one.ReachedAt)
 			if one.HeldBytes != nil {
 				body.HeldBytes = *one.HeldBytes
 			}

@@ -484,6 +484,7 @@ which reads as no attempt in flight.
 | A delivery gains when its latest attempt began | A column that takes a null, added where the table stands on every engine, after the destinations are folded. On MySQL and MariaDB in a transaction of its own between the fold and the merge, which asks whether the column is there first, so a start after one stopped part way steps over it |
 | A patch repository records when its last visit ended | No visit v0.8.0 recorded has an end, so each counts as having held the pass for no time until it is visited again (`DESIGN-findings.md` § Host share) |
 | A graph node records the source package its build stated | Each node v0.8.0 recorded takes the source package and version of the component it holds, which is what a scanner was given for it. On v0.8.0 that value can be another product's statement, and an upgraded node keeps it: a moving line's next scan writes what the build itself states, and a tag, never uploaded again, keeps filling from it (`DESIGN-data-model.md` § Duplicate descriptions) |
+| A finding no longer records when it last moved | Nothing read it. SQLite rebuilds the table from v0.9.0's declaration and the others drop the column. On MySQL and MariaDB in a transaction of its own, last, which asks whether the column is there first, so a start after one stopped part way steps over it |
 
 The rules an identity, a fold key and a live key are worked out by are copied
 into the migration rather than called, so a later change to the application
@@ -716,7 +717,7 @@ each be stored with every backslash doubled, and doubled again on every edit.
 Taking the name out keeps the rest of an operator's mode, and a server that
 sets it still starts.
 
-The gate reads three places. `AS <word>` is the syntax for inventing a name,
+The gate reads more than the syntax for inventing a name. `AS <word>` is that syntax,
 and matching that alone leaves a table renamed in a migration, which names no
 alias, and a table alias declared in a model's own struct tag both invisible.
 An alias of `as` — a word all four engines reserve — works only because the
@@ -739,6 +740,43 @@ reserved yet passes — and MySQL 8.0 reserved `rank`, `groups`, `lead` and
 property than the rule it is meant to enforce. A quoted name does not match the
 pattern at all, so every hit is by construction an unquoted one and the fix is
 one pair of quotes.
+
+A table the migrations declare and a column they declare are checked the same
+way, wherever a query writes them: in a statement, in the SQL argument of a
+builder method, and in a clause assembled in a variable and handed to one. A
+column is checked alone and after a qualifier, and the fix for a qualified one
+quotes both halves. A column is recognized by name and by case: every keyword
+here is written in capitals and every declared name in lower case, so
+`ORDER BY` is not a column named `by`. A word followed by a parenthesis is a
+function, and the arguments after a builder method's SQL are values, which are
+free to be a word the schema has a column of.
+
+A qualified column is read in every literal of the code that runs, not only in
+a statement. A fragment held in a constant, a struct field, a return value or
+the tail of a concatenation names no table, so the statement marker never
+admits it; an alias, a dot and a declared column, all in lower case, is the
+marker instead.
+
+| Literal | Read as |
+|---|---|
+| A clause: a comparison written with spaces, a parenthesis, a list of qualified names, `LIKE`, `BETWEEN`, or another keyword in capitals | Every qualified column in it |
+| One qualified name and nothing else, handed to a call, returned, given as a field's value, or held in a constant of a named type | That name |
+| An argument of a builder method or function that quotes its argument itself | Nothing: the callee quotes it |
+| An argument of a standard library call, a map's key, a constant of plain string type | Nothing: a setting's key is written the same way |
+| Anything in a test | Nothing: a test hands a detector the bare spellings it exists to find |
+
+A name a query invents with `AS` is read the same way as a declared column
+wherever a reference qualifies it, in a statement or a fragment, in any file:
+a derived table built in one file is often read in another. The pass counts
+the literals it reads and fails on none.
+
+A constant of plain string type holding one qualified name, and a column built
+from an alias at run time, are invisible to the pass and are quoted where they
+are written.
+
+A helper that places a column it is given as written takes it quoted, so a
+list of the columns it accepts lists them quoted too. A helper that builds a
+column from an alias it is given writes the quotes around the alias itself.
 
 The schema sweep reads a table's and an index's declaration: a name after a
 keyword that always precedes one, and a name where a column belongs in the
@@ -792,7 +830,9 @@ What was already read where it was written is left out, so one defect is
 reported once.
 
 A name that reaches SQL from outside the file is still invisible, because the
-check reads source as text and there is no parser here for four dialects. That
+check reads source as text and there is no parser here for four dialects. So
+is a column built from an alias at run time, which is quoted by the code that
+builds it. That
 is the safe direction for a check that fails a build. It looks only inside the
 builder's own methods: reading doc comments too reports the English word "as"
 as an invented name.
@@ -1258,7 +1298,6 @@ is the same kind of claim.
 | Which parser read a scan | A person. The document is deleted for a branch, so after a parser changes there is no other way to tell which stored records need re-uploading |
 | Whether this deployment ran the scan | Nothing yet. Always true today; a producer sending its own findings is intended and not built, and a schema assuming we ran it could not take that later |
 | How large a stored document is | A person asking whether retention is affordable. Derivable from the chunks, and kept because deriving it means reading the blobs to answer a question about their size |
-| When a finding last moved | A finding open for years outlives whatever record of the change was kept elsewhere |
 | When an identity was bound to a person | The audit trail for the one decision that cannot be undone by editing a role |
 | What sent the upload that was refused | A person. "Which of our pipelines is the broken one" is the first question a deployment with several asks, and a refusal that names only the build does not answer it |
 | What the refused document said it was built from | A person, for the out-of-order failure specifically: the refusal says the clock did not move, and this is what it said the time was |

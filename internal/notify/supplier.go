@@ -52,12 +52,12 @@ func (w *Watch) suppliersSilent(ctx context.Context) ([]Holds, error) {
 		Model((*supplier.Source)(nil)).
 		ColumnExpr("sp.*").
 		ColumnExpr(catalog.ShownExpr("p")+` AS "product"`).
-		Join(`JOIN "product" AS "p" ON p.id = sp.product_id`).
-		Where("sp.retired_at IS NULL").
+		Join(`JOIN "product" AS "p" ON "p"."id" = "sp"."product_id"`).
+		Where(`"sp"."retired_at" IS NULL`).
 		// A retired product's suppliers are never read again, and retiring
 		// the product does not withdraw them, so their silence is nobody's
 		// to clear.
-		Where("p.retired_at IS NULL").
+		Where(`"p"."retired_at" IS NULL`).
 		Scan(ctx, &sources)
 	if err != nil {
 		return nil, fmt.Errorf("read which suppliers are configured: %w", err)
@@ -73,10 +73,10 @@ func (w *Watch) suppliersSilent(ctx context.Context) ([]Holds, error) {
 			continue
 		}
 		body := fmt.Sprintf("The supplier %s for %s has not been read successfully since %s.",
-			one.Display, one.Product, since.Format("2006-01-02"))
+			one.Display, one.Product, day(since))
 		if one.ReachedAt == nil {
 			body = fmt.Sprintf("The supplier %s for %s has not been read successfully since "+
-				"it was configured on %s.", one.Display, one.Product, since.Format("2006-01-02"))
+				"it was configured on %s.", one.Display, one.Product, day(since))
 		}
 		if one.Failed != "" {
 			body += " The last attempt stopped at: " + one.Failed

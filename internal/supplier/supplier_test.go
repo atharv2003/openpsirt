@@ -34,11 +34,11 @@ func each(t *testing.T, fn func(t *testing.T, f *configured)) {
 
 		product := w.Product
 		rights := access.NewStore(db.DB)
-		boss, err := rights.Ensure(ctx, "ana@example.com", "Ana", access.Stated(true), nil)
+		boss, err := rights.Ensure(ctx, "ana@example.com", "Ana", new(true), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		other, err := rights.Ensure(ctx, "sam@example.com", "Sam", access.Stated(false), nil)
+		other, err := rights.Ensure(ctx, "sam@example.com", "Sam", new(false), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -341,7 +341,7 @@ func TestALaterMomentMovesTheDigestWithIt(t *testing.T) {
 				t.Fatal(err)
 			}
 			var held supplier.Source
-			if err := f.db.DB.NewSelect().Model(&held).Where("id = ?", row.ID).Scan(ctx); err != nil {
+			if err := f.db.DB.NewSelect().Model(&held).Where(`"id" = ?`, row.ID).Scan(ctx); err != nil {
 				t.Fatal(err)
 			}
 			if held.CaughtUpTo == nil || !held.CaughtUpTo.UTC().Equal(later) || held.CaughtUpMark != low {

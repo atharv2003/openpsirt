@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	world "github.com/nexthop-ai/openpsirt/internal/dbtest/fixture"
+
 	"github.com/nexthop-ai/openpsirt/internal/access"
 	"github.com/nexthop-ai/openpsirt/internal/finding"
 	"github.com/nexthop-ai/openpsirt/internal/graph"
@@ -36,7 +38,7 @@ func insideOf(status sbom.Status, product graph.Described, statement string) sbo
 // argues records claims the build sent with its inventory on the last scan.
 func (f *fixture) argues(t *testing.T, claims ...sbom.Suppression) {
 	t.Helper()
-	if _, err := f.store.RecordClaims(t.Context(), f.target, f.lastScan, claims, everyOrigin); err != nil {
+	if _, err := world.RecordClaims(t.Context(), f.db, f.target, f.lastScan, claims, everyOrigin); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -44,8 +46,8 @@ func (f *fixture) argues(t *testing.T, claims ...sbom.Suppression) {
 // rooted says the last scan's inventory named its root as given.
 func (f *fixture) rooted(t *testing.T, identifier string) {
 	t.Helper()
-	if _, err := f.db.DB.NewUpdate().Table("scan").Set("root_identifier = ?", identifier).
-		Where("id = ?", f.lastScan).Exec(t.Context()); err != nil {
+	if _, err := f.db.DB.NewUpdate().Table("scan").Set(`"root_identifier" = ?`, identifier).
+		Where(`"id" = ?`, f.lastScan).Exec(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -157,7 +159,7 @@ func TestAClaimThatTheFlawAppliesNamesTheFindingAndLeavesItWork(t *testing.T) {
 			}
 		}
 		// The claim is only information, so nothing moves on a re-scan.
-		if again, _ := f.reported(t, found(inside, zlib)); !again.Unchanged() {
+		if again, _ := f.reported(t, found(inside, zlib)); !changedNothing(again) {
 			t.Errorf("re-scanning wrote %+v", again)
 		}
 	})
@@ -180,7 +182,7 @@ func TestAStatementUploadedOnItsOwnAboutTheBuildsRootIsTheBuildsClaim(t *testing
 					"and answered by the build")
 			}
 		}
-		if again, _ := f.reported(t, found(inside, zlib)); !again.Unchanged() {
+		if again, _ := f.reported(t, found(inside, zlib)); !changedNothing(again) {
 			t.Errorf("re-scanning wrote %+v", again)
 		}
 	})
@@ -238,7 +240,7 @@ func TestAScanDoesNotWithdrawAClaimTakenFromAPublishedStatement(t *testing.T) {
 		f.vendorSays(t, rootPurl, sbom.NotAffected, "sha256:vendor-1")
 		f.reported(t, found(inside, zlib))
 		// The build's own document, stating nothing.
-		applied, err := f.store.RecordClaims(t.Context(), f.target, f.lastScan, nil, everyOrigin)
+		applied, err := world.RecordClaims(t.Context(), f.db, f.target, f.lastScan, nil, everyOrigin)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -327,7 +329,7 @@ func TestARevisionUploadedOnItsOwnReplacesTheClaimSentWithTheInventory(t *testin
 		}
 		var origin string
 		if err := f.db.DB.NewSelect().Table("suppression").Column("origin").
-			Where("id = ?", *f.every(t)[0].ClaimedBy).Scan(t.Context(), &origin); err != nil {
+			Where(`"id" = ?`, *f.every(t)[0].ClaimedBy).Scan(t.Context(), &origin); err != nil {
 			t.Fatal(err)
 		}
 		if origin != finding.Published {
@@ -386,8 +388,8 @@ func TestARootTwoBuildsHoldNamesNeither(t *testing.T) {
 		f.rooted(t, rootPurl)
 		other := f.anotherBranch(t, "release")
 		f.shippedTo(t, other, beside(acmeY))
-		if _, err := f.db.DB.NewUpdate().Table("scan").Set("root_identifier = ?", rootPurl).
-			Where("target_id = ?", other).Exec(t.Context()); err != nil {
+		if _, err := f.db.DB.NewUpdate().Table("scan").Set(`"root_identifier" = ?`, rootPurl).
+			Where(`"target_id" = ?`, other).Exec(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		f.vendorSays(t, rootPurl, sbom.NotAffected, "sha256:vendor-1")

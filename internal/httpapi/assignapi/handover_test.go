@@ -32,12 +32,14 @@ func TestAnUpgradeIsNotHandedToSomebodyWhoMayNotReadWhatItCovers(t *testing.T) {
 					holder+
 					`"builds":[{"stream":"master","variant":"broadcom"}]}`)
 		}
+		var waiting struct {
+			Items []struct {
+				HeldBy     string `json:"held_by"`
+				HeldByName string `json:"held_by_name"`
+			} `json:"items"`
+		}
 		pending := func() int {
-			var waiting struct {
-				Items []struct {
-					HeldBy string `json:"held_by"`
-				} `json:"items"`
-			}
+			waiting.Items = nil
 			httpapitest.Read(t, r, "private-dispatcher",
 				"/v1/products/mine/streams/master/variants/broadcom/pending-upgrades", &waiting)
 			return len(waiting.Items)
@@ -73,6 +75,13 @@ func TestAnUpgradeIsNotHandedToSomebodyWhoMayNotReadWhatItCovers(t *testing.T) {
 		}
 		if done.Held == 0 {
 			t.Fatalf("the promise was recorded and nothing was handed over: %s", got.Body.String())
+		}
+		// Carried by them: addressed by their identity, with the name every
+		// other screen shows beside it.
+		if n := pending(); n != 1 || waiting.Items[0].HeldBy != "private" ||
+			waiting.Items[0].HeldByName != httpapitest.ShownAs("private") {
+			t.Errorf("the upgrade handed over reads as %+v, want one held by %q, shown as %q",
+				waiting.Items, "private", httpapitest.ShownAs("private"))
 		}
 	})
 }

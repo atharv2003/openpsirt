@@ -22,10 +22,15 @@ func tablesDeclared(path string, body []byte, schema map[string]bool) {
 }
 
 // checkFile reports every name one parsed source file writes wrongly: a bare
-// name a query invents, a bare table a query names, a reserved word a
-// migration declares, and a reserved alias a struct tag declares.
-func checkFile(fset *token.FileSet, path string, file *ast.File, schema, reserved map[string]bool) []found {
-	var bad []found
+// name a query invents, a bare table or declared column a query names, a
+// reserved word a migration declares, and a reserved alias a struct tag
+// declares. elsewhere is the names queries in the rest of the tree invent.
+// It also answers how many pieces of SQL it read for columns, and
+// how many literals of the code that runs it read for the qualified form.
+func checkFile(fset *token.FileSet, path string, file *ast.File,
+	schema, columns, reserved, elsewhere map[string]bool) (bad []found, examined, qualified int) {
+	packages := importedNames(file)
+
 	// The data-definition half. Read from the string literals in a migration
 	// rather than from the file, because the prose beside them is full of the
 	// same words — and with the SQL comments inside those strings taken off
@@ -41,6 +46,29 @@ func checkFile(fset *token.FileSet, path string, file *ast.File, schema, reserve
 	// children, so one walk could not. Keyed by the literal's position, since
 	// a line can carry a statement and a fragment that is not one.
 	seen := map[token.Pos]bool{}
+	// columnsRead is seen and every literal the qualified pass read, so a
+	// column it reported is not reported again where the literal is used.
+	columnsRead := map[token.Pos]bool{}
+	quotedHere := quotedArguments(file)
+	// The qualified form is read in the code that runs. A test is where a
+	// detector is handed the bare spellings it exists to find.
+	production := !definitions && !strings.HasSuffix(path, "_test.go")
+	// The names queries invent, here and in the rest of the tree, which a
+	// reference qualifies the way it qualifies a declared column, and the two
+	// together. A derived table built in one file is often read in another.
+	madeUp := inventedNames(file, columns)
+	for word := range elsewhere {
+		if !columns[word] {
+			madeUp[word] = true
+		}
+	}
+	named := make(map[string]bool, len(columns)+len(madeUp))
+	for word := range columns {
+		named[word] = true
+	}
+	for word := range madeUp {
+		named[word] = true
+	}
 	ast.Inspect(file, func(node ast.Node) bool {
 		lit, ok := node.(*ast.BasicLit)
 		if !ok || lit.Kind != token.STRING {
@@ -63,14 +91,34 @@ func checkFile(fset *token.FileSet, path string, file *ast.File, schema, reserve
 		// word after AS, and "as" is a word in nearly every English sentence
 		// in this repository.
 		if !statement.MatchString(text) {
+			if production && !quotedHere[lit.Pos()] {
+				qualified++
+				if hits := qualifiedColumns(text, named, path, at); len(hits) > 0 {
+					bad = append(bad, hits...)
+					columnsRead[lit.Pos()] = true
+				}
+			}
 			return true
 		}
 		seen[lit.Pos()] = true
+		columnsRead[lit.Pos()] = true
 		for _, match := range invented.FindAllStringSubmatch(text, -1) {
 			bad = append(bad, found{word: match[1], file: path, line: at, bare: true})
 		}
+		examined++
+		bad = append(bad, unquotedColumns(text, columns, path, at)...)
+		// A declared column is read above; an invented one is read here,
+		// where a reference qualifies it.
+		if production {
+			qualified++
+			bad = append(bad, qualifiedIn(text, madeUp, path, at)...)
+		}
 		return true
 	})
+
+	if production {
+		bad = append(bad, handedNames(fset, path, file, named, standardNames(file))...)
+	}
 
 	ast.Inspect(file, func(node ast.Node) bool {
 		if definitions {
@@ -153,18 +201,40 @@ func checkFile(fset *token.FileSet, path string, file *ast.File, schema, reserve
 				}
 			}
 		}
+		// Columns are read in the argument holding the SQL alone: the others
+		// are values, and a value is free to be a word the schema has a
+		// column of.
+		if arg := queryArgument(call, named.Sel.Name, packages); arg != nil {
+			// A Set that assigns nothing is a map's, a header's or a query
+			// string's: the builder's always writes "column = value".
+			parts := piecesOf(fset, arg)
+			if named.Sel.Name == "Set" && !strings.Contains(joined(parts), "=") {
+				parts = nil
+			}
+			if len(parts) > 0 {
+				examined++
+				text := withoutSQLComments(joined(parts))
+				for _, bare := range bareColumns(text, columns) {
+					one, whole := pieceAt(parts, bare.start, bare.end)
+					if whole && columnsRead[one.pos] {
+						continue
+					}
+					bad = append(bad, found{word: bare.word, file: path, line: one.line, bare: true, column: bare.quoted()})
+				}
+			}
+		}
 		return true
 	})
 	// A clause handed over as a variable rather than written at the call.
 	// literal() reads what it can see and returns nothing for the rest, so a
-	// fragment assembled a line earlier was skipped in silence — which is
-	// precisely the fragment nobody has read.
+	// fragment assembled a line earlier is read from the variable.
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Body == nil {
 			continue
 		}
-		pieces := assembled(fn, seen)
+		pieces := assembled(fn, seen, nil)
+		quoted := assembled(fn, columnsRead, quotedByBuilder)
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
 			if !ok {
@@ -190,10 +260,19 @@ func checkFile(fset *token.FileSet, path string, file *ast.File, schema, reserve
 					bad = append(bad, unquotedTables(text, schema, path, at)...)
 				}
 			}
+			if arg := queryArgument(call, method.Sel.Name, packages); arg != nil {
+				if _, _, readable := literal(fset, arg); !readable {
+					if text, ok := quoted[assembledFrom(arg)]; ok {
+						examined++
+						bad = append(bad, unquotedColumns(withoutSQLComments(text), columns, path,
+							fset.Position(arg.Pos()).Line)...)
+					}
+				}
+			}
 			return true
 		})
 	}
-	return bad
+	return bad, examined, qualified
 }
 
 // A piece is one string literal of an argument written as a concatenation,

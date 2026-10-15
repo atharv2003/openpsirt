@@ -55,16 +55,16 @@ type decisionState struct {
 // nobody is in force, and counts with the agreed ones.
 var (
 	claimWaiting = decisionState{"waiting_here",
-		" AND de.state = ? AND de.needs_approval = ? AND de.live_key IS NOT NULL",
+		` AND "de"."state" = ? AND "de"."needs_approval" = ? AND "de"."live_key" IS NOT NULL`,
 		[]any{"proposed", true}}
 	claimApproved = func() decisionState {
 		inForce, args := InForce()
-		return decisionState{"approved_here", " AND " + inForce + " AND de.live_key IS NOT NULL", args}
+		return decisionState{"approved_here", " AND " + inForce + ` AND "de"."live_key" IS NOT NULL`, args}
 	}()
 	claimLapsed = decisionState{"lapsed_here",
-		" AND de.state = ?", []any{"lapsed"}}
+		` AND "de"."state" = ?`, []any{"lapsed"}}
 	claimSentBack = decisionState{"sent_back_here",
-		" AND de.state = ? AND de.live_key IS NOT NULL AND de.sent_back_at IS NOT NULL",
+		` AND "de"."state" = ? AND "de"."live_key" IS NOT NULL AND "de"."sent_back_at" IS NOT NULL`,
 		[]any{"proposed"}}
 )
 
@@ -97,14 +97,12 @@ func standsAs(product string, state decisionState) string {
 	// from outside it is the row's identifier, which is the shape the state
 	// filter's derived table already uses on all four engines.
 	return `EXISTS (SELECT 1 FROM "finding" AS "f2"
-			JOIN "component" AS "c" ON c.id = f2.component_id
-			LEFT JOIN "component" AS "uc" ON uc.id = f2.consumer_id
-			JOIN "vulnerability" AS "dv" ON dv.issue_id = f2.vulnerability_id
-			JOIN "decision" AS "de" ON de.vulnerability_id = dv.id
-			  AND de.place_identity = f2.place_identity
-			JOIN "claim" AS "cl" ON cl.id = de.claim_id
-			WHERE f2.id = f.id
-			  AND de.product_id = ` + product + `
+			JOIN "component" AS "c" ON "c"."id" = "f2"."component_id"
+			LEFT JOIN "component" AS "uc" ON "uc"."id" = "f2"."consumer_id"
+			JOIN (` + Decisions + `) ON ` + DecisionAtPlace("f2") + `
+			JOIN "claim" AS "cl" ON "cl"."id" = "de"."claim_id"
+			WHERE "f2"."id" = "f"."id"
+			  AND "de"."product_id" = ` + product + `
 			  AND ` + coversHere + state.condition + `)`
 }
 
@@ -118,7 +116,7 @@ func standsAs(product string, state decisionState) string {
 // checks.
 func decidedAs(product string, state decisionState) string {
 	return `SUM(CASE WHEN EXISTS (SELECT 1 FROM ` + Decisions + `
-			JOIN "claim" AS "cl" ON cl.id = de.claim_id
+			JOIN "claim" AS "cl" ON "cl"."id" = "de"."claim_id"
 			WHERE ` + DecisionAt(product) + `
 			  AND ` + coversHere + state.condition + `) THEN 1 ELSE 0 END) AS "` + state.alias + `"`
 }
@@ -140,7 +138,7 @@ func decisionsAtPlaces(q *bun.SelectQuery, productID int64, states ...decisionSt
 		decided = decided.ColumnExpr(`MAX(CASE WHEN `+strings.TrimPrefix(state.condition, " AND ")+
 			` THEN 1 ELSE 0 END) AS "`+state.alias+`"`, state.args...)
 	}
-	return decided.Where("de.product_id = ?", productID)
+	return decided.Where(`"de"."product_id" = ?`, productID)
 }
 
 // decisionsOutward is every open finding a decision covers, one row per
@@ -159,9 +157,9 @@ func decisionsAtPlaces(q *bun.SelectQuery, productID int64, states ...decisionSt
 // product once per row.
 func decisionsOutward(q *bun.SelectQuery) *bun.SelectQuery {
 	return decisionsOver(q, `"finding" AS "f2"`).
-		ColumnExpr(`f2.id AS "finding_id"`).
-		Where("f2.closed_at IS NULL").
-		GroupExpr("f2.id")
+		ColumnExpr(`"f2"."id" AS "finding_id"`).
+		Where(`"f2"."closed_at" IS NULL`).
+		GroupExpr(`"f2"."id"`)
 }
 
 // decisionsOver is every decision reaching a place read from source as "f2",
@@ -174,8 +172,8 @@ func decisionsOver(q *bun.SelectQuery, source string, args ...any) *bun.SelectQu
 		TableExpr(`"decision" AS "de"`).
 		Join(DecisionIssue).
 		Join(`CROSS JOIN `+source, args...).
-		Where("f2.vulnerability_id = dv.issue_id AND f2.place_identity = de.place_identity").
-		Join(`JOIN "claim" AS "cl" ON cl.id = de.claim_id`).
+		Where(DecisionAtPlace("f2")).
+		Join(`JOIN "claim" AS "cl" ON "cl"."id" = "de"."claim_id"`).
 		Where(coversAsked)
 }
 
@@ -199,14 +197,13 @@ func decisionsOver(q *bun.SelectQuery, source string, args ...any) *bun.SelectQu
 // of a consumer that is not there, so it is compared as such rather than
 // looked up.
 var coversAsked = func() string {
-	component := "COALESCE(de.component_upstream_version, '') = " + ComponentUpstreamExpr
-	consumer := "COALESCE(de.consumer_upstream_version, '') = " + ConsumerUpstreamExpr
+	component, consumer := componentMatches, consumerMatches
 	covers := strings.NewReplacer(
 		component, `EXISTS (SELECT 1 FROM "component" AS "c"
-			WHERE c.id = f2.component_id AND `+component+`)`,
-		consumer, `((f2.consumer_id IS NULL AND COALESCE(de.consumer_upstream_version, '') = '')
+			WHERE "c"."id" = "f2"."component_id" AND `+component+`)`,
+		consumer, `(("f2"."consumer_id" IS NULL AND COALESCE("de"."consumer_upstream_version", '') = '')
 			OR EXISTS (SELECT 1 FROM "component" AS "uc"
-			WHERE uc.id = f2.consumer_id AND `+consumer+`))`,
+			WHERE "uc"."id" = "f2"."consumer_id" AND `+consumer+`))`,
 	).Replace(coversHere)
 	if strings.Count(covers, "EXISTS") != 2 {
 		panic("finding: KeyMatches no longer compares the versions coversAsked moves")
@@ -218,5 +215,5 @@ var coversAsked = func() string {
 // state, under the state's own alias. A place no decision covers has no row
 // in the joined table and counts as none.
 func placesDecided(state decisionState) string {
-	return `SUM(COALESCE(dd.` + state.alias + `, 0)) AS "` + state.alias + `"`
+	return `SUM(COALESCE("dd"."` + state.alias + `", 0)) AS "` + state.alias + `"`
 }

@@ -66,11 +66,13 @@ Satisfies REQ-01, REQ-61, REQ-63, REQ-75.
 | `internal/saved/` | A narrowing of a list somebody kept, and the claim it prepares. See `DESIGN-remediation.md` |
 | `internal/vex/`, `internal/publisher/` | What we have decided about what a build ships, and who says so. See `DESIGN-remediation.md` |
 | `internal/directory/` | The advisories that have gone out, written where somebody else's web server serves them. See `DESIGN-remediation.md` |
+| `internal/csaf/` | The shapes of a CSAF provider description and ROLIE feed, which the directory writes. The supplier reader reads the fields it uses under the names these declare. See `DESIGN-remediation.md` |
 | `internal/supplier/` | The publishers whose advisories are read on a schedule, and what a pass over one takes. See `DESIGN-ingest.md` |
 | `internal/cverecord/` | The CVE record snapshot: fetching it, reading it, and what a record says about a component's version. See `DESIGN-findings.md` § CVE record ranges and `DESIGN-ingest.md` § CVE records |
 | `internal/patchbranch/` | Which branches hold the commits patch links name, the repository copies that answer it, and the proxy git reaches out through. See `DESIGN-findings.md` |
 | `internal/vercmp/` | Ordering two versions of one package, where the ecosystem defines one. See `DESIGN-remediation.md` |
 | `internal/outward/` | The one HTTP client this process reaches the internet with. See `DESIGN-access.md` |
+| `internal/typedname/` | The one form a name somebody typed is stored and matched in, for every store that keys a row on one. See `DESIGN-data-model.md` |
 | `internal/background/`, `internal/bound/` | A pass on a timer, and cutting a string to a number of bytes or characters without splitting a character |
 | `internal/redact/` | An address that may carry a credential, as text safe to log or refuse with. See `DESIGN-access.md` § Secrets and logs |
 | `internal/refusal/` | A sentence a caller may read, told apart from a fault whose text is withheld. See `DESIGN-api.md` |
@@ -82,7 +84,11 @@ Satisfies REQ-01, REQ-61, REQ-63, REQ-75.
 | `docs/` | The published documentation site |
 | `assets/` | Logo files |
 | `tools/` | One module per Go tool the gate and the image run, each requiring that tool at one version. See § Tool pins |
-| `Makefile` | The build, every gate, and what they clean up |
+| `Makefile` | The build, the test runs, the linter, the gate and `check`, the interface build, the measurements, and what they clean up. Every other makefile is included from it, after its own targets, so its first target stays the default. Each makefile declares its own targets phony, and a test fails on a makefile in the tree that no include names |
+| `mk/engines.mk` | The database servers the suite runs against, as containers, and `check-engines` |
+| `mk/gates.mk` | The checks beside the linter and the suite: dependency vulnerabilities and licenses, the inventory, credentials, the gate programs under `internal/tools/`, the generated files held to what generates them, and the pinned versions held to each other |
+| `mk/dist.mk` | The release assets, built and checked in one directory, and the record of a release's migrations |
+| `mk/packaging.mk` | The container image and the chart, checked as what ships |
 | `Makefile.demo` | The image and what is built from it: the seeded demo deployment, the hot-reload loop, and the offline scanner bundle. Included by the makefile beside it, so every target is reached the same way. A file of its own because it shares nothing with the gate half but the names of the docker and npm commands, so the half that decides whether a change may be pushed reads without the half that stands an instance up. The scanner bundle is here because it is built from the demo image rather than because it is a demo target, and every variable these read is here with them |
 
 Everything is under `internal/`, so nothing is importable by another module.
@@ -128,7 +134,7 @@ computed rather than written out so a new directory of ours needs no edit.
 | `make openapi-current` | The committed API document against what the code generates |
 | `make sbom` | This project's own CycloneDX inventory |
 | `make web-check` | Interface: locked install, type check, Prettier, ESLint, Stylelint, tests with coverage, class-name checks, and the generated client diffed against the API document. Refuses without npm rather than skipping |
-| `make unreachable` | Exported code nothing reaches |
+| `make unreachable` | Exported code nothing reaches. A function, type, constant or variable is counted by its package and its name, a qualified reference resolving through the file's imports; a method is counted by name alone, because telling which type a selector reaches needs type information. A test counts as a caller |
 | `make negatives` | A 404 built from an error's own text, or given an error as a detail: it asserts a name reaches nothing, and publishes whatever the error carried. Read as parsed Go, so a call spread over lines and an error under any name are one shape. The text counts however it arrives: read with its method, formatted from a value named like an error, or bound to a name earlier in the same declaration |
 | `make granted` | Every function that reaches one grant table reaches the other, by the table's name, by a model whose struct tag binds it under whatever name the model and its package carry, by a type built from such a model as an alias or an embedding, or through a package-level name whose value does. Each package-level name is judged by its own value as well. The functions that legitimately ask one — writing or listing that table's own rows — are named in the gate with a reason each, and a name nothing matches fails it |
 | `make narrowed` | A build resolved for somebody brought into one case is read with a subject, or refused before anything is read. A resolution bound by an assignment or by `var` is followed, and so is every value copied, collected or built from it; one used inline without a binding is not. The call around a use that decides is the innermost one |

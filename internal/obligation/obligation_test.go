@@ -17,6 +17,7 @@ import (
 	world "github.com/nexthop-ai/openpsirt/internal/dbtest/fixture"
 	"github.com/nexthop-ai/openpsirt/internal/finding"
 	"github.com/nexthop-ai/openpsirt/internal/graph"
+	"github.com/nexthop-ai/openpsirt/internal/markdown"
 	"github.com/nexthop-ai/openpsirt/internal/obligation"
 	"github.com/nexthop-ai/openpsirt/internal/triage"
 )
@@ -67,7 +68,7 @@ var castSeed = dbtest.Seed(func(ctx context.Context, db *database.DB) (cast, err
 	if _, err := db.DB.NewInsert().Model(&finding.Finding{
 		TargetID: target.ID, Kind: finding.Vulnerable, VulnerabilityID: issue,
 		Visibility: access.Public, ComponentID: component.ID, PlaceIdentity: "place-of-libfoo",
-		LastChangedAt: now, OpenedAt: now, OpenedRunID: &run.ID,
+		OpenedAt: now, OpenedRunID: &run.ID,
 	}).Exec(ctx); err != nil {
 		return cast{}, err
 	}
@@ -548,7 +549,7 @@ func TestANoticeSaysWhoWhenAndWhat(t *testing.T) {
 			// whoever answers for it, so the markdown policy and the bound
 			// hold before it is stored.
 			{"raw HTML in what was said", "ENISA", "<b>An attack.</b>", when},
-			{"more said than the bound", "ENISA", strings.Repeat("x", triage.GroundsLimit+1), when},
+			{"more said than the bound", "ENISA", strings.Repeat("x", markdown.MaxBytes+1), when},
 		} {
 			if _, err := f.store.RecordTold(t.Context(), f.triager, record.ID, nil,
 				tc.recipient, tc.at, tc.said, obligation.Details{}); err == nil {
@@ -584,7 +585,7 @@ func rivalAfterRead(t *testing.T, f *fixture, read, write string, rival func() e
 func trailed(t *testing.T, f *fixture, name string) int {
 	t.Helper()
 	n, err := f.db.DB.NewSelect().TableExpr(`"admin_change"`).
-		Where("about = ?", "Obligation window "+name).Count(t.Context())
+		Where(`"about" = ?`, "Obligation window "+name).Count(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -651,7 +652,7 @@ func TestANoticeAboutAnUndisclosedIssueIsRefusedToWhoMayNotReadIt(t *testing.T) 
 	each(t, func(t *testing.T, f *fixture) {
 		record := f.attacked(t)
 		if _, err := f.db.DB.NewUpdate().TableExpr(`"finding"`).
-			Set("visibility = ?", access.Private).Where("1 = 1").Exec(t.Context()); err != nil {
+			Set(`"visibility" = ?`, access.Private).Where("1 = 1").Exec(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		_, err := f.store.RecordTold(t.Context(), f.triager, record.ID, nil, "ENISA",

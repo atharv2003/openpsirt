@@ -28,7 +28,7 @@ func TestSomebodyJustAddedIsNotAlreadyAbsent(t *testing.T) {
 		hush := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 		rights := access.NewStore(db.DB)
-		admin, err := rights.Ensure(ctx, "admin@example.com", "Admin", access.Stated(true), nil)
+		admin, err := rights.Ensure(ctx, "admin@example.com", "Admin", new(true), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -100,7 +100,7 @@ func TestSomebodyAwayHoldingWorkIsRaisedAndAnIdleAccountIsNot(t *testing.T) {
 		hush := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 		rights := access.NewStore(db.DB)
-		admin, err := rights.Ensure(ctx, "admin@example.com", "Admin", access.Stated(true), nil)
+		admin, err := rights.Ensure(ctx, "admin@example.com", "Admin", new(true), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -126,7 +126,7 @@ func TestSomebodyAwayHoldingWorkIsRaisedAndAnIdleAccountIsNot(t *testing.T) {
 			away.ID: long, idle.ID: long, here.ID: recent, admin.ID: recent,
 		} {
 			if _, err := db.DB.NewUpdate().Table("person").
-				Set("last_seen_at = ?", seen).Where("id = ?", who).Exec(ctx); err != nil {
+				Set(`"last_seen_at" = ?`, seen).Where(`"id" = ?`, who).Exec(ctx); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -196,8 +196,8 @@ func TestSomebodyAwayHoldingWorkIsRaisedAndAnIdleAccountIsNot(t *testing.T) {
 		// They come back, and the condition clears itself — nobody dismisses
 		// it, which is what makes these conditions rather than events.
 		if _, err := db.DB.NewUpdate().Table("person").
-			Set("last_seen_at = ?", time.Now().UTC()).
-			Where("id = ?", away.ID).Exec(ctx); err != nil {
+			Set(`"last_seen_at" = ?`, time.Now().UTC()).
+			Where(`"id" = ?`, away.ID).Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if _, cleared, err := watch.Once(ctx); err != nil || cleared != 1 {
@@ -223,12 +223,12 @@ func TestAnAbsenceShorterThanADayIsSaidPlainly(t *testing.T) {
 		db := w.DB
 		ctx := t.Context()
 		hush := slog.New(slog.NewTextHandler(io.Discard, nil))
-		if err := setting.NewStore(db.DB).Set(ctx, setting.AbsentAfter, "12h"); err != nil {
+		if _, _, err := setting.NewStore(db.DB).Change(ctx, setting.AbsentAfter, "12h"); err != nil {
 			t.Fatal(err)
 		}
 
 		rights := access.NewStore(db.DB)
-		admin, err := rights.Ensure(ctx, "admin@example.com", "Admin", access.Stated(true), nil)
+		admin, err := rights.Ensure(ctx, "admin@example.com", "Admin", new(true), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -237,8 +237,8 @@ func TestAnAbsenceShorterThanADayIsSaidPlainly(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := db.DB.NewUpdate().Table("person").
-			Set("last_seen_at = ?", time.Now().UTC().Add(-13*time.Hour)).
-			Where("id = ?", away.ID).Exec(ctx); err != nil {
+			Set(`"last_seen_at" = ?`, time.Now().UTC().Add(-13*time.Hour)).
+			Where(`"id" = ?`, away.ID).Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
 		assignOne(t, w, away.PartyID)

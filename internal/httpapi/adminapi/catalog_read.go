@@ -52,10 +52,7 @@ func registerCatalogReading(api huma.API, d core.Declaring) {
 		if err != nil {
 			return nil, err
 		}
-		store, err := core.StoreFor(d, d.Handle())
-		if err != nil {
-			return nil, err
-		}
+		store := d.Store(d.Handle())
 		rows, err := store.Products(ctx, subject)
 		if err != nil {
 			return nil, core.WentWrong(d.Logger, "cannot list products", err)
@@ -93,7 +90,7 @@ func registerCatalogReading(api huma.API, d core.Declaring) {
 				Branches: shape.Branches, Tags: shape.Tags, Variants: shape.Variants,
 				Open:          counted(in.Counts, open, row.ID),
 				LastScanAt:    seen[row.Name],
-				TriageFloor:   core.Line(core.WordStated(row.TriageFloor)),
+				TriageFloor:   core.Line(core.OrBlank(row.TriageFloor)),
 				PairShare:     core.CountedOr(row.PairShare),
 				PairApprovers: core.CountedOr(row.PairApprovers),
 				EndOfLife:     core.OnDate(row.EOLOn),
@@ -125,10 +122,7 @@ func registerCatalogReading(api huma.API, d core.Declaring) {
 		if err != nil {
 			return nil, err
 		}
-		store, err := core.StoreFor(d, d.Handle())
-		if err != nil {
-			return nil, err
-		}
+		store := d.Store(d.Handle())
 		product, err := store.VisibleProduct(ctx, subject, in.Product)
 		if err != nil {
 			return nil, core.Undeclared(d.Logger, err, "that product could not be looked up")
@@ -228,10 +222,7 @@ func registerCatalogReading(api huma.API, d core.Declaring) {
 		if err != nil {
 			return nil, err
 		}
-		store, err := core.StoreFor(d, d.Handle())
-		if err != nil {
-			return nil, err
-		}
+		store := d.Store(d.Handle())
 		product, err := store.VisibleProduct(ctx, subject, in.Product)
 		if err != nil {
 			return nil, core.Undeclared(d.Logger, err, "that product could not be looked up")
@@ -273,10 +264,7 @@ func registerCatalogReading(api huma.API, d core.Declaring) {
 		if err != nil {
 			return nil, err
 		}
-		store, err := core.StoreFor(d, d.Handle())
-		if err != nil {
-			return nil, err
-		}
+		store := d.Store(d.Handle())
 		_, stream, err := store.VisibleStream(ctx, subject, in.Product, in.Stream)
 		if err != nil {
 			return nil, core.Undeclared(d.Logger, err, "that product could not be looked up")

@@ -103,7 +103,7 @@ func newRun(t *testing.T, w *fixture.World) *runFixture {
 	if err != nil || outcome != ingest.Accept {
 		t.Fatalf("record scan: %v %v", outcome, err)
 	}
-	_, err = graph.NewStore(db.DB).Apply(ctx, target.ID, scan.ID, graph.Snapshot{
+	_, err = fixture.ApplyGraph(ctx, db.DB, target.ID, scan.ID, graph.Snapshot{
 		Root: root, Components: []graph.Described{swss, libnl},
 		Dependencies: []graph.Dependency{
 			{Parent: root, Child: swss}, {Parent: swss, Child: libnl},
@@ -171,7 +171,7 @@ func TestABuildHoldingNothingButItselfIsScannedWithoutTheScanner(t *testing.T) {
 		if err != nil || outcome != ingest.Accept {
 			t.Fatalf("record scan: %v %v", outcome, err)
 		}
-		if _, err := graph.NewStore(f.db.DB).Apply(ctx, f.target, scan.ID,
+		if _, err := fixture.ApplyGraph(ctx, f.db.DB, f.target, scan.ID,
 			graph.Snapshot{Root: root}); err != nil {
 			t.Fatal(err)
 		}
@@ -206,7 +206,7 @@ func TestWhatRanIsRecordedAgainstTheRun(t *testing.T) {
 		}
 
 		var run finding.Run
-		if err := f.db.DB.NewSelect().Model(&run).Where("id = ?", outcome.RunID).Scan(t.Context()); err != nil {
+		if err := f.db.DB.NewSelect().Model(&run).Where(`"id" = ?`, outcome.RunID).Scan(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if run.Scanner != "stub" || run.ScannerVersion != "9.9.9" || run.DatabaseVersion != "2026-08-28" {
@@ -263,7 +263,7 @@ func TestScanningAgainWithTheSameAnswerWritesNothing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !outcome.Applied.Unchanged() {
+		if !changedNothing(outcome.Applied) {
 			t.Errorf("a re-scan finding the same things wrote %+v", outcome.Applied)
 		}
 	})
@@ -347,7 +347,7 @@ func (f *runFixture) rebuilt(t *testing.T, library graph.Described) {
 	if err != nil || outcome != ingest.Accept {
 		t.Fatalf("record scan: %v %v", outcome, err)
 	}
-	if _, err := graph.NewStore(f.db.DB).Apply(ctx, f.target, scan.ID, graph.Snapshot{
+	if _, err := fixture.ApplyGraph(ctx, f.db.DB, f.target, scan.ID, graph.Snapshot{
 		Root: root, Components: []graph.Described{swss, library},
 		Dependencies: []graph.Dependency{
 			{Parent: root, Child: swss}, {Parent: swss, Child: library},
@@ -495,13 +495,13 @@ func TestAScanRatingAnIssueWorseLapsesAClaimTheRatingBearsOn(t *testing.T) {
 		decided := f.decided(t)
 		// A claim a severity bears on, made against the rating the issue had.
 		if _, err := f.db.DB.NewUpdate().Table("claim").
-			Set("justification = ?", string(triage.CodeNotReachableByAdversary)).
-			Where(`id = (SELECT claim_id FROM "decision" WHERE id = ?)`, decided).
+			Set(`"justification" = ?`, string(triage.CodeNotReachableByAdversary)).
+			Where(`"id" = (SELECT "claim_id" FROM "decision" WHERE "id" = ?)`, decided).
 			Exec(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := f.db.DB.NewUpdate().Table("decision").
-			Set("severity_centi = ?", 800).Where("id = ?", decided).Exec(t.Context()); err != nil {
+			Set(`"severity_centi" = ?`, 800).Where(`"id" = ?`, decided).Exec(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 
@@ -593,7 +593,7 @@ func TestWhatTheScannerSaidWhileSucceedingReachesTheRun(t *testing.T) {
 
 		var runs []finding.Run
 		if err := f.db.DB.NewSelect().Model(&runs).
-			Where("finished_at IS NOT NULL").Scan(t.Context()); err != nil {
+			Where(`"finished_at" IS NOT NULL`).Scan(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if len(runs) != 1 {
@@ -674,8 +674,8 @@ func (f *runFixture) finishedRuns(t *testing.T) int {
 func (f *runFixture) finishedRunsOn(t *testing.T, target int64) int {
 	t.Helper()
 	n, err := f.db.DB.NewSelect().Model((*finding.Run)(nil)).
-		Where("target_id = ?", target).
-		Where("finished_at IS NOT NULL").
+		Where(`"target_id" = ?`, target).
+		Where(`"finished_at" IS NOT NULL`).
 		Count(t.Context())
 	if err != nil {
 		t.Fatalf("count the scan runs: %v", err)
@@ -767,7 +767,7 @@ func TestARunRecordsTheCVERecordSnapshotItRead(t *testing.T) {
 			t.Fatal(err)
 		}
 		var run finding.Run
-		if err := f.db.DB.NewSelect().Model(&run).Where("id = ?", outcome.RunID).Scan(t.Context()); err != nil {
+		if err := f.db.DB.NewSelect().Model(&run).Where(`"id" = ?`, outcome.RunID).Scan(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if run.RecordsVersion != "2026-10-07T00:00:00Z" {
@@ -807,7 +807,7 @@ func TestAScanWithAnUnreadableSnapshotWaitsWithoutSpendingAnAttempt(t *testing.T
 func (f *runFixture) waitingUntried(t *testing.T, why string, runsBefore int) {
 	t.Helper()
 	var job queue.Job
-	if err := f.db.DB.NewSelect().Model(&job).Where("kind = ?", queue.Scan).
+	if err := f.db.DB.NewSelect().Model(&job).Where(`"kind" = ?`, queue.Scan).
 		Order("id DESC").Limit(1).Scan(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -863,7 +863,7 @@ func (f *runFixture) kernelShipped(t *testing.T, version string) graph.Described
 	if err != nil || outcome != ingest.Accept {
 		t.Fatalf("record scan: %v %v", outcome, err)
 	}
-	if _, err := graph.NewStore(f.db.DB).Apply(ctx, f.target, scan.ID, graph.Snapshot{
+	if _, err := fixture.ApplyGraph(ctx, f.db.DB, f.target, scan.ID, graph.Snapshot{
 		Root: root, Components: []graph.Described{kernel},
 		Dependencies: []graph.Dependency{{Parent: root, Child: kernel}},
 	}); err != nil {
@@ -967,4 +967,11 @@ func TestABuildNeverScannedWithASnapshotIsScannedWithoutOne(t *testing.T) {
 			t.Errorf("a build never narrowed was refused without a snapshot: %v", err)
 		}
 	})
+}
+
+// changedNothing is whether a run opened, closed, updated or closed by
+// statement nothing at all.
+func changedNothing(a finding.Applied) bool {
+	return a.Opened == 0 && a.Closed == 0 && a.Updated == 0 && a.Patched == 0 && a.Unaffected == 0 &&
+		a.Disclaimed == 0
 }

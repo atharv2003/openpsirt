@@ -317,9 +317,9 @@ func (s *Store) locate(ctx context.Context, subject access.Subject,
 //
 // A container image is stored with no version, and the identifier this build
 // stamped it with is its node's open image version, joined beside it.
-const nodeJoin = `LEFT JOIN "graph_node" AS "gn" ON gn.target_id = f.target_id
-			AND gn.component_id = f.component_id AND gn.closed_scan_id IS NULL
-		LEFT JOIN "image_version" AS "giv" ON giv.node_id = gn.id AND giv.closed_scan_id IS NULL`
+const nodeJoin = `LEFT JOIN "graph_node" AS "gn" ON "gn"."target_id" = "f"."target_id"
+			AND "gn"."component_id" = "f"."component_id" AND "gn"."closed_scan_id" IS NULL
+		LEFT JOIN "image_version" AS "giv" ON "giv"."node_id" = "gn"."id" AND "giv"."closed_scan_id" IS NULL`
 
 // document assembles what stands about one build, at the visibilities asked
 // for.
@@ -336,9 +336,6 @@ func (s *Store) document(ctx context.Context, who publisher.Named, named *catalo
 		Component       string `bun:"component"`
 		Purl            string `bun:"purl"`
 		finding.Covering
-		Justification string    `bun:"-"`
-		Mitigation    string    `bun:"-"`
-		DecidedAt     time.Time `bun:"-"`
 	}
 	// One statement per issue and component, from the claims that stand and
 	// have been agreed to. Joined from the findings this build actually holds:
@@ -347,17 +344,17 @@ func (s *Store) document(ctx context.Context, who publisher.Named, named *catalo
 	// build ships rather than everything the product has ever decided.
 	q := s.idb().NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "target" AS "tg" ON tg.id = f.target_id`).
-		Join(`JOIN "component" AS "c" ON c.id = f.component_id`).
+		Join(`JOIN "target" AS "tg" ON "tg"."id" = "f"."target_id"`).
+		Join(`JOIN "component" AS "c" ON "c"."id" = "f"."component_id"`).
 		Join(nodeJoin).
-		Join(`LEFT JOIN "component" AS "uc" ON uc.id = f.consumer_id`).
-		Join(`JOIN "vulnerability" AS "v" ON v.id = f.vulnerability_id`).
-		ColumnExpr(`v.id AS "vulnerability_id"`).
-		ColumnExpr(`v.identifier AS "identifier"`).
-		ColumnExpr(`c.name AS "component"`).
-		ColumnExpr(`COALESCE(giv.purl, gn.purl, c.purl, '') AS "purl"`).
-		Where("f.target_id = ?", target.ID).
-		Where("f.visibility IN (?)", bun.List(visible)).
+		Join(`LEFT JOIN "component" AS "uc" ON "uc"."id" = "f"."consumer_id"`).
+		Join(`JOIN "vulnerability" AS "v" ON "v"."id" = "f"."vulnerability_id"`).
+		ColumnExpr(`"v"."id" AS "vulnerability_id"`).
+		ColumnExpr(`"v"."identifier" AS "identifier"`).
+		ColumnExpr(`"c"."name" AS "component"`).
+		ColumnExpr(`COALESCE("giv"."purl", "gn"."purl", "c"."purl", '') AS "purl"`).
+		Where(`"f"."target_id" = ?`, target.ID).
+		Where(`"f"."visibility" IN (?)`, bun.List(visible)).
 		// The issue's key is grouped alongside its name so the aliases can be
 		// looked up per issue. Selecting it without grouping it is accepted by
 		// SQLite and refused by PostgreSQL, which is the whole reason a query
@@ -370,7 +367,7 @@ func (s *Store) document(ctx context.Context, who publisher.Named, named *catalo
 		// grouping on those emitted the same claim twice — or, where the
 		// outcomes differed, two statements contradicting each other about one
 		// component.
-		GroupExpr("v.id, v.identifier, c.name, giv.purl, gn.purl, c.purl").
+		GroupExpr(`"v"."id", "v"."identifier", "c"."name", "giv"."purl", "gn"."purl", "c"."purl"`).
 		// One more than the ceiling, so that reaching it is distinguishable
 		// from landing on it exactly.
 		Limit(s.carrying() + 1)
@@ -427,11 +424,6 @@ func (s *Store) document(ctx context.Context, who publisher.Named, named *catalo
 	if err != nil {
 		return nil, err
 	}
-	for i := range rows {
-		rows[i].Justification = said[rows[i].DecidedBy].Justification
-		rows[i].Mitigation = said[rows[i].DecidedBy].Mitigation
-		rows[i].DecidedAt = said[rows[i].DecidedBy].ProposedAt
-	}
 
 	// Which revision this is, read from what has gone out for this build.
 	// A document generated twice with nothing published in between is the
@@ -476,72 +468,29 @@ func (s *Store) document(ctx context.Context, who publisher.Named, named *catalo
 		return nil, err
 	}
 	for _, row := range rows {
-		about := row.Purl
-		if about == "" {
-			// A component with no package identifier is named by the name the
-			// build calls it. Less use to a machine and better than dropping
-			// the statement: the reader can still match it by hand, and a
-			// silent omission reads as "no claim" — which is the one thing
-			// this document must not say by accident.
-			about = row.Component
-		}
-		statement := Statement{
-			Vulnerability: Issue{Name: row.Identifier, Aliases: alsoCalled[row.VulnerabilityID]},
-			Timestamp:     row.DecidedAt.UTC(),
-			Products: []Shipped{{
-				ID: shipped, Subcomponents: []Inside{{ID: about}},
-			}},
-			Status: statusOf(row.Outcome),
-		}
-		// The same sentence goes in a different field depending on what is
-		// being said about it. On a claim that something does not apply it is
-		// why, beside the category a machine reads; on one that will not be
-		// fixed it is what to do instead, which is the field the format asks
-		// for and the reason such a claim is published at all.
-		switch statement.Status {
-		case "not_affected":
-			statement.Justification = row.Justification
-			statement.ImpactStatement = row.Mitigation
-		case "affected":
-			statement.ActionStatement = row.Mitigation
+		statement, err := claimed(Issue{Name: row.Identifier, Aliases: alsoCalled[row.VulnerabilityID]},
+			shipped, subject(row.Purl, row.Component), row.Outcome, said[row.DecidedBy])
+		if err != nil {
+			return nil, err
 		}
 		doc.Statements = append(doc.Statements, statement)
 	}
 	// A place stated on its own names what pulls the component in as the
 	// product, so a reader applies it beneath that product and nowhere else.
 	for _, row := range placed {
-		about := row.Purl
-		if about == "" {
-			about = row.Component
-		}
-		words := said[row.DecidedBy]
-		statement := Statement{
-			Vulnerability: Issue{Name: row.Identifier, Aliases: alsoCalled[row.VulnerabilityID]},
-			Timestamp:     words.ProposedAt.UTC(),
-			Products: []Shipped{{
-				ID: row.ConsumerPurl, Subcomponents: []Inside{{ID: about}},
-			}},
-			Status: statusOf(row.Outcome),
-		}
-		switch statement.Status {
-		case "not_affected":
-			statement.Justification = words.Justification
-			statement.ImpactStatement = words.Mitigation
-		case "affected":
-			statement.ActionStatement = words.Mitigation
+		statement, err := claimed(Issue{Name: row.Identifier, Aliases: alsoCalled[row.VulnerabilityID]},
+			row.ConsumerPurl, subject(row.Purl, row.Component), row.Outcome, said[row.DecidedBy])
+		if err != nil {
+			return nil, err
 		}
 		doc.Statements = append(doc.Statements, statement)
 	}
 	for _, row := range fixed {
-		about := row.Purl
-		if about == "" {
-			about = row.Component
-		}
 		doc.Statements = append(doc.Statements, Statement{
 			Vulnerability: Issue{Name: row.Identifier, Aliases: alsoCalled[row.VulnerabilityID]},
 			Timestamp:     row.PatchedAt.UTC(),
 			Products: []Shipped{{
-				ID: shipped, Subcomponents: []Inside{{ID: about}},
+				ID: shipped, Subcomponents: []Inside{{ID: subject(row.Purl, row.Component)}},
 			}},
 			Status: "fixed",
 		})
@@ -551,15 +500,11 @@ func (s *Store) document(ctx context.Context, who publisher.Named, named *catalo
 	// a place open, and a supplier's statement only of one with none, so the
 	// two never speak about one issue in one component.
 	for _, row := range stated {
-		about := row.Purl
-		if about == "" {
-			about = row.Component
-		}
 		doc.Statements = append(doc.Statements, Statement{
 			Vulnerability: Issue{Name: row.Identifier, Aliases: alsoCalled[row.VulnerabilityID]},
 			Timestamp:     row.ClosedAt.UTC(),
 			Products: []Shipped{{
-				ID: shipped, Subcomponents: []Inside{{ID: about}},
+				ID: shipped, Subcomponents: []Inside{{ID: subject(row.Purl, row.Component)}},
 			}},
 			Status:          "not_affected",
 			Justification:   known(row.Justification),
@@ -582,6 +527,54 @@ func (s *Store) document(ctx context.Context, who publisher.Named, named *catalo
 	})
 	return doc, nil
 }
+
+// closedInBuild is the components of a build whose findings closed for the
+// reason given and that a statement is still made about, one row per issue,
+// name and package identifier, at the visibilities given and up to one past
+// the ceiling, so that reaching it is distinguishable from landing on it. The
+// caller adds what the closure itself still has to hold.
+//
+// The row read beside each is the lowest, which names the same row on every
+// engine, and is read rather than aggregated: a time read through an
+// aggregate comes back as text on one engine and a time on another.
+func (s *Store) closedInBuild(targetID int64, visible []access.Visibility,
+	because finding.Closure) *bun.SelectQuery {
+
+	return s.idb().NewSelect().
+		TableExpr(`"finding" AS "f"`).
+		Join(`JOIN "component" AS "c" ON "c"."id" = "f"."component_id"`).
+		Join(nodeJoin).
+		Join(`JOIN "vulnerability" AS "v" ON "v"."id" = "f"."vulnerability_id"`).
+		ColumnExpr(`"v"."id" AS "vulnerability_id"`).
+		ColumnExpr(`"v"."identifier" AS "identifier"`).
+		ColumnExpr(`"c"."name" AS "component"`).
+		ColumnExpr(`COALESCE("giv"."purl", "gn"."purl", "c"."purl", '') AS "purl"`).
+		ColumnExpr(`MIN("f"."id") AS "first"`).
+		Where(`"f"."target_id" = ?`, targetID).
+		Where(`"f"."closed_because" = ?`, because).
+		Where(`"f"."visibility" IN (?)`, bun.List(visible)).
+		Where(stillShips).
+		Where(noneOpenByNameAndPurl).
+		GroupExpr(`"v"."id", "v"."identifier", "c"."name", "giv"."purl", "gn"."purl", "c"."purl"`).
+		Limit(s.carrying() + 1)
+}
+
+// stillShips says the component of a finding `f` is still in its build.
+const stillShips = `EXISTS (SELECT 1 FROM "graph_node" AS "n"
+	WHERE "n"."target_id" = "f"."target_id" AND "n"."component_id" = "f"."component_id"
+		AND "n"."closed_scan_id" IS NULL)`
+
+// noneOpenByNameAndPurl says no place of the issue in a finding `f`'s build is
+// open at a component `c` of the same name and package identifier.
+//
+// Asked of the name and package identifier the statement is made about, which
+// may be several components: one at a version a patch does not reach is
+// affected, and a statement naming both would say otherwise.
+const noneOpenByNameAndPurl = `NOT EXISTS (SELECT 1 FROM "finding" AS "o"
+	JOIN "component" AS "oc" ON "oc"."id" = "o"."component_id"
+	WHERE "o"."target_id" = "f"."target_id" AND "o"."vulnerability_id" = "f"."vulnerability_id"
+		AND "o"."closed_at" IS NULL AND "oc"."name" = "c"."name"
+		AND COALESCE("oc"."purl", '') = COALESCE("c"."purl", ''))`
 
 // fixedByPatch is an issue a patch the build declares has fixed in one
 // component.
@@ -616,37 +609,9 @@ func (s *Store) patched(ctx context.Context, targetID int64,
 		Purl            string `bun:"purl"`
 		First           int64  `bun:"first"`
 	}
-	err := s.idb().NewSelect().
-		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "component" AS "c" ON c.id = f.component_id`).
-		Join(nodeJoin).
-		Join(`JOIN "vulnerability" AS "v" ON v.id = f.vulnerability_id`).
-		Join(`JOIN "suppression" AS "sup" ON sup.id = f.suppressed_by`).
-		ColumnExpr(`v.id AS "vulnerability_id"`).
-		ColumnExpr(`v.identifier AS "identifier"`).
-		ColumnExpr(`c.name AS "component"`).
-		ColumnExpr(`COALESCE(giv.purl, gn.purl, c.purl, '') AS "purl"`).
-		// The row the date is read from. A time read through an aggregate
-		// comes back as text on one engine and a time on another.
-		ColumnExpr(`MIN(f.id) AS "first"`).
-		Where("f.target_id = ?", targetID).
-		Where("f.closed_because = ?", finding.Patched).
-		Where("f.visibility IN (?)", bun.List(visible)).
-		Where("sup.closed_scan_id IS NULL").
-		Where(`EXISTS (SELECT 1 FROM "graph_node" AS "n"
-			WHERE n.target_id = f.target_id AND n.component_id = f.component_id
-				AND n.closed_scan_id IS NULL)`).
-		// Asked of the name and package identifier the statement is made
-		// about, which may be several components: one at a version the
-		// patch does not reach is affected, and a statement naming both would
-		// say otherwise.
-		Where(`NOT EXISTS (SELECT 1 FROM "finding" AS "o"
-			JOIN "component" AS "oc" ON oc.id = o.component_id
-			WHERE o.target_id = f.target_id AND o.vulnerability_id = f.vulnerability_id
-				AND o.closed_at IS NULL AND oc.name = c.name
-				AND COALESCE(oc.purl, '') = COALESCE(c.purl, ''))`).
-		GroupExpr("v.id, v.identifier, c.name, giv.purl, gn.purl, c.purl").
-		Limit(s.carrying()+1).
+	err := s.closedInBuild(targetID, visible, finding.Patched).
+		Join(`JOIN "suppression" AS "sup" ON "sup"."id" = "f"."suppressed_by"`).
+		Where(`"sup"."closed_scan_id" IS NULL`).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("read what the build's patches fix: %w", err)
@@ -663,11 +628,11 @@ func (s *Store) patched(ctx context.Context, targetID int64,
 		ID       int64     `bun:"id"`
 		ClosedAt time.Time `bun:"closed_at"`
 	}
-	where, args := database.InAnyOf("f.id", ids)
+	where, args := database.InAnyOf(`"f"."id"`, ids)
 	if err := s.idb().NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		ColumnExpr(`f.id AS "id"`).
-		ColumnExpr(`f.closed_at AS "closed_at"`).
+		ColumnExpr(`"f"."id" AS "id"`).
+		ColumnExpr(`"f"."closed_at" AS "closed_at"`).
 		Where(where, args...).
 		Scan(ctx, &dated); err != nil {
 		return nil, fmt.Errorf("read when the build's patches were seen: %w", err)
@@ -755,41 +720,17 @@ func (s *Store) disclaimed(ctx context.Context, targetID int64,
 		Purl            string `bun:"purl"`
 		First           int64  `bun:"first"`
 	}
-	err := s.idb().NewSelect().
-		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "component" AS "c" ON c.id = f.component_id`).
-		Join(nodeJoin).
-		Join(`JOIN "vulnerability" AS "v" ON v.id = f.vulnerability_id`).
-		Join(`JOIN "vex_statement" AS "ss" ON ss.id = f.stated_by`).
-		ColumnExpr(`v.id AS "vulnerability_id"`).
-		ColumnExpr(`v.identifier AS "identifier"`).
-		ColumnExpr(`c.name AS "component"`).
-		ColumnExpr(`COALESCE(giv.purl, gn.purl, c.purl, '') AS "purl"`).
-		// The row the statement and the date are read from: the lowest, so
-		// every engine names the same one.
-		ColumnExpr(`MIN(f.id) AS "first"`).
-		Where("f.target_id = ?", targetID).
-		Where("f.closed_because = ?", finding.Disclaimed).
-		Where("f.visibility IN (?)", bun.List(visible)).
-		Where("ss.superseded_at IS NULL").
+	err := s.closedInBuild(targetID, visible, finding.Disclaimed).
+		Join(`JOIN "vex_statement" AS "ss" ON "ss"."id" = "f"."stated_by"`).
+		Where(`"ss"."superseded_at" IS NULL`).
 		// What the place holds now: a later row at it, patched by the build
 		// or open again, is what the document goes by.
 		Where(finding.LatestAtItsPlace).
-		Where(`EXISTS (SELECT 1 FROM "graph_node" AS "n"
-			WHERE n.target_id = f.target_id AND n.component_id = f.component_id
-				AND n.closed_scan_id IS NULL)`).
-		Where(`NOT EXISTS (SELECT 1 FROM "finding" AS "o"
-			JOIN "component" AS "oc" ON oc.id = o.component_id
-			WHERE o.target_id = f.target_id AND o.vulnerability_id = f.vulnerability_id
-				AND o.closed_at IS NULL AND oc.name = c.name
-				AND COALESCE(oc.purl, '') = COALESCE(c.purl, ''))`).
-		GroupExpr("v.id, v.identifier, c.name, giv.purl, gn.purl, c.purl").
 		// One supplier's statement and no other. Two suppliers answering
 		// places of one component each spoke for their own product, and the
 		// format names the component once: credited to either, the document
 		// says one of them spoke for the other's.
-		Having("COUNT(DISTINCT f.stated_by) = 1").
-		Limit(s.carrying()+1).
+		Having(`COUNT(DISTINCT "f"."stated_by") = 1`).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("read what suppliers' statements close: %w", err)
@@ -812,19 +753,19 @@ func (s *Store) disclaimed(ctx context.Context, targetID int64,
 		Statement     string    `bun:"statement"`
 		Document      string    `bun:"document"`
 	}
-	where, args := database.InAnyOf("f.id", ids)
+	where, args := database.InAnyOf(`"f"."id"`, ids)
 	if err := s.idb().NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "vex_statement" AS "ss" ON ss.id = f.stated_by`).
+		Join(`JOIN "vex_statement" AS "ss" ON "ss"."id" = "f"."stated_by"`).
 		Join(finding.WordsJoin("ss")).
-		ColumnExpr(`f.id AS "id"`).
-		ColumnExpr(`f.closed_at AS "closed_at"`).
-		ColumnExpr(`ss.publisher AS "publisher"`).
-		ColumnExpr(`COALESCE(ss.within, ss.component) AS "product"`).
-		ColumnExpr(`COALESCE(ss.within_about, ss.about) AS "version"`).
-		ColumnExpr(`COALESCE(ss.justification, '') AS "justification"`).
+		ColumnExpr(`"f"."id" AS "id"`).
+		ColumnExpr(`"f"."closed_at" AS "closed_at"`).
+		ColumnExpr(`"ss"."publisher" AS "publisher"`).
+		ColumnExpr(`COALESCE("ss"."within", "ss"."component") AS "product"`).
+		ColumnExpr(`COALESCE("ss"."within_about", "ss"."about") AS "version"`).
+		ColumnExpr(`COALESCE("ss"."justification", '') AS "justification"`).
 		ColumnExpr(finding.WordsColumn+` AS "statement"`).
-		ColumnExpr(`ss.document AS "document"`).
+		ColumnExpr(`"ss"."document" AS "document"`).
 		Where(where, args...).
 		Scan(ctx, &read); err != nil {
 		return nil, fmt.Errorf("read the statements that closed them: %w", err)
@@ -848,12 +789,15 @@ func (s *Store) disclaimed(ctx context.Context, targetID int64,
 	return stated, nil
 }
 
-// statusOf turns an outcome into what the format calls it.
+// statusOf turns an outcome into what the format calls it, and is empty for
+// an outcome the format is not told about.
 //
 // Only the four a VEX document per build names arrive here. A deferral never
 // does: publishing it as not-affected would tell the world we assessed
 // something as harmless when we had only postponed it, and silence already
-// reads as affected.
+// reads as affected. An outcome missing from the table is refused rather
+// than published under a default, because the only safe default on a
+// published document is to say nothing.
 //
 // A claim that the scanner matched something that is not here publishes as
 // not-affected, carrying the reason it states: that the component is absent,
@@ -867,14 +811,55 @@ func (s *Store) disclaimed(ctx context.Context, targetID int64,
 // it and no advisory is issued about it, and under silence it would never be
 // said at all.
 func statusOf(outcome string) string {
-	switch outcome {
-	case "already-fixed":
-		return "fixed"
-	case "wont-fix":
-		return "affected"
-	default:
-		return "not_affected"
+	return statuses[outcome]
+}
+
+// statuses is the format's status for each outcome a document states.
+var statuses = map[string]string{
+	finding.OutcomeNotApplicable: "not_affected",
+	finding.OutcomeMismatched:    "not_affected",
+	finding.OutcomeAlreadyFixed:  "fixed",
+	finding.OutcomeWontFix:       "affected",
+}
+
+// subject is what a statement names the component by: its package
+// identifier, or where it has none, the name the build calls it.
+//
+// Less use to a machine and better than dropping the statement: the reader can
+// still match it by hand, and a silent omission reads as "no claim", which is
+// the one thing this document must not say by accident.
+func subject(purl, component string) string {
+	if purl == "" {
+		return component
 	}
+	return purl
+}
+
+// claimed is the statement an agreed claim makes about one component beneath
+// one product, in the words the decision it rests on states.
+//
+// The same sentence goes in a different field depending on what is being said
+// about it. On a claim that something does not apply it is why, beside the
+// category a machine reads; on one that will not be fixed it is what to do
+// instead, which is the field the format asks for and the reason such a claim
+// is published at all.
+func claimed(issue Issue, product, about, outcome string, words finding.Stated) (Statement, error) {
+	statement := Statement{
+		Vulnerability: issue,
+		Timestamp:     words.ProposedAt.UTC(),
+		Products:      []Shipped{{ID: product, Subcomponents: []Inside{{ID: about}}}},
+		Status:        statusOf(outcome),
+	}
+	switch statement.Status {
+	case "":
+		return Statement{}, fmt.Errorf("outcome %q has no VEX status", outcome)
+	case "not_affected":
+		statement.Justification = words.Justification
+		statement.ImpactStatement = words.Mitigation
+	case "affected":
+		statement.ActionStatement = words.Mitigation
+	}
+	return statement, nil
 }
 
 // identify is what the document calls itself, which is the same string every
@@ -912,9 +897,9 @@ func (s *Store) rootOf(ctx context.Context, named *catalog.Named, targetID int64
 	var root string
 	err := s.idb().NewSelect().
 		TableExpr(`"target" AS "t"`).
-		Join(`JOIN "scan" AS "sc" ON sc.id = t.last_scan_id`).
-		ColumnExpr(`COALESCE(sc.root_identifier, '')`).
-		Where("t.id = ?", targetID).
+		Join(`JOIN "scan" AS "sc" ON "sc"."id" = "t"."last_scan_id"`).
+		ColumnExpr(`COALESCE("sc"."root_identifier", '')`).
+		Where(`"t"."id" = ?`, targetID).
 		Scan(ctx, &root)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("read how the build names itself: %w", err)
@@ -944,19 +929,19 @@ func (s *Store) namesOf(ctx context.Context, issues []int64) (map[int64][]string
 	// Split and OR-ed rather than one list. A build with a thousand agreed
 	// dismissals is a thousand identifiers here and a large one is far more,
 	// and a statement binding them all is refused by two of the four engines.
-	where, args := database.InAnyOf("va.vulnerability_id", issues)
+	where, args := database.InAnyOf(`"va"."vulnerability_id"`, issues)
 	err := s.idb().NewSelect().Model((*finding.Alias)(nil)).
-		Join(`JOIN "vulnerability" AS "v" ON v.id = va.vulnerability_id`).
-		ColumnExpr(`va.vulnerability_id AS "vulnerability_id"`).
-		ColumnExpr(`va.identifier AS "identifier"`).
+		Join(`JOIN "vulnerability" AS "v" ON "v"."id" = "va"."vulnerability_id"`).
+		ColumnExpr(`"va"."vulnerability_id" AS "vulnerability_id"`).
+		ColumnExpr(`"va"."identifier" AS "identifier"`).
 		Where(where, args...).
 		// The other names, so not the one the statement is already
 		// filed under. The alias table holds every name an issue
 		// answers to including its own, which is what makes identity
 		// span them ; a document repeating the primary in its own
 		// alias list says nothing and reads as a mistake.
-		Where("va.identifier <> v.identifier").
-		OrderExpr("va.identifier").
+		Where(`"va"."identifier" <> "v"."identifier"`).
+		OrderExpr(`"va"."identifier"`).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("read what these issues are also called: %w", err)

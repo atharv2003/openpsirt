@@ -15,6 +15,7 @@ import (
 
 	"github.com/nexthop-ai/openpsirt/internal/database"
 	"github.com/nexthop-ai/openpsirt/internal/refusal"
+	"github.com/nexthop-ai/openpsirt/internal/typedname"
 )
 
 // Team is a named set of people that holds work and grants nothing.
@@ -73,7 +74,7 @@ var ErrNoSuchTeam = refusal.New("no team is known by that name")
 // twice is one team, and a second call is how a deployment script stays
 // runnable.
 func (s *Store) DeclareTeam(ctx context.Context, name, displayName string) (*Team, error) {
-	matched := teamNamed(name)
+	matched := typedname.Matching(name)
 	if matched == "" {
 		return nil, refusal.Errorf("a team needs a name")
 	}
@@ -98,7 +99,7 @@ func (s *Store) DeclareTeam(ctx context.Context, name, displayName string) (*Tea
 		*team = Team{}
 		found := new(Team)
 		err := tx.NewSelect().Model(found).
-			Where("name = ?", matched).Limit(1).Scan(ctx)
+			Where(`"name" = ?`, matched).Limit(1).Scan(ctx)
 		switch {
 		case err == nil && found.RetiredAt == nil:
 			*team = *found
@@ -112,9 +113,9 @@ func (s *Store) DeclareTeam(ctx context.Context, name, displayName string) (*Tea
 			// there as far as anybody can see. Reinstating is also what
 			// somebody typing a name they retired last week means.
 			if _, err := tx.NewUpdate().Model((*Team)(nil)).
-				Set("retired_at = ?", nil).
-				Set("display_name = ?", shown).
-				Where("id = ?", found.ID).Exec(ctx); err != nil {
+				Set(`"retired_at" = ?`, nil).
+				Set(`"display_name" = ?`, shown).
+				Where(`"id" = ?`, found.ID).Exec(ctx); err != nil {
 				return err
 			}
 			found.RetiredAt, found.DisplayName = nil, shown
@@ -154,8 +155,8 @@ func (s *Store) DeclareTeam(ctx context.Context, name, displayName string) (*Tea
 func (s *Store) TeamByName(ctx context.Context, name string) (*Team, error) {
 	team := new(Team)
 	err := s.db.NewSelect().Model(team).
-		Where("name = ?", teamNamed(name)).
-		Where("retired_at IS NULL").
+		Where(`"name" = ?`, typedname.Matching(name)).
+		Where(`"retired_at" IS NULL`).
 		Limit(1).Scan(ctx)
 	if err != nil {
 		// A read that could not be made is not an answer about what exists:
@@ -182,9 +183,8 @@ func (s *Store) Teams(ctx context.Context, term string, limit int) ([]Team, erro
 		// Read in bulk rather than a screenful at a time: the picker asks for
 		// a screenful and the two callers that want every team say so with
 		// this kind's own ceiling. Bounded as a list somebody pages through,
-		// "all of them" fell past the 200 ceiling and took the 50-row default
-		// — so a deployment past fifty teams rendered every routing rule owned
-		// by an alphabetically-later team with a blank team name.
+		// "all of them" past that list's ceiling takes its default instead,
+		// and every team past the default reads as no team.
 		Limit(database.InBulk.Of(limit))
 	if err := query.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read which teams there are: %w", err)
@@ -202,7 +202,7 @@ func (s *Store) TeamsByID(ctx context.Context, ids []int64) (map[int64]Team, err
 	err := database.IDsInBatches(ctx, ids, func(ctx context.Context, some []int64) error {
 		var teams []Team
 		if err := s.db.NewSelect().Model(&teams).
-			Where("id IN (?)", bun.List(some)).Scan(ctx); err != nil {
+			Where(`"id" IN (?)`, bun.List(some)).Scan(ctx); err != nil {
 			return fmt.Errorf("read the teams named: %w", err)
 		}
 		for _, team := range teams {
@@ -231,20 +231,11 @@ func (s *Store) CountTeams(ctx context.Context, term string) (int, error) {
 // narrowTeams is the team listing's own matching, spelled once so the listing
 // and the count of it cannot come to narrow differently.
 func narrowTeams(query *bun.SelectQuery, term string) *bun.SelectQuery {
-	query = query.Where("retired_at IS NULL")
-	wanted := strings.TrimSpace(term)
-	if wanted == "" {
-		return query
-	}
 	// Matched without regard to capitals, the way every name a person types is
 	// matched here, and escaped: a search box is not a pattern language, and a
 	// term of "%" would answer with every team there is.
-	like := database.LikeContains(wanted)
-	return query.WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
-		return q.WhereOr(`LOWER("name") LIKE ?`+database.LikeClause, like).
-			WhereOr(`LOWER(COALESCE(NULLIF("display_name", ''), "name")) LIKE ?`+
-				database.LikeClause, like)
-	})
+	return database.LikeNameOrShown(query.Where(`"retired_at" IS NULL`),
+		bun.Ident("name"), bun.Ident("display_name"), term)
 }
 
 // RetireTeam takes a team out of use. Its membership goes with it — the team
@@ -254,22 +245,14 @@ func narrowTeams(query *bun.SelectQuery, term string) *bun.SelectQuery {
 func (s *Store) RetireTeam(ctx context.Context, teamID int64) error {
 	write := func(ctx context.Context, db bun.IDB) error {
 		if _, err := db.NewDelete().Model((*Membership)(nil)).
-			Where("team_id = ?", teamID).Exec(ctx); err != nil {
+			Where(`"team_id" = ?`, teamID).Exec(ctx); err != nil {
 			return err
 		}
-		res, err := db.NewUpdate().Model((*Team)(nil)).
-			Set("retired_at = ?", s.now().Truncate(time.Microsecond)).
-			Where("id = ?", teamID).
-			Where("retired_at IS NULL").
-			Exec(ctx)
+		took, err := database.Retire(ctx, db, (*Team)(nil), teamID, s.now().Truncate(time.Microsecond))
 		if err != nil {
 			return err
 		}
-		n, err := database.Affected(res)
-		if err != nil {
-			return err
-		}
-		if n == 0 {
+		if !took {
 			return ErrNoSuchTeam
 		}
 		return nil
@@ -287,7 +270,7 @@ func (s *Store) RetireTeam(ctx context.Context, teamID int64) error {
 //
 // Read then written rather than as one upsert, because there is no portable
 // spelling of one — two of the four engines want ON CONFLICT and the other two
-// ON DUPLICATE KEY UPDATE, and engine-specific SQL stays out of the core .
+// ON DUPLICATE KEY UPDATE, and engine-specific SQL stays out of the core.
 // Both statements in one transaction, so what the read saw is what the write
 // writes against; two administrators adding the same person at once resolve
 // against the primary key.
@@ -296,7 +279,7 @@ func (s *Store) AddToTeam(ctx context.Context, teamID, personID, by int64) (bool
 	add := func(ctx context.Context, db bun.IDB) error {
 		added = false
 		on, err := db.NewSelect().Model((*Membership)(nil)).
-			Where("team_id = ?", teamID).Where("person_id = ?", personID).Count(ctx)
+			Where(`"team_id" = ?`, teamID).Where(`"person_id" = ?`, personID).Count(ctx)
 		if err != nil {
 			return err
 		}
@@ -321,14 +304,13 @@ func (s *Store) AddToTeam(ctx context.Context, teamID, personID, by int64) (bool
 // what has arrived.
 //
 // A removal that matched nothing is ErrNothingMatched, like every other write
-// here that takes access away: taking somebody off a team they were never on
-// otherwise answered as though it had happened, and the caller wrote a trail
-// row saying a membership was ended that never existed. Membership is what
-// routes an undisclosed finding to somebody, so a trail that says who stopped
-// receiving them is a record of who could have seen what.
+// here that takes access away, so the caller writes no trail row for a
+// membership that never existed. Membership is what routes an undisclosed
+// finding to somebody, so a trail that says who stopped receiving them is a
+// record of who could have seen what.
 func (s *Store) RemoveFromTeam(ctx context.Context, teamID, personID int64) error {
 	res, err := s.db.NewDelete().Model((*Membership)(nil)).
-		Where("team_id = ?", teamID).Where("person_id = ?", personID).Exec(ctx)
+		Where(`"team_id" = ?`, teamID).Where(`"person_id" = ?`, personID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("take that person off the team: %w", err)
 	}
@@ -347,7 +329,7 @@ func (s *Store) MembersOf(ctx context.Context, teamID int64) ([]int64, error) {
 	var people []int64
 	if err := s.db.NewSelect().Model((*Membership)(nil)).
 		Column("person_id").
-		Where("team_id = ?", teamID).
+		Where(`"team_id" = ?`, teamID).
 		Order("person_id").Scan(ctx, &people); err != nil {
 		return nil, fmt.Errorf("read who is on that team: %w", err)
 	}
@@ -361,21 +343,14 @@ func (s *Store) MembersOf(ctx context.Context, teamID int64) ([]int64, error) {
 func (s *Store) TeamsOf(ctx context.Context, personID int64) ([]Team, error) {
 	var teams []Team
 	err := s.db.NewSelect().Model(&teams).
-		Join(`JOIN "team_member" AS "tmm" ON tmm.team_id = tm.id`).
-		Where("tmm.person_id = ?", personID).
-		Where("tm.retired_at IS NULL").
+		Join(`JOIN "team_member" AS "tmm" ON "tmm"."team_id" = "tm"."id"`).
+		Where(`"tmm"."person_id" = ?`, personID).
+		Where(`"tm"."retired_at" IS NULL`).
 		Order("tm.name").Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read which teams somebody is on: %w", err)
 	}
 	return teams, nil
-}
-
-// teamNamed folds a team name the way every other name people type is folded :
-// normalized on the way in, so every engine compares it the same without any
-// of them being asked to compare loosely.
-func teamNamed(name string) string {
-	return strings.ToLower(strings.TrimSpace(name))
 }
 
 // Held is who a party is, for a screen that has an assignment and needs a name
@@ -408,7 +383,7 @@ func (s *Store) WhoHolds(ctx context.Context, parties []int64) (map[int64]Held, 
 	var people []Account
 	if err := s.db.NewSelect().Model(&people).
 		Column("party_id", "identity", "display_name").
-		Where("party_id IN (?)", bun.List(parties)).Scan(ctx); err != nil {
+		Where(`"party_id" IN (?)`, bun.List(parties)).Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read who holds these: %w", err)
 	}
 	for _, person := range people {
@@ -421,7 +396,7 @@ func (s *Store) WhoHolds(ctx context.Context, parties []int64) (map[int64]Held, 
 	var teams []Team
 	if err := s.db.NewSelect().Model(&teams).
 		Column("party_id", "name", "display_name").
-		Where("party_id IN (?)", bun.List(parties)).Scan(ctx); err != nil {
+		Where(`"party_id" IN (?)`, bun.List(parties)).Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read which teams hold these: %w", err)
 	}
 	for _, team := range teams {
@@ -456,8 +431,8 @@ func (s *Store) PersonReads(ctx context.Context, personID, productID int64,
 		return false, err
 	}
 	reads, err := holdingAny(s.db.NewSelect().
-		TableExpr(`"person" AS "p"`).ColumnExpr("p.id").
-		Where("p.id = ?", personID), "p.id", enough, productID).Exists(ctx)
+		TableExpr(`"person" AS "p"`).ColumnExpr(`"p"."id"`).
+		Where(`"p"."id" = ?`, personID), `"p"."id"`, enough, productID).Exists(ctx)
 	if err != nil {
 		return false, fmt.Errorf("read whether they may see this: %w", err)
 	}
@@ -467,16 +442,14 @@ func (s *Store) PersonReads(ctx context.Context, personID, productID int64,
 // here reports whether this person is still someone the deployment answers
 // for: recorded, and not deactivated.
 //
-// One spelling, because "may this person do this" has to exclude somebody who
-// has left at every site that asks it, and it excluded them at one — the
-// mention picker, whose own doc gives the reason: they are refused at sign-in,
-// so offering their name mentions somebody who will never see it. The same
-// sentence applies to routing work to them and to counting administrators, and
-// was carried to neither.
+// One spelling, because "may this person do this" excludes somebody who has
+// left at every site that asks it: the mention picker, routing work to them,
+// and counting administrators. They are refused at sign-in, so anything handed
+// to them is handed to somebody who will never see it.
 func (s *Store) here(ctx context.Context, personID int64) (bool, error) {
 	live, err := s.db.NewSelect().Model((*Account)(nil)).
-		Where("id = ?", personID).
-		Where("deactivated_at IS NULL").
+		Where(`"id" = ?`, personID).
+		Where(`"deactivated_at" IS NULL`).
 		Exists(ctx)
 	if err != nil {
 		return false, fmt.Errorf("read whether they are still here: %w", err)
@@ -504,11 +477,11 @@ func (s *Store) here(ctx context.Context, personID int64) (bool, error) {
 // take: a union inside an EXISTS is a syntax error on SQLite.
 func holdingAny(q *bun.SelectQuery, person string, enough []Role, productID int64) *bun.SelectQuery {
 	return q.Where(`EXISTS (SELECT 1 FROM "role_grant" AS "g"
-			WHERE g.person_id = `+person+` AND g.active = ?
-			  AND g.product_id = ? AND g.role IN (?))
+			WHERE "g"."person_id" = `+person+` AND "g"."active" = ?
+			  AND "g"."product_id" = ? AND "g"."role" IN (?))
 		OR EXISTS (SELECT 1 FROM "role_grant_all" AS "ga"
-			WHERE ga.person_id = `+person+` AND ga.active = ?
-			  AND ga.role IN (?))`,
+			WHERE "ga"."person_id" = `+person+` AND "ga"."active" = ?
+			  AND "ga"."role" IN (?))`,
 		true, productID, bun.List(enough), true, bun.List(enough))
 }
 
@@ -545,19 +518,16 @@ func (s *Store) AnyMemberReads(ctx context.Context, teamID, productID int64,
 	if len(enough) == 0 {
 		return false, nil
 	}
-	// An administrator is not counted. Administration is not a read grant
-	// , and a team whose only qualifying member is an administrator is a
-	// queue nobody working the product can see.
-	// A member who has left is not a member who can read it. The team is a
-	// queue, and one whose only qualifying member is gone is a queue nobody
-	// working the product can see — the argument the administrator case above
-	// already makes, for a case nobody made it for.
+	// An administrator is not counted. Administration is not a read grant,
+	// and a team whose only qualifying member is an administrator is a queue
+	// nobody working the product can see. A member who has left is not
+	// counted either, for the same reason.
 	reads, err := holdingAny(s.db.NewSelect().
 		TableExpr(`"team_member" AS "tmm"`).
-		Join(`JOIN "person" AS "pe" ON pe.id = tmm.person_id`).
-		ColumnExpr("tmm.person_id").
-		Where("tmm.team_id = ?", teamID).
-		Where("pe.deactivated_at IS NULL"), "tmm.person_id", enough, productID).Exists(ctx)
+		Join(`JOIN "person" AS "pe" ON "pe"."id" = "tmm"."person_id"`).
+		ColumnExpr(`"tmm"."person_id"`).
+		Where(`"tmm"."team_id" = ?`, teamID).
+		Where(`"pe"."deactivated_at" IS NULL`), `"tmm"."person_id"`, enough, productID).Exists(ctx)
 	if err != nil {
 		return false, fmt.Errorf("read whether anybody on that team may see this: %w", err)
 	}

@@ -15,12 +15,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nexthop-ai/openpsirt/internal/access"
 	"github.com/nexthop-ai/openpsirt/internal/catalog"
+	"github.com/nexthop-ai/openpsirt/internal/dbtest/fixture"
 	"github.com/nexthop-ai/openpsirt/internal/finding"
 	"github.com/nexthop-ai/openpsirt/internal/graph"
 	"github.com/nexthop-ai/openpsirt/internal/ingest"
 	"github.com/nexthop-ai/openpsirt/internal/queue"
 	"github.com/nexthop-ai/openpsirt/internal/sbom"
+	"github.com/nexthop-ai/openpsirt/internal/setting"
 	"github.com/nexthop-ai/openpsirt/internal/triage"
 )
 
@@ -59,7 +62,7 @@ func (r *Reach) ScannedTwoIssuesArguing(t *testing.T, hash string, claims []sbom
 	kernel := graph.Described{
 		Purl: "pkg:deb/debian/linux-image@5.10", Name: "linux-image", Version: "5.10",
 	}
-	if _, err := graph.NewStore(r.DB.DB).Apply(ctx, target.ID, scan.ID, graph.Snapshot{
+	if _, err := fixture.ApplyGraph(ctx, r.DB.DB, target.ID, scan.ID, graph.Snapshot{
 		Root:         product,
 		Components:   []graph.Described{kernel},
 		Dependencies: []graph.Dependency{{Parent: product, Child: kernel}},
@@ -67,11 +70,11 @@ func (r *Reach) ScannedTwoIssuesArguing(t *testing.T, hash string, claims []sbom
 		t.Fatal(err)
 	}
 
-	findings := finding.NewStore(r.DB.DB)
-	if _, err := findings.RecordClaims(ctx, target.ID, scan.ID, claims,
+	if _, err := fixture.RecordClaims(ctx, r.DB.DB, target.ID, scan.ID, claims,
 		map[sbom.Origin]bool{sbom.FromStatement: true, sbom.FromPedigree: true}); err != nil {
 		t.Fatal(err)
 	}
+	findings := finding.NewStore(r.DB.DB)
 	run, err := findings.Begin(ctx, finding.Run{
 		TargetID: target.ID, Scanner: "grype", ScannerVersion: "0.112.0",
 		DatabaseVersion: "2026-08-28", RanHere: true,
@@ -158,13 +161,13 @@ func (r *Reach) AgreedThenLapsed(t *testing.T) int64 {
 
 	// The code moves under them, which is what a lapse is.
 	if _, err := r.DB.DB.NewUpdate().Table("component").
-		Set("version = ?", "8.6.0-1").Set("upstream_version = ?", "8.6.0").
-		Where("name LIKE ?", "%curl%").Exec(ctx); err != nil {
+		Set(`"version" = ?`, "8.6.0-1").Set(`"upstream_version" = ?`, "8.6.0").
+		Where(`"name" LIKE ?`, "%curl%").Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var targets []int64
 	if err := r.DB.DB.NewSelect().TableExpr(`"target" AS "t"`).
-		ColumnExpr("t.id").Scan(ctx, &targets); err != nil {
+		ColumnExpr(`"t"."id"`).Scan(ctx, &targets); err != nil {
 		t.Fatal(err)
 	}
 	store := triage.NewStore(r.DB.DB)
@@ -175,7 +178,7 @@ func (r *Reach) AgreedThenLapsed(t *testing.T) int64 {
 	}
 	var lapsed int
 	lapsed, err := r.DB.DB.NewSelect().Table("decision").
-		Where("claim_id = ?", made.ClaimID).Where("state = ?", "lapsed").Count(ctx)
+		Where(`"claim_id" = ?`, made.ClaimID).Where(`"state" = ?`, "lapsed").Count(ctx)
 	if err != nil || lapsed != 2 {
 		t.Fatalf("%d rows of the claim lapsed (err %v), want both", lapsed, err)
 	}
@@ -227,13 +230,13 @@ func (r *Reach) CurlMovedTo(t *testing.T, upstream string) {
 	t.Helper()
 	ctx := t.Context()
 	if _, err := r.DB.DB.NewUpdate().Table("component").
-		Set("version = ?", upstream+"-1").Set("upstream_version = ?", upstream).
-		Where("name LIKE ?", "%curl%").Exec(ctx); err != nil {
+		Set(`"version" = ?`, upstream+"-1").Set(`"upstream_version" = ?`, upstream).
+		Where(`"name" LIKE ?`, "%curl%").Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var targets []int64
 	if err := r.DB.DB.NewSelect().TableExpr(`"target" AS "t"`).
-		ColumnExpr("t.id").Scan(ctx, &targets); err != nil {
+		ColumnExpr(`"t"."id"`).Scan(ctx, &targets); err != nil {
 		t.Fatal(err)
 	}
 	store := triage.NewStore(r.DB.DB)
@@ -275,7 +278,7 @@ func (r *Reach) StateOfClaim(t *testing.T, claim int64) string {
 	t.Helper()
 	var state string
 	if err := r.DB.DB.NewSelect().Table("decision").Column("state").
-		Where("claim_id = ?", claim).Limit(1).Scan(t.Context(), &state); err != nil {
+		Where(`"claim_id" = ?`, claim).Limit(1).Scan(t.Context(), &state); err != nil {
 		t.Fatal(err)
 	}
 	return state
@@ -285,7 +288,7 @@ func (r *Reach) StateOfClaim(t *testing.T, claim int64) string {
 func (r *Reach) LimitsOf(t *testing.T, review, agreed string) {
 	t.Helper()
 	for key, value := range map[string]string{
-		"triage.review-issues": review, "triage.agreed-issues": agreed,
+		setting.ReviewIssues: review, setting.AgreedIssues: agreed,
 	} {
 		if got := AsPerson(t, r, "admin", http.MethodPut, "/v1/settings/"+key,
 			`{"value":"`+value+`"}`); got.Code != http.StatusNoContent {
@@ -365,7 +368,7 @@ func (r *Reach) Aged(t *testing.T, claim int64, column string, when time.Time) {
 	t.Helper()
 	if _, err := r.DB.DB.NewUpdate().Table("decision").
 		Set(column+" = ?", when).
-		Where("claim_id = ?", claim).Exec(t.Context()); err != nil {
+		Where(`"claim_id" = ?`, claim).Exec(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -530,7 +533,7 @@ func (r *Reach) Declared(t *testing.T, name string, hours int) int64 {
 func (r *Reach) Undisclosed(t *testing.T) {
 	t.Helper()
 	if _, err := r.DB.DB.NewUpdate().Table("finding").
-		Set("visibility = ?", "private").Where("1 = 1").Exec(t.Context()); err != nil {
+		Set(`"visibility" = ?`, access.Private).Where("1 = 1").Exec(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -612,8 +615,8 @@ func (r *Reach) SetAside(t *testing.T, kind, reference string) int64 {
 		t.Fatal(err)
 	}
 	if _, err := r.DB.NewUpdate().Model((*queue.Job)(nil)).
-		Set("state = ?", queue.Dead).Set("attempts = max_attempts").
-		Where("id = ?", job.ID).Exec(ctx); err != nil {
+		Set(`"state" = ?`, queue.Dead).Set(`"attempts" = "max_attempts"`).
+		Where(`"id" = ?`, job.ID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	return job.ID

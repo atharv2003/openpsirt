@@ -105,7 +105,7 @@ func seed(t *testing.T, db *database.DB, of []component,
 	// The pass is off unless a deployment turns it on, and `Once` enforces that
 	// on every component rather than trusting `Run` to have checked — a guard
 	// beside the work cannot be skipped by calling the work another way.
-	if err := setting.NewStore(db.DB).Set(ctx, setting.UpstreamCurrency, setting.On); err != nil {
+	if _, _, err := setting.NewStore(db.DB).Change(ctx, setting.UpstreamCurrency, setting.On); err != nil {
 		t.Fatalf("turn asking on: %v", err)
 	}
 	asked := &[]string{}
@@ -136,8 +136,8 @@ func read(t *testing.T, db *database.DB) map[string]stored {
 	var rows []stored
 	err := db.DB.NewSelect().
 		TableExpr("\"component\" AS \"c\"").
-		ColumnExpr("c.purl, c.latest_version, c.latest_released_at, c.latest_checked_at").
-		ColumnExpr("c.summary, c.project_url").
+		ColumnExpr(`"c"."purl", "c"."latest_version", "c"."latest_released_at", "c"."latest_checked_at"`).
+		ColumnExpr(`"c"."summary", "c"."project_url"`).
 		Scan(t.Context(), &rows)
 	if err != nil {
 		t.Fatalf("read components: %v", err)
@@ -468,7 +468,7 @@ type stopping struct {
 
 func (s stopping) Latest(ctx context.Context, name string) (currency.Latest, error) {
 	*s.asked = append(*s.asked, name)
-	if err := s.settings.Set(ctx, setting.UpstreamCurrency, setting.Off); err != nil {
+	if _, _, err := s.settings.Change(ctx, setting.UpstreamCurrency, setting.Off); err != nil {
 		s.t.Fatalf("turn asking off: %v", err)
 	}
 	return currency.Latest{Version: "1.0.0"}, nil
@@ -514,7 +514,7 @@ func TestAVersionAnsweredWithNoDateKeepsTheDateItHad(t *testing.T) {
 		}, nil)
 		shipped := time.Date(2021, 2, 20, 0, 0, 0, 0, time.UTC)
 		if _, err := db.DB.NewUpdate().Table("component").
-			Set("latest_released_at = ?", shipped).Where("1 = 1").Exec(t.Context()); err != nil {
+			Set(`"latest_released_at" = ?`, shipped).Where("1 = 1").Exec(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 
@@ -975,7 +975,7 @@ func carried(t *testing.T, w *fixture.World, root string, purls ...string) {
 	for _, purl := range purls {
 		var id int64
 		err := w.DB.DB.NewSelect().TableExpr(`"component" AS "c"`).
-			ColumnExpr("c.id").Where("c.purl = ?", purl).Scan(ctx, &id)
+			ColumnExpr(`"c"."id"`).Where(`"c"."purl" = ?`, purl).Scan(ctx, &id)
 		if err != nil {
 			t.Fatalf("find %s: %v", purl, err)
 		}

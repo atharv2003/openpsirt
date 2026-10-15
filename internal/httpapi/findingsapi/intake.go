@@ -6,7 +6,6 @@ package findingsapi
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -256,10 +255,7 @@ func registerIntake(api huma.API, in core.Deps) {
 		Product   string `path:"product"`
 		Reference string `path:"reference" maxLength:"593"`
 		RawBody   huma.MultipartFormFiles[arrivedParts]
-	}) (*struct {
-		Status int
-		Body   AttachmentBody
-	}, error) {
+	}) (*attachmentUploaded, error) {
 		subject, at, err := reportAttaching(ctx, in, input.Product, input.Reference)
 		if err != nil {
 			return nil, err
@@ -278,19 +274,7 @@ func registerIntake(api huma.API, in core.Deps) {
 			// the file is listed nowhere and the sweep takes it, with the
 			// uploader told it worked.
 			true)
-		switch {
-		case errors.Is(err, attach.ErrTooLarge):
-			return nil, huma.Error413RequestEntityTooLarge(fmt.Sprintf(
-				"that file is %d bytes and this deployment accepts %d", part.Size, maxSize))
-		case errors.Is(err, attach.ErrNoRoom):
-			return nil, huma.Error507InsufficientStorage(attach.ErrNoRoom.Error())
-		case err != nil:
-			return nil, core.Refused(in.Logger, err, "cannot store that file")
-		}
-		return &struct {
-			Status int
-			Body   AttachmentBody
-		}{Status: http.StatusCreated, Body: attachmentBody(stored)}, nil
+		return uploaded(in, stored, err, part.Size, maxSize)
 	})
 
 	huma.Register(api, core.Requiring(huma.Operation{
@@ -306,19 +290,12 @@ func registerIntake(api huma.API, in core.Deps) {
 	}, core.PerProduct, "", core.PrivateRights()...), func(ctx context.Context, input *struct {
 		Product   string `path:"product"`
 		Reference string `path:"reference" maxLength:"593"`
-	}) (*struct {
-		Body struct {
-			Items []AttachmentBody `json:"items"`
-		}
-	}, error) {
+	}) (*attachmentsOutput, error) {
 		subject, product, err := productForReports(ctx, in, input.Product)
 		if err != nil {
 			return nil, err
 		}
 		files := in.Attachments()
-		if files == nil {
-			return nil, core.NoDatabase(in.Logger)
-		}
 		row, err := finding.NewStore(in.DB.DB).ReportBy(ctx, subject, product.ID, input.Reference)
 		if err != nil {
 			return nil, refusedReport(in, err, "that report could not be read")
@@ -327,16 +304,7 @@ func registerIntake(api huma.API, in core.Deps) {
 		if err != nil {
 			return nil, core.Refused(in.Logger, err, "cannot read what is attached")
 		}
-		out := &struct {
-			Body struct {
-				Items []AttachmentBody `json:"items"`
-			}
-		}{}
-		out.Body.Items = make([]AttachmentBody, 0, len(rows))
-		for i := range rows {
-			out.Body.Items = append(out.Body.Items, attachmentBody(&rows[i]))
-		}
-		return out, nil
+		return attachmentList(rows), nil
 	})
 
 	registerRulings(api, in)
@@ -354,9 +322,6 @@ func productForReports(ctx context.Context, in core.Deps, name string) (
 	subject, err := core.Reading(ctx)
 	if err != nil {
 		return access.Subject{}, nil, err
-	}
-	if in.DB == nil {
-		return access.Subject{}, nil, core.NoDatabase(in.Logger)
 	}
 	product, err := core.ProductNamedVisibly(ctx, in, subject, name)
 	if err != nil {
@@ -376,7 +341,7 @@ func reportAttaching(ctx context.Context, in core.Deps, product, reference strin
 		return access.Subject{}, attach.Against{}, err
 	}
 	files := in.Attachments()
-	if files == nil || !files.Configured() {
+	if !files.Configured() {
 		return access.Subject{}, attach.Against{}, huma.Error501NotImplemented(attach.ErrNotConfigured.Error())
 	}
 	row, err := finding.NewStore(in.DB.DB).ReportBy(ctx, subject, named.ID, reference)

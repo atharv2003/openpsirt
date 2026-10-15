@@ -49,6 +49,7 @@ import (
 	"github.com/nexthop-ai/openpsirt/internal/bound"
 	"github.com/nexthop-ai/openpsirt/internal/database"
 	"github.com/nexthop-ai/openpsirt/internal/refusal"
+	"github.com/nexthop-ai/openpsirt/internal/typedname"
 )
 
 // Source is a supplier this deployment fetches advisories from.
@@ -125,18 +126,6 @@ func NewStore(db bun.IDB) *Store {
 	return &Store{db: db, now: func() time.Time { return time.Now().UTC() }}
 }
 
-// At fixes the clock, for a test that asks what happens at a given moment.
-func (s *Store) At(now func() time.Time) *Store { return &Store{db: s.db, now: now} }
-
-// matching is the name a supplier is found by.
-//
-// Lowered on the way in rather than compared loosely on the way out. The four
-// engines default to different collations, so asking one to fold makes whether
-// two spellings are one supplier depend on which engine is running; a lowered
-// value compares the same under any of them, and the unique constraint means
-// the same thing everywhere.
-func matching(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
-
 // Mark is the digest of an address, which is half of how far a source has been
 // read.
 //
@@ -152,27 +141,14 @@ func Mark(address string) string {
 // ErrNameTaken says a supplier is already read under that name.
 var ErrNameTaken = refusal.New("a supplier is already read under that name")
 
-// administering refuses anybody but an administrator.
-//
-// Configuring a supplier admits a third party's judgment into this deployment's
-// evidence and points it at an address of their choosing. It is a deployment
-// decision rather than a product one, held by the same person who configures
-// where notifications go.
-func administering(subject access.Subject, what string) error {
-	if !subject.Admin || subject.Kind != access.Person {
-		return access.Denied(what)
-	}
-	return nil
-}
-
 // inUse narrows to the sources of a product that is still in use.
 //
 // A product taken out of use offers nothing and accepts no scan, and nothing
 // lists it — so a supplier configured against one goes on being fetched and
 // recorded into, with no screen left that could withdraw it.
 func inUse(q *bun.SelectQuery) *bun.SelectQuery {
-	return q.Join(`JOIN "product" AS "pr" ON pr.id = sp.product_id`).
-		Where("pr.retired_at IS NULL")
+	return q.Join(`JOIN "product" AS "pr" ON "pr"."id" = "sp"."product_id"`).
+		Where(`"pr"."retired_at" IS NULL`)
 }
 
 // Due is every supplier still configured that has not been tried since before.
@@ -185,13 +161,13 @@ func inUse(q *bun.SelectQuery) *bun.SelectQuery {
 // named this morning read this afternoon rather than tomorrow.
 func (s *Store) Due(ctx context.Context, subject access.Subject, before time.Time) ([]Source, error) {
 	if !subject.Unnarrowed() {
-		if err := administering(subject, "read which suppliers are fetched from"); err != nil {
+		if err := subject.Administering("read which suppliers are fetched from"); err != nil {
 			return nil, err
 		}
 	}
 	var rows []Source
 	q := s.db.NewSelect().Model(&rows).
-		Where("sp.retired_at IS NULL").
+		Where(`"sp"."retired_at" IS NULL`).
 		Where(`"sp"."fetched_at" IS NULL OR "sp"."fetched_at" < ?`,
 			before.UTC().Truncate(time.Microsecond)).
 		// Longest untried first, and one never tried before the rest. Nothing
@@ -213,7 +189,7 @@ func (s *Store) Due(ctx context.Context, subject access.Subject, before time.Tim
 // the source has been withdrawn or its product taken out of use.
 func (s *Store) Standing(ctx context.Context, db bun.IDB, id int64) (*Source, error) {
 	row := new(Source)
-	q := db.NewSelect().Model(row).Where("sp.id = ?", id).Where("sp.retired_at IS NULL")
+	q := db.NewSelect().Model(row).Where(`"sp"."id" = ?`, id).Where(`"sp"."retired_at" IS NULL`)
 	switch err := inUse(q).Scan(ctx); {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, nil
@@ -225,13 +201,13 @@ func (s *Store) Standing(ctx context.Context, db bun.IDB, id int64) (*Source, er
 
 // For is every supplier configured against one product.
 func (s *Store) For(ctx context.Context, subject access.Subject, productID int64) ([]Source, error) {
-	if err := administering(subject, "read which suppliers are fetched from"); err != nil {
+	if err := subject.Administering("read which suppliers are fetched from"); err != nil {
 		return nil, err
 	}
 	var rows []Source
 	if err := s.db.NewSelect().Model(&rows).
-		Where("sp.product_id = ?", productID).
-		Where("sp.retired_at IS NULL").
+		Where(`"sp"."product_id" = ?`, productID).
+		Where(`"sp"."retired_at" IS NULL`).
 		Order("name").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read which suppliers are fetched from: %w", err)
 	}
@@ -250,10 +226,14 @@ func (s *Store) For(ctx context.Context, subject access.Subject, productID int64
 // it takes what was issued while it was away and nothing it already read. How
 // far back that reaches is bounded by the history window a new supplier is
 // read from. Taken up at another address, it starts where a new one does.
+//
+// Only an administrator configures one. A supplier admits a third party's
+// judgment into this deployment's evidence and points it at an address of
+// their choosing, which is a deployment decision rather than a product one.
 func (s *Store) Add(ctx context.Context, subject access.Subject, productID int64,
 	name, address string) (*Source, error) {
 
-	if err := administering(subject, "configure which suppliers are fetched from"); err != nil {
+	if err := subject.Administering("configure which suppliers are fetched from"); err != nil {
 		return nil, err
 	}
 	typed := strings.TrimSpace(name)
@@ -285,13 +265,13 @@ func (s *Store) Add(ctx context.Context, subject access.Subject, productID int64
 		return nil, refusal.Errorf("that product is out of use, and a supplier is read " +
 			"against what a product ships")
 	}
-	folded := matching(typed)
+	folded := typedname.Matching(typed)
 	now := s.now().UTC().Truncate(time.Microsecond)
 	row := &Source{
 		ProductID: productID, Name: folded, Display: typed, URL: address,
 		CreatedBy: subject.ID, CreatedAt: now,
 	}
-	res, err := s.db.NewUpdate().Model((*Source)(nil)).
+	revive := s.db.NewUpdate().Model((*Source)(nil)).
 		// The mark is kept only where the address is the one it was read
 		// at. An address never read has nothing behind it this supplier has
 		// seen, so it starts where a new one does. Ahead of the address
@@ -299,43 +279,27 @@ func (s *Store) Add(ctx context.Context, subject access.Subject, productID int64
 		// would otherwise compare against the value just written.
 		Set(`"caught_up_to" = CASE WHEN "url" = ? THEN "caught_up_to" END`, row.URL).
 		Set(`"caught_up_mark" = CASE WHEN "url" = ? THEN "caught_up_mark" ELSE '' END`, row.URL).
-		Set("retired_at = ?", nil).
-		Set("display_name = ?", row.Display).
-		Set("url = ?", row.URL).
-		Set("created_by = ?", row.CreatedBy).
-		Set("created_at = ?", row.CreatedAt).
+		Set(`"retired_at" = ?`, nil).
+		Set(`"display_name" = ?`, row.Display).
+		Set(`"url" = ?`, row.URL).
+		Set(`"created_by" = ?`, row.CreatedBy).
+		Set(`"created_at" = ?`, row.CreatedAt).
 		// Cleared, so a failure from before it was withdrawn is not read as
 		// one by the pass that has not run yet.
-		Set("fetched_at = ?", nil).
-		Set("reached_at = ?", nil).
-		Set("failed = ?", "").
-		Where("product_id = ?", productID).
-		Where("name = ?", folded).
-		Where("retired_at IS NOT NULL").
-		Exec(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("take that supplier up again: %w", err)
-	}
-	n, err := database.Affected(res)
-	if err != nil {
-		return nil, fmt.Errorf("take that supplier up again: %w", err)
-	}
-	if n > 0 {
-		if err := s.db.NewSelect().Model(row).
-			Where("sp.product_id = ?", productID).Where("sp.name = ?", folded).
-			Limit(1).Scan(ctx); err != nil {
-			return nil, fmt.Errorf("read that supplier back: %w", err)
-		}
-		return row, nil
-	}
-	if _, err := s.db.NewInsert().Model(row).Exec(ctx); err != nil {
-		// A name already in use is somebody adding the same supplier twice,
-		// which is an answer rather than a fault: the row it collides with is
-		// one they can see.
-		if database.IsDuplicate(err) {
-			return nil, fmt.Errorf("%w: %q", ErrNameTaken, typed)
-		}
-		return nil, fmt.Errorf("record that supplier: %w", err)
+		Set(`"fetched_at" = ?`, nil).
+		Set(`"reached_at" = ?`, nil).
+		Set(`"failed" = ?`, "").
+		Where(`"product_id" = ?`, productID).
+		Where(`"name" = ?`, folded).
+		Where(`"retired_at" IS NOT NULL`)
+	readBack := s.db.NewSelect().Model(row).
+		Where(`"sp"."product_id" = ?`, productID).Where(`"sp"."name" = ?`, folded).Limit(1)
+	// A name already in use is somebody adding the same supplier twice, which
+	// is an answer rather than a fault: the row it collides with is one they
+	// can see.
+	if err := database.TakeUpAgain(ctx, revive, readBack, s.db.NewInsert().Model(row),
+		fmt.Errorf("%w: %q", ErrNameTaken, typed), "supplier"); err != nil {
+		return nil, err
 	}
 	return row, nil
 }
@@ -343,7 +307,7 @@ func (s *Store) Add(ctx context.Context, subject access.Subject, productID int64
 // productInUse reports whether a product is still offered.
 func (s *Store) productInUse(ctx context.Context, productID int64) (bool, error) {
 	n, err := s.db.NewSelect().TableExpr(`"product" AS "pr"`).
-		Where("pr.id = ?", productID).Where("pr.retired_at IS NULL").Count(ctx)
+		Where(`"pr"."id" = ?`, productID).Where(`"pr"."retired_at" IS NULL`).Count(ctx)
 	if err != nil {
 		return false, fmt.Errorf("read whether that product is in use: %w", err)
 	}
@@ -358,7 +322,7 @@ func (s *Store) productInUse(ctx context.Context, productID int64) (bool, error)
 func (s *Store) Retire(ctx context.Context, subject access.Subject, productID int64,
 	name string) (*Source, error) {
 
-	if err := administering(subject, "configure which suppliers are fetched from"); err != nil {
+	if err := subject.Administering("configure which suppliers are fetched from"); err != nil {
 		return nil, err
 	}
 	// The row is answered so the caller names it as it is stored, whatever
@@ -368,9 +332,9 @@ func (s *Store) Retire(ctx context.Context, subject access.Subject, productID in
 		retired = nil
 		row := new(Source)
 		err := tx.NewSelect().Model(row).
-			Where("product_id = ?", productID).
-			Where("name = ?", matching(name)).
-			Where("retired_at IS NULL").
+			Where(`"product_id" = ?`, productID).
+			Where(`"name" = ?`, typedname.Matching(name)).
+			Where(`"retired_at" IS NULL`).
 			Limit(1).Scan(ctx)
 		// A source believed retired that was not goes on fetching, which is a
 		// request leaving this deployment that somebody thought they had
@@ -383,18 +347,11 @@ func (s *Store) Retire(ctx context.Context, subject access.Subject, productID in
 			return fmt.Errorf("stop fetching from that supplier: %w", err)
 		}
 		at := s.now().UTC().Truncate(time.Microsecond)
-		res, err := tx.NewUpdate().Model((*Source)(nil)).
-			Set("retired_at = ?", at).
-			Where("id = ?", row.ID).
-			Where("retired_at IS NULL").Exec(ctx)
+		took, err := database.Retire(ctx, tx, (*Source)(nil), row.ID, at)
 		if err != nil {
 			return fmt.Errorf("stop fetching from that supplier: %w", err)
 		}
-		n, err := database.Affected(res)
-		if err != nil {
-			return fmt.Errorf("stop fetching from that supplier: %w", err)
-		}
-		if n == 0 {
+		if !took {
 			return fmt.Errorf("no supplier is fetched from under the name %q: %w",
 				name, access.ErrNothingMatched)
 		}
@@ -429,12 +386,12 @@ func (s *Store) Reached(ctx context.Context, id int64, at time.Time, mark string
 
 	now := s.now().UTC().Truncate(time.Microsecond)
 	update := s.db.NewUpdate().Model((*Source)(nil)).
-		Set("fetched_at = ?", now).
-		Where("id = ?", id)
+		Set(`"fetched_at" = ?`, now).
+		Where(`"id" = ?`, id)
 	if failed != nil {
-		update = update.Set("failed = ?", bound.HeadRunes(failed.Error(), MostReason))
+		update = update.Set(`"failed" = ?`, bound.HeadRunes(failed.Error(), MostReason))
 	} else {
-		update = update.Set("failed = ?", "").Set("reached_at = ?", now)
+		update = update.Set(`"failed" = ?`, "").Set(`"reached_at" = ?`, now)
 	}
 	if !at.IsZero() {
 		moment := at.UTC().Truncate(time.Microsecond)
@@ -458,25 +415,26 @@ func (s *Store) Reached(ctx context.Context, id int64, at time.Time, mark string
 // CaughtUp records how far a pass read without saying the supplier is done.
 //
 // For a pass that stopped at its bound rather than because there was nothing
-// left. The mark moves so the next wake starts after what was read, and the two
-// moments are left alone so the supplier stays due: the bound is per wake and
-// the interval is a day, so a publisher issuing more in a day than one pass
-// takes would otherwise fall further behind every day.
+// left. The mark moves so the next wake starts after what was read, and where
+// nothing failed the pass is recorded as reached and not failing. When it was
+// last tried is left alone, so the supplier stays due: the bound is per wake
+// and the interval is a day, so a publisher issuing more in a day than one
+// pass takes would otherwise fall further behind every day.
 //
 // A pass that read on while stepping over something it should not have had to
 // names it in failed, and the last read that worked stays where it was.
 func (s *Store) CaughtUp(ctx context.Context, id int64, at time.Time, mark string,
 	failed error) error {
 
-	update := s.db.NewUpdate().Model((*Source)(nil)).Where("id = ?", id)
+	update := s.db.NewUpdate().Model((*Source)(nil)).Where(`"id" = ?`, id)
 	switch {
 	case failed != nil:
-		update = update.Set("failed = ?", bound.HeadRunes(failed.Error(), MostReason))
+		update = update.Set(`"failed" = ?`, bound.HeadRunes(failed.Error(), MostReason))
 	case at.IsZero():
 		return nil
 	default:
-		update = update.Set("reached_at = ?", s.now().UTC().Truncate(time.Microsecond)).
-			Set("failed = ?", "")
+		update = update.Set(`"reached_at" = ?`, s.now().UTC().Truncate(time.Microsecond)).
+			Set(`"failed" = ?`, "")
 	}
 	if !at.IsZero() {
 		moment := at.UTC().Truncate(time.Microsecond)

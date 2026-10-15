@@ -84,9 +84,9 @@ func (s *Store) Resolve(ctx context.Context, subject access.Subject,
 		// carries, are both read here rather than handed in.
 		var rows []Finding
 		err := tx.NewSelect().Model(&rows).
-			Where("target_id = ?", targetID).
-			Where("vulnerability_id = ?", vulnerabilityID).
-			Where("closed_at IS NULL").
+			Where(`"target_id" = ?`, targetID).
+			Where(`"vulnerability_id" = ?`, vulnerabilityID).
+			Where(`"closed_at" IS NULL`).
 			Scan(ctx)
 		if err != nil {
 			return fmt.Errorf("read what is open there: %w", err)
@@ -99,12 +99,9 @@ func (s *Store) Resolve(ctx context.Context, subject access.Subject,
 		// the issue sits at in this build, because that is how a
 		// finding is addressed here — but a scanner's row at another
 		// component is not evidence about this one, and refusing on it
-		// made a recorded flaw permanently unclosable the moment a
-		// scan reported the same identifier anywhere in the build.
-		// That is the state a recorded flaw closed by a person exists
-		// to prevent, reached by the ordinary path: the flaw stayed
-		// open forever, every screen looked right, and the wrongness
-		// was only that it never left.
+		// makes a recorded flaw unclosable the moment a scan reports
+		// the same identifier anywhere in the build: open for ever,
+		// with every screen looking right.
 		//
 		// A scanner's rows are left alone rather than refused, because
 		// they close when the scan stops reporting them and nothing
@@ -145,15 +142,15 @@ func (s *Store) Resolve(ctx context.Context, subject access.Subject,
 
 		return database.IDsInBatches(ctx, ids, func(ctx context.Context, batch []int64) error {
 			result, err := tx.NewUpdate().Model((*Finding)(nil)).
-				Set("closed_at = ?", now).
-				Set("closed_by = ?", subject.ID).
-				Set("closed_note = ?", because).
-				Set("closed_because = ?", Fixed).
-				Where("id IN (?)", bun.List(batch)).
+				Set(`"closed_at" = ?`, now).
+				Set(`"closed_by" = ?`, subject.ID).
+				Set(`"closed_note" = ?`, because).
+				Set(`"closed_because" = ?`, Fixed).
+				Where(`"id" IN (?)`, bun.List(batch)).
 				// Still open, checked as the write happens. Two people closing
 				// the same thing at once is ordinary, and the second must not
 				// overwrite the first's reason with its own.
-				Where("closed_at IS NULL").
+				Where(`"closed_at" IS NULL`).
 				Exec(ctx)
 			if err != nil {
 				return fmt.Errorf("close %d findings: %w", len(batch), err)

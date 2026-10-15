@@ -22,7 +22,7 @@ import (
 type lapsableReads struct{ n atomic.Int64 }
 
 func (c *lapsableReads) BeforeQuery(ctx context.Context, e *bun.QueryEvent) context.Context {
-	if strings.HasPrefix(e.Query, "SELECT de.id FROM") && strings.Contains(e.Query, "NOT EXISTS") {
+	if strings.HasPrefix(e.Query, `SELECT "de"."id" FROM`) && strings.Contains(e.Query, "NOT EXISTS") {
 		c.n.Add(1)
 	}
 	return ctx
@@ -47,7 +47,7 @@ func TestASweepLapsingLessThanABatchReadsTheDecisionsOnce(t *testing.T) {
 			if _, err := f.db.DB.NewInsert().Model(&finding.Finding{
 				TargetID: in.target, Kind: finding.Vulnerable, VulnerabilityID: f.issue,
 				Visibility: access.Public, ComponentID: moved, PlaceIdentity: place,
-				LastChangedAt: now, OpenedAt: now, OpenedRunID: &in.run,
+				OpenedAt: now, OpenedRunID: &in.run,
 			}).Exec(ctx); err != nil {
 				t.Fatal(err)
 			}

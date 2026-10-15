@@ -121,17 +121,16 @@ func registerPerson(api huma.API, in core.Deps, a core.Administering) {
 		if err != nil {
 			return nil, err
 		}
-		person, err := store.ByIdentity(ctx, input.Identity)
+		person, err := core.PersonNamed(ctx, a.Logger, store, input.Identity)
 		if err != nil {
-			return nil, core.Absent(a.Logger, err, "that person could not be looked up",
-				core.NoSuchPerson)
+			return nil, err
 		}
 
 		body := AboutPersonBody{
 			Identity: person.Identity, DisplayName: person.DisplayName,
 			Admin: person.IsAdmin, AdminByConfiguration: person.IsBootstrap,
 			Audits:        person.Audits,
-			DeactivatedAt: orAbsent(person.DeactivatedAt),
+			DeactivatedAt: core.StampAt(person.DeactivatedAt),
 		}
 
 		named, err := productNames(ctx, a)
@@ -157,13 +156,21 @@ func registerPerson(api huma.API, in core.Deps, a core.Administering) {
 			return nil, core.Refused(a.Logger, err, "cannot read what they used to hold")
 		}
 		body.HeldTotal = total
-		who, err := whoChanged(ctx, in, a, changes)
+		// Named together rather than per row: the trail holds who by number,
+		// and fifty changes made by two people are two names to read.
+		changers := make([]int64, 0, len(changes))
+		for _, change := range changes {
+			if person := change.Person(); person != 0 {
+				changers = append(changers, person)
+			}
+		}
+		who, err := core.WhoSigned(ctx, in.DB.DB, changers)
 		if err != nil {
-			return nil, err
+			return nil, core.WentWrong(a.Logger, "cannot read who made those changes", err)
 		}
 		for _, change := range changes {
 			body.Held = append(body.Held, HeldChangeBody{
-				At: core.Stamp(change.At), By: who[change.Person()],
+				At: core.Stamp(change.At), By: who.Identity(change.Person()),
 				About: change.Name, Was: core.OrBlank(change.Was), Now: core.OrBlank(change.Became),
 			})
 		}
@@ -182,8 +189,8 @@ func registerPerson(api huma.API, in core.Deps, a core.Administering) {
 			}
 			body.Record = &PersonRecordBody{
 				Proposed: record.Proposed, Approved: record.Approved, Withdrawn: record.Withdrawn,
-				LastProposedAt: orAbsent(record.LastProposedAt),
-				LastApprovedAt: orAbsent(record.LastApprovedAt),
+				LastProposedAt: core.StampAt(record.LastProposedAt),
+				LastApprovedAt: core.StampAt(record.LastApprovedAt),
 			}
 		}
 
@@ -194,47 +201,13 @@ func registerPerson(api huma.API, in core.Deps, a core.Administering) {
 		body.ToldTotal = toldTotal
 		for _, row := range told {
 			body.Told = append(body.Told, ToldBody{
-				At: row.CreatedAt.UTC().Format(time.RFC3339), Kind: string(row.Kind),
+				At: core.Stamp(row.CreatedAt), Kind: string(row.Kind),
 				Body: row.Body, Link: row.Link, Private: row.Private,
 				Read: row.ReadAt != nil, Cleared: row.ClearedAt != nil,
 			})
 		}
 		return &struct{ Body AboutPersonBody }{Body: body}, nil
 	})
-}
-
-// whoChanged names the people who made a set of changes, once each.
-//
-// The trail holds who by number, and a page naming numbers is a page nobody
-// can read. Looked up together rather than per row, because a screen showing
-// fifty changes made by two people would otherwise ask fifty times.
-func whoChanged(ctx context.Context, in core.Deps, a core.Administering, changes []trail.Change) (map[int64]string, error) {
-	who := map[int64]string{}
-	for _, change := range changes {
-		if person := change.Person(); person != 0 {
-			who[person] = ""
-		}
-	}
-	if len(who) == 0 {
-		return who, nil
-	}
-	people, _, err := access.NewStore(in.DB.DB).People(ctx)
-	if err != nil {
-		return nil, core.WentWrong(a.Logger, "cannot read who made those changes", err)
-	}
-	for _, person := range people {
-		if _, wanted := who[person.ID]; wanted {
-			who[person.ID] = person.Identity
-		}
-	}
-	return who, nil
-}
-
-func orAbsent(at *time.Time) string {
-	if at == nil {
-		return ""
-	}
-	return at.UTC().Format(time.RFC3339)
 }
 
 // registerDeactivation is somebody leaving, and somebody coming back.
@@ -310,12 +283,10 @@ func registerDeactivation(api huma.API, a core.Administering) {
 				if err != nil {
 					return core.WentWrong(a.Logger, "when they left could not be read", err)
 				}
-				if again.DeactivatedAt != nil {
-					out.Body.Since = again.DeactivatedAt.UTC().Format(time.RFC3339)
-				}
+				out.Body.Since = core.StampAt(again.DeactivatedAt)
 				return nil
 			}
-			out.Body.Since = time.Now().UTC().Format(time.RFC3339)
+			out.Body.Since = core.Stamp(time.Now())
 
 			if err := core.Noted(ctx, tx, trail.Account, person.Identity,
 				trail.Said("active", true), trail.Said("deactivated", true)); err != nil {
@@ -410,10 +381,9 @@ func aboutPerson(ctx context.Context, a core.Administering, db bun.IDB, identity
 	if err != nil {
 		return nil, access.Subject{}, nil, err
 	}
-	person, err := rights.ByIdentity(ctx, identity)
+	person, err := core.PersonNamed(ctx, a.Logger, rights, identity)
 	if err != nil {
-		return nil, access.Subject{}, nil,
-			core.Absent(a.Logger, err, "that person could not be looked up", core.NoSuchPerson)
+		return nil, access.Subject{}, nil, err
 	}
 	return rights, subject, person, nil
 }

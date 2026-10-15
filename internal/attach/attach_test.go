@@ -116,7 +116,7 @@ func (f *fixture) who(t *testing.T, roles ...access.Role) access.Subject {
 func (f *fixture) admin(t *testing.T) access.Subject {
 	t.Helper()
 	person, err := access.NewStore(f.db.DB).Ensure(t.Context(), "boss@example.com", "Boss",
-		access.Stated(true), nil)
+		new(true), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,8 +272,8 @@ func TestAnEmbargoEndingCarriesTheFileWithTheWords(t *testing.T) {
 		// The embargo ends: the findings become public, and nothing about the
 		// attachment is touched.
 		if _, err := f.db.DB.NewUpdate().Model((*finding.Finding)(nil)).
-			Set("visibility = ?", access.Public).
-			Where("vulnerability_id = ?", undisclosed).Exec(ctx); err != nil {
+			Set(`"visibility" = ?`, access.Public).
+			Where(`"vulnerability_id" = ?`, undisclosed).Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := f.store.Find(ctx, reader, stored.Token); err != nil {
@@ -375,7 +375,7 @@ func TestUploadsNothingRefersToAreCollected(t *testing.T) {
 		}
 		// Both are made old enough to be looked at.
 		if _, err := f.db.DB.NewUpdate().Model((*attach.Attachment)(nil)).
-			Set("uploaded_at = ?", time.Now().UTC().Add(-48*time.Hour)).
+			Set(`"uploaded_at" = ?`, time.Now().UTC().Add(-48*time.Hour)).
 			Where("1 = 1").Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -592,7 +592,7 @@ func TestAnUndeletableObjectDoesNotStallTheSweep(t *testing.T) {
 		stuck := f.upload(t, who, "stuck.log", []byte("the store will not let this go"))
 		after := f.upload(t, who, "after.log", []byte("this goes"))
 		if _, err := f.db.DB.NewUpdate().Model((*attach.Attachment)(nil)).
-			Set("uploaded_at = ?", time.Now().UTC().Add(-48*time.Hour)).
+			Set(`"uploaded_at" = ?`, time.Now().UTC().Add(-48*time.Hour)).
 			Where("1 = 1").Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -694,8 +694,8 @@ func TestARecentUploadAndARedactedOneSurviveTheSweep(t *testing.T) {
 			t.Fatalf("redact: %v", err)
 		}
 		if _, err := f.db.DB.NewUpdate().Model((*attach.Attachment)(nil)).
-			Set("uploaded_at = ?", time.Now().UTC().Add(-48*time.Hour)).
-			Where("token = ?", redacted.Token).Exec(ctx); err != nil {
+			Set(`"uploaded_at" = ?`, time.Now().UTC().Add(-48*time.Hour)).
+			Where(`"token" = ?`, redacted.Token).Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
 
@@ -738,8 +738,8 @@ func TestTheKeeperSweepsOnItsOwnAndIsNothingWhereNoFilesAreKept(t *testing.T) {
 		who := f.who(t, access.PublicTriage)
 		abandoned := f.upload(t, who, "abandoned.log", []byte("nothing points here"))
 		if _, err := f.db.DB.NewUpdate().Model((*attach.Attachment)(nil)).
-			Set("uploaded_at = ?", time.Now().UTC().Add(-48*time.Hour)).
-			Where("token = ?", abandoned.Token).Exec(ctx); err != nil {
+			Set(`"uploaded_at" = ?`, time.Now().UTC().Add(-48*time.Hour)).
+			Where(`"token" = ?`, abandoned.Token).Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
 
@@ -792,7 +792,7 @@ func TestAFileAttachedWhileTheSweepRunsKeepsItsBytes(t *testing.T) {
 		who := f.who(t, access.PublicTriage)
 		racing := f.upload(t, who, "racing.log", []byte("text is about to point here"))
 		if _, err := f.db.DB.NewUpdate().Model((*attach.Attachment)(nil)).
-			Set("uploaded_at = ?", time.Now().UTC().Add(-48*time.Hour)).
+			Set(`"uploaded_at" = ?`, time.Now().UTC().Add(-48*time.Hour)).
 			Where("1 = 1").Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -816,10 +816,8 @@ func TestAFileAttachedWhileTheSweepRunsKeepsItsBytes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("the sweep took a file text refers to: %v", err)
 		}
-		// Asked of the store rather than through Fetch, which for a file
-		// this size answers with an address and never opens anything — so a
-		// record standing over bytes that are gone reads as a working fetch
-		// until somebody follows the address.
+		// Asked of the storage rather than through the store, so what is
+		// checked is that the bytes behind the record are still there.
 		body, err := f.files.Open(ctx, found.ObjectKey)
 		if err != nil {
 			t.Fatalf("the record stands and its bytes are gone: %v", err)
@@ -837,8 +835,8 @@ func TestAFileRedactedWhileTheSweepRunsKeepsItsRecord(t *testing.T) {
 		who := f.who(t, access.PublicTriage)
 		racing := f.upload(t, who, "a-credential.log", []byte("about to be redacted"))
 		if _, err := f.db.DB.NewUpdate().Model((*attach.Attachment)(nil)).
-			Set("uploaded_at = ?", time.Now().UTC().Add(-48*time.Hour)).
-			Where("token = ?", racing.Token).Exec(ctx); err != nil {
+			Set(`"uploaded_at" = ?`, time.Now().UTC().Add(-48*time.Hour)).
+			Where(`"token" = ?`, racing.Token).Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
 		attach.AfterPage(f.store, func() {
@@ -875,7 +873,7 @@ func TestARowACollectionPassCouldNotClaimIsNamed(t *testing.T) {
 		who := f.who(t, access.PublicTriage)
 		stuck := f.upload(t, who, "stuck.log", []byte("nothing will ever point here"))
 		if _, err := f.db.DB.NewUpdate().Model((*attach.Attachment)(nil)).
-			Set("uploaded_at = ?", time.Now().UTC().Add(-48*time.Hour)).
+			Set(`"uploaded_at" = ?`, time.Now().UTC().Add(-48*time.Hour)).
 			Where("1 = 1").Exec(ctx); err != nil {
 			t.Fatal(err)
 		}

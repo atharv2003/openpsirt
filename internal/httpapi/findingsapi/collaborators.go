@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/uptrace/bun"
@@ -39,7 +38,7 @@ type CollaboratorBody struct {
 // engineer who normally sees only public findings and is needed on one
 // embargoed flaw in their own component.
 //
-// Anybody holding private triage on the product manages the list, rather
+// Anybody who reads private findings on the product manages the list, rather
 // than an administrator: knowing who needs to be on a case is knowing the case,
 // and routing that through somebody who does not read it would make the
 // administrator the bottleneck on every embargo.
@@ -59,7 +58,7 @@ func registerCollaborators(api huma.API, in core.Deps, a core.Administering) {
 			Product       string `path:"product"`
 			Vulnerability string `path:"vulnerability"`
 		}) (*core.ListOutput[CollaboratorBody], error) {
-			subject, _, product, issue, err := caseAt(ctx, in, input.Product, input.Vulnerability)
+			subject, product, issue, err := caseAt(ctx, in, input.Product, input.Vulnerability)
 			if err != nil {
 				return nil, err
 			}
@@ -98,7 +97,7 @@ func registerCollaborators(api huma.API, in core.Deps, a core.Administering) {
 			Vulnerability string `path:"vulnerability"`
 			Identity      string `path:"identity"`
 		}) (*struct{}, error) {
-			subject, _, product, issue, err := caseAt(ctx, in, input.Product, input.Vulnerability)
+			subject, product, issue, err := caseAt(ctx, in, input.Product, input.Vulnerability)
 			if err != nil {
 				return nil, err
 			}
@@ -109,14 +108,13 @@ func registerCollaborators(api huma.API, in core.Deps, a core.Administering) {
 			if err != nil {
 				return nil, err
 			}
-			about := named + " · " + issued
 			var person *access.Account
 			var added bool
 			if err := core.Changing(ctx, a.DB, a.Logger, func(ctx context.Context, tx bun.Tx) error {
 				rights := access.NewStore(tx)
 				var err error
-				if person, err = rights.ByIdentity(ctx, input.Identity); err != nil {
-					return core.Absent(a.Logger, err, "that person could not be looked up", core.NoSuchPerson)
+				if person, err = core.PersonNamed(ctx, a.Logger, rights, input.Identity); err != nil {
+					return err
 				}
 				if added, err = rights.AddToCase(ctx, product, issue, person.ID, subject.ID); err != nil {
 					return core.WentWrong(in.Logger, "they could not be brought in", err)
@@ -127,7 +125,7 @@ func registerCollaborators(api huma.API, in core.Deps, a core.Administering) {
 					return nil
 				}
 				if err := core.Noted(ctx, tx, trail.Case,
-					about+" · "+person.Identity,
+					trail.InCase(named, issued, person.Identity),
 					nil, trail.Said("a collaborator", true)); err != nil {
 					return core.NotRecorded(a.Logger, err)
 				}
@@ -175,7 +173,7 @@ func registerCollaborators(api huma.API, in core.Deps, a core.Administering) {
 			Vulnerability string `path:"vulnerability"`
 			Identity      string `path:"identity"`
 		}) (*struct{}, error) {
-			subject, _, product, issue, err := caseAt(ctx, in, input.Product, input.Vulnerability)
+			subject, product, issue, err := caseAt(ctx, in, input.Product, input.Vulnerability)
 			if err != nil {
 				return nil, err
 			}
@@ -186,12 +184,11 @@ func registerCollaborators(api huma.API, in core.Deps, a core.Administering) {
 			if err != nil {
 				return nil, err
 			}
-			about := named + " · " + issued
 			if err := core.Changing(ctx, a.DB, a.Logger, func(ctx context.Context, tx bun.Tx) error {
 				rights := access.NewStore(tx)
-				person, err := rights.ByIdentity(ctx, input.Identity)
+				person, err := core.PersonNamed(ctx, a.Logger, rights, input.Identity)
 				if err != nil {
-					return core.Absent(a.Logger, err, "that person could not be looked up", core.NoSuchPerson)
+					return err
 				}
 				switch err := rights.RemoveFromCase(ctx, product, issue, person.ID, subject.ID); {
 				case errors.Is(err, access.ErrNothingMatched):
@@ -200,7 +197,7 @@ func registerCollaborators(api huma.API, in core.Deps, a core.Administering) {
 					return core.WentWrong(in.Logger, "they could not be taken off", err)
 				}
 				if err := core.Noted(ctx, tx, trail.Case,
-					about+" · "+person.Identity,
+					trail.InCase(named, issued, person.Identity),
 					trail.Said("a collaborator", true), nil); err != nil {
 					return core.NotRecorded(a.Logger, err)
 				}
@@ -260,7 +257,7 @@ func collaboratorBodies(ctx context.Context, in core.Deps, productID, issueID in
 		body := CollaboratorBody{
 			Identity: handles[id], AddedBy: by.Identity(row.AddedBy),
 			AddedByName: by.Label(row.AddedBy),
-			AddedAt:     row.AddedAt.UTC().Format(time.RFC3339),
+			AddedAt:     core.Stamp(row.AddedAt),
 		}
 		body.Name = core.LabelBeside(names[id], handles[id])
 		out = append(out, body)
@@ -271,7 +268,7 @@ func collaboratorBodies(ctx context.Context, in core.Deps, productID, issueID in
 // caseAt resolves a product and an issue for the collaborator endpoints, and
 // answers "no such finding" for anything the caller may not reach.
 func caseAt(ctx context.Context, in core.Deps, product, vulnerability string) (
-	access.Subject, *access.Store, int64, int64, error) {
+	access.Subject, int64, int64, error) {
 
 	return caseAtHolding(ctx, in, product, vulnerability, false)
 }
@@ -305,21 +302,17 @@ func namedCase(ctx context.Context, in core.Deps, productID, issueID int64) (str
 // operation and the check in the handler saying different things — and the
 // annotation is what the generated reference tells an operator the rule is.
 func caseAtTriaging(ctx context.Context, in core.Deps, product, vulnerability string) (
-	access.Subject, *access.Store, int64, int64, error) {
+	access.Subject, int64, int64, error) {
 
 	return caseAtHolding(ctx, in, product, vulnerability, true)
 }
 
 func caseAtHolding(ctx context.Context, in core.Deps, product, vulnerability string,
-	triaging bool) (access.Subject, *access.Store, int64, int64, error) {
+	triaging bool) (access.Subject, int64, int64, error) {
 
 	subject, err := core.Reading(ctx)
 	if err != nil {
-		return access.Subject{}, nil, 0, 0, err
-	}
-	if in.DB == nil {
-		return access.Subject{}, nil, 0, 0,
-			core.NoDatabase(in.Logger)
+		return access.Subject{}, 0, 0, err
 	}
 	// A route about one named issue, so the wider of the two rules: somebody
 	// brought into a case here holds nothing on the product and is still
@@ -327,17 +320,17 @@ func caseAtHolding(ctx context.Context, in core.Deps, product, vulnerability str
 	// decided below, by the issue rather than by the product.
 	named, err := core.ProductForIssue(ctx, in, subject, product)
 	if err != nil {
-		return access.Subject{}, nil, 0, 0, err
+		return access.Subject{}, 0, 0, err
 	}
 	if triaging && !subject.TriagesIn(named.ID) {
 		// Asked before the name is resolved further, so a refusal says
 		// nothing about whether the issue is here.
-		return access.Subject{}, nil, 0, 0,
+		return access.Subject{}, 0, 0,
 			huma.Error403Forbidden("not authorized")
 	}
 	issueID, err := core.IssueHere(ctx, in, subject, named.ID, vulnerability)
 	if err != nil {
-		return access.Subject{}, nil, 0, 0, err
+		return access.Subject{}, 0, 0, err
 	}
-	return subject, access.NewStore(in.DB.DB), named.ID, issueID, nil
+	return subject, named.ID, issueID, nil
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/uptrace/bun"
 
@@ -50,15 +51,22 @@ func (d Declared) Changed() bool { return d.Created || d.Restored }
 // a branch needs to know whether anything changed, and a person reading the
 // answer needs to know whether they created something.
 func (s *Store) EnsureProduct(ctx context.Context, name, displayName string) (*Product, Declared, error) {
+	return ensureOnce(s, func() (*Product, Declared, error) {
+		return s.ensureProduct(ctx, name, displayName)
+	})
+}
+
+// ensureOnce runs a declaration, and once more where it lost a race.
+func ensureOnce[T any](s *Store, try func() (*T, Declared, error)) (*T, Declared, error) {
 	for again := true; ; again = false {
-		product, made, err := s.ensureProduct(ctx, name, displayName)
+		got, did, err := try()
 		if again && raced(err) {
 			if err := s.goAgain(err); err != nil {
 				return nil, Declared{}, err
 			}
 			continue
 		}
-		return product, made, err
+		return got, did, err
 	}
 }
 
@@ -99,15 +107,11 @@ func (s *Store) ensureProduct(ctx context.Context, name, displayName string) (*P
 			return nil, Declared{}, fmt.Errorf("product %q: %w: it is displayed as %q, not %q",
 				name, ErrDiffers, existing.DisplayName, displayName)
 		}
-		if existing.Retired() {
-			restored, err := s.restoreProduct(ctx, existing.ID)
-			if err != nil {
-				return nil, Declared{}, err
-			}
-			existing.RetiredAt = nil
-			return existing, Declared{Restored: restored}, nil
+		restored, err := bringBack(ctx, &existing.RetiredAt, existing.ID, s.restoreProduct)
+		if err != nil {
+			return nil, Declared{}, err
 		}
-		return existing, Declared{}, nil
+		return existing, Declared{Restored: restored}, nil
 	case !errors.Is(err, ErrNotFound):
 		return nil, Declared{}, err
 	}
@@ -121,16 +125,9 @@ func (s *Store) ensureProduct(ctx context.Context, name, displayName string) (*P
 
 // EnsureStream declares a branch or tag, or confirms one already declared.
 func (s *Store) EnsureStream(ctx context.Context, productID int64, name string, kind Kind, parentID *int64) (*Stream, Declared, error) {
-	for again := true; ; again = false {
-		stream, made, err := s.ensureStream(ctx, productID, name, kind, parentID)
-		if again && raced(err) {
-			if err := s.goAgain(err); err != nil {
-				return nil, Declared{}, err
-			}
-			continue
-		}
-		return stream, made, err
-	}
+	return ensureOnce(s, func() (*Stream, Declared, error) {
+		return s.ensureStream(ctx, productID, name, kind, parentID)
+	})
 }
 
 func (s *Store) ensureStream(ctx context.Context, productID int64, name string, kind Kind, parentID *int64) (*Stream, Declared, error) {
@@ -154,15 +151,11 @@ func (s *Store) ensureStream(ctx context.Context, productID int64, name string, 
 		// Declaring a retired one brings it back, the way a product and a
 		// variant come back. A pipeline runs this on every build and the name
 		// is still spoken for while retired.
-		var did Declared
-		if existing.Retired() {
-			restored, err := s.restoreStream(ctx, existing.ID)
-			if err != nil {
-				return nil, Declared{}, err
-			}
-			existing.RetiredAt = nil
-			did.Restored = restored
+		restored, err := bringBack(ctx, &existing.RetiredAt, existing.ID, s.restoreStream)
+		if err != nil {
+			return nil, Declared{}, err
 		}
+		did := Declared{Restored: restored}
 		// Filling in one that was never stated is not a change. Without it
 		// a tag declared with no parent stays that way, and release
 		// readiness, which asks what was cut from this branch, reports that
@@ -192,16 +185,9 @@ func (s *Store) ensureStream(ctx context.Context, productID int64, name string, 
 // EnsureVariant declares a way a product is built, or confirms one already
 // declared.
 func (s *Store) EnsureVariant(ctx context.Context, productID int64, name string, customerFacing bool) (*Variant, Declared, error) {
-	for again := true; ; again = false {
-		variant, made, err := s.ensureVariant(ctx, productID, name, customerFacing)
-		if again && raced(err) {
-			if err := s.goAgain(err); err != nil {
-				return nil, Declared{}, err
-			}
-			continue
-		}
-		return variant, made, err
-	}
+	return ensureOnce(s, func() (*Variant, Declared, error) {
+		return s.ensureVariant(ctx, productID, name, customerFacing)
+	})
 }
 
 func (s *Store) ensureVariant(ctx context.Context, productID int64, name string, customerFacing bool) (*Variant, Declared, error) {
@@ -220,15 +206,11 @@ func (s *Store) ensureVariant(ctx context.Context, productID int64, name string,
 		// undone. A pipeline runs this on every build and the name is still
 		// spoken for while retired, so the alternative is a build script that
 		// starts failing because an administrator tidied a list.
-		if existing.Retired() {
-			restored, err := s.restoreVariant(ctx, existing.ID)
-			if err != nil {
-				return nil, Declared{}, err
-			}
-			existing.RetiredAt = nil
-			return existing, Declared{Restored: restored}, nil
+		restored, err := bringBack(ctx, &existing.RetiredAt, existing.ID, s.restoreVariant)
+		if err != nil {
+			return nil, Declared{}, err
 		}
-		return existing, Declared{}, nil
+		return existing, Declared{Restored: restored}, nil
 	case !errors.Is(err, ErrNotFound):
 		return nil, Declared{}, err
 	}
@@ -238,6 +220,22 @@ func (s *Store) ensureVariant(ctx context.Context, productID int64, name string,
 		return nil, Declared{}, err
 	}
 	return created, Declared{Created: true}, nil
+}
+
+// bringBack restores a retired row a declaration names, and clears when it was
+// retired on the copy already read. A row in use is left as it is.
+func bringBack(ctx context.Context, retiredAt **time.Time, id int64,
+	restore func(context.Context, int64) (bool, error)) (bool, error) {
+
+	if *retiredAt == nil {
+		return false, nil
+	}
+	restored, err := restore(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	*retiredAt = nil
+	return restored, nil
 }
 
 // facing names the two states in the words somebody reading an error would.
@@ -267,7 +265,7 @@ func (s *Store) Products(ctx context.Context, subject access.Subject) ([]Product
 		Where(`"p"."retired_at" IS NULL`).
 		Order("name")
 	if !all {
-		query = query.Where("id IN (?)", bun.List(visible))
+		query = query.Where(`"id" IN (?)`, bun.List(visible))
 	}
 	if err := query.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("list products: %w", err)
@@ -291,7 +289,7 @@ func (s *Store) Streams(ctx context.Context, subject access.Subject, productID i
 		return nil, access.Denied("list the releases of a product")
 	}
 	var rows []Stream
-	query := s.db.NewSelect().Model(&rows).Where("product_id = ?", productID)
+	query := s.db.NewSelect().Model(&rows).Where(`"product_id" = ?`, productID)
 	if !retired {
 		query = query.Where(`"s"."retired_at" IS NULL`)
 	}
@@ -314,7 +312,7 @@ func (s *Store) Variants(ctx context.Context, subject access.Subject, productID 
 	}
 	var rows []Variant
 	err := s.db.NewSelect().Model(&rows).
-		Where("product_id = ?", productID).
+		Where(`"product_id" = ?`, productID).
 		Where(`"v"."retired_at" IS NULL`).
 		Order("name").Scan(ctx)
 	if err != nil {
@@ -336,7 +334,7 @@ func (s *Store) Variants(ctx context.Context, subject access.Subject, productID 
 // kind of correctness that stops being true when somebody adds another.
 func (s *Store) BuiltAs(ctx context.Context, subject access.Subject, streamID int64) ([]Variant, error) {
 	var stream Stream
-	if err := s.db.NewSelect().Model(&stream).Where("id = ?", streamID).Scan(ctx); err != nil {
+	if err := s.db.NewSelect().Model(&stream).Where(`"id" = ?`, streamID).Scan(ctx); err != nil {
 		return nil, fmt.Errorf("look up the release %d: %w", streamID, err)
 	}
 	if !subject.Sees(stream.ProductID) {
@@ -344,8 +342,8 @@ func (s *Store) BuiltAs(ctx context.Context, subject access.Subject, streamID in
 	}
 	var rows []Variant
 	err := s.db.NewSelect().Model(&rows).
-		Join(`JOIN "target" AS "tg" ON tg.variant_id = v.id`).
-		Where("tg.stream_id = ?", streamID).Order("v.name").Scan(ctx)
+		Join(`JOIN "target" AS "tg" ON "tg"."variant_id" = "v"."id"`).
+		Where(`"tg"."stream_id" = ?`, streamID).Order("v.name").Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list what a release is built as: %w", err)
 	}
@@ -432,12 +430,12 @@ func (s *Store) Shapes(ctx context.Context, subject access.Subject,
 	}
 	if err := s.db.NewSelect().
 		TableExpr(`"stream" AS "st"`).
-		ColumnExpr(`st.product_id AS "product_id"`).
-		ColumnExpr(`st.kind AS "kind"`).
+		ColumnExpr(`"st"."product_id" AS "product_id"`).
+		ColumnExpr(`"st"."kind" AS "kind"`).
 		ColumnExpr(`COUNT(*) AS "count"`).
-		Where("st.product_id IN (?)", bun.List(productIDs)).
+		Where(`"st"."product_id" IN (?)`, bun.List(productIDs)).
 		Where(`"st"."retired_at" IS NULL`).
-		GroupExpr("st.product_id, st.kind").
+		GroupExpr(`"st"."product_id", "st"."kind"`).
 		Scan(ctx, &streams); err != nil {
 		return nil, fmt.Errorf("count branches and tags: %w", err)
 	}
@@ -457,11 +455,11 @@ func (s *Store) Shapes(ctx context.Context, subject access.Subject,
 	}
 	if err := s.db.NewSelect().
 		TableExpr(`"variant" AS "va"`).
-		ColumnExpr(`va.product_id AS "product_id"`).
+		ColumnExpr(`"va"."product_id" AS "product_id"`).
 		ColumnExpr(`COUNT(*) AS "count"`).
-		Where("va.product_id IN (?)", bun.List(productIDs)).
+		Where(`"va"."product_id" IN (?)`, bun.List(productIDs)).
 		Where(`"va"."retired_at" IS NULL`).
-		GroupExpr("va.product_id").
+		GroupExpr(`"va"."product_id"`).
 		Scan(ctx, &variants); err != nil {
 		return nil, fmt.Errorf("count variants: %w", err)
 	}

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"regexp"
 	"strings"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/nexthop-ai/openpsirt/internal/markdown"
 	"github.com/nexthop-ai/openpsirt/internal/refusal"
 	"github.com/nexthop-ai/openpsirt/internal/setting"
+	"github.com/nexthop-ai/openpsirt/internal/weakness"
 )
 
 // Entering is a flaw somebody is recording in what this deployment ships.
@@ -141,9 +141,6 @@ const MostWeaknesses = 16
 var ErrNotAWeakness = refusal.Errorf("a flaw states at most %d weaknesses, each written as CWE- "+
 	"and a number, such as CWE-125", MostWeaknesses)
 
-// weaknessID is the shape of a weakness identifier: CWE- and a number from one.
-var weaknessID = regexp.MustCompile(`^CWE-[1-9][0-9]{0,5}$`)
-
 // ErrTooManyPlaces says one recording would open more findings than this
 // deployment allows one action to write.
 //
@@ -238,7 +235,7 @@ func (s *Store) Enter(ctx context.Context, subject access.Subject, in Entering) 
 		return nil, "", ErrNotAWeakness
 	}
 	for _, kind := range kinds {
-		if !weaknessID.MatchString(kind) {
+		if !weakness.Shape.MatchString(kind) {
 			return nil, "", ErrNotAWeakness
 		}
 	}
@@ -303,8 +300,8 @@ func (s *Store) Enter(ctx context.Context, subject access.Subject, in Entering) 
 		if in.FromReport != "" {
 			reported = new(FlawReport)
 			err := tx.NewSelect().Model(reported).
-				Where("fr.reference = ?", foldReference(in.FromReport)).
-				Where("fr.product_id = ?", productID).
+				Where(`"fr"."reference" = ?`, foldReference(in.FromReport)).
+				Where(`"fr"."product_id" = ?`, productID).
 				Scan(ctx)
 			if database.IsNoRows(err) {
 				return ErrNoSuchReport
@@ -447,10 +444,10 @@ func (s *Store) Enter(ctx context.Context, subject access.Subject, in Entering) 
 		var onClock []int64
 		if err := tx.NewSelect().
 			TableExpr(`"target" AS "tg"`).
-			Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-			Join(`JOIN "product" AS "p" ON p.id = st.product_id`).
-			ColumnExpr("tg.id").
-			Where("tg.id IN (?)", bun.List(in.TargetIDs)).
+			Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+			Join(`JOIN "product" AS "p" ON "p"."id" = "st"."product_id"`).
+			ColumnExpr(`"tg"."id"`).
+			Where(`"tg"."id" IN (?)`, bun.List(in.TargetIDs)).
 			Where(clocked, clockedArgs...).
 			Scan(ctx, &onClock); err != nil {
 			return fmt.Errorf("read which builds carry deadlines: %w", err)
@@ -473,7 +470,6 @@ func (s *Store) Enter(ctx context.Context, subject access.Subject, in Entering) 
 				ComponentID:     place.component,
 				ConsumerID:      optional(place.consumerID),
 				PlaceIdentity:   PlaceIdentity(place.name, place.consumer),
-				LastChangedAt:   now,
 				OpenedAt:        now,
 			}
 			// An embargo gets an end where somebody outside reported
@@ -527,27 +523,8 @@ func (s *Store) Enter(ctx context.Context, subject access.Subject, in Entering) 
 		// rather than through the store, because the store holds a
 		// database and this is inside one of its transactions.
 		if reported != nil {
-			res, err := tx.NewUpdate().Model((*FlawReport)(nil)).
-				Set("vulnerability_id = ?", vulnerabilityID).
-				Set("evaluated_at = ?", now).
-				Set("evaluated_by = ?", subject.ID).
-				Where("id = ?", reported.ID).
-				// Still unjudged and under no ruling when this lands, for
-				// the reason accepting a report as an existing issue asks.
-				Where("vulnerability_id IS NULL").
-				Where("ruling_id IS NULL").
-				Exec(ctx)
-			if err != nil {
-				return fmt.Errorf("judge the report this is recorded from: %w", err)
-			}
-			changed, err := database.Affected(res)
-			if err != nil {
-				return fmt.Errorf("judge the report this is recorded from: %w", err)
-			}
-			if changed == 0 {
-				return ErrAlreadyJudged
-			}
-			return refuseIfReported(ctx, tx, vulnerabilityID, reported.ID)
+			return judgeReport(ctx, tx, reported.ID, vulnerabilityID, subject.ID, now,
+				"judge the report this is recorded from")
 		}
 		// Every flaw has a report, whether it was sent in or found here, so
 		// the Inbox is the one list of where flaws came from and the same
@@ -643,11 +620,11 @@ func carrying(ctx context.Context, db bun.IDB, targetID int64, in Entering) (int
 	}
 	err := db.NewSelect().
 		TableExpr(`"graph_node" AS "n"`).
-		Join(`JOIN "component" AS "c" ON c.id = n.component_id`).
-		ColumnExpr(`c.id AS "id"`).
-		Where("n.target_id = ?", targetID).
-		Where("n.closed_scan_id IS NULL").
-		Where("n.is_root = ?", true).
+		Join(`JOIN "component" AS "c" ON "c"."id" = "n"."component_id"`).
+		ColumnExpr(`"c"."id" AS "id"`).
+		Where(`"n"."target_id" = ?`, targetID).
+		Where(`"n"."closed_scan_id" IS NULL`).
+		Where(`"n"."is_root" = ?`, true).
 		Limit(1).
 		Scan(ctx, &root)
 	if database.IsNoRows(err) {
@@ -664,10 +641,10 @@ func carrying(ctx context.Context, db bun.IDB, targetID int64, in Entering) (int
 func isRootIn(ctx context.Context, db bun.IDB, targetID, componentID int64) (bool, error) {
 	found, err := db.NewSelect().
 		TableExpr(`"graph_node" AS "n"`).
-		Where("n.target_id = ?", targetID).
-		Where("n.component_id = ?", componentID).
-		Where("n.closed_scan_id IS NULL").
-		Where("n.is_root = ?", true).
+		Where(`"n"."target_id" = ?`, targetID).
+		Where(`"n"."component_id" = ?`, componentID).
+		Where(`"n"."closed_scan_id" IS NULL`).
+		Where(`"n"."is_root" = ?`, true).
 		Count(ctx)
 	if err != nil {
 		return false, fmt.Errorf("look up whether that is the build itself: %w", err)
@@ -810,8 +787,8 @@ func productNameOf(ctx context.Context, db bun.IDB, productID int64) (string, er
 	var name string
 	err := db.NewSelect().
 		TableExpr(`"product" AS "p"`).
-		ColumnExpr("p.name").
-		Where("p.id = ?", productID).
+		ColumnExpr(`"p"."name"`).
+		Where(`"p"."id" = ?`, productID).
 		Scan(ctx, &name)
 	if err != nil {
 		return "", fmt.Errorf("look up what product %d is called: %w", productID, err)
@@ -825,8 +802,8 @@ func (s *Store) ComponentName(ctx context.Context, componentID int64) (string, e
 	var name string
 	err := s.db.NewSelect().
 		TableExpr(`"component" AS "c"`).
-		ColumnExpr("c.name").
-		Where("c.id = ?", componentID).
+		ColumnExpr(`"c"."name"`).
+		Where(`"c"."id" = ?`, componentID).
 		Scan(ctx, &name)
 	if err != nil {
 		return "", fmt.Errorf("look up what component %d is called: %w", componentID, err)
@@ -846,7 +823,7 @@ func cleaned(in []string) []string {
 	out := make([]string, 0, len(in))
 	seen := map[string]bool{}
 	for _, one := range in {
-		one = strings.ToUpper(strings.TrimSpace(one))
+		one = weakness.Canonical(one)
 		if one == "" || seen[one] {
 			continue
 		}

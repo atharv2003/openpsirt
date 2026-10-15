@@ -19,6 +19,7 @@ import (
 	"github.com/nexthop-ai/openpsirt/internal/markdown"
 	"github.com/nexthop-ai/openpsirt/internal/refusal"
 	"github.com/nexthop-ai/openpsirt/internal/triage"
+	"github.com/nexthop-ai/openpsirt/internal/typedname"
 )
 
 // Told is a record that somebody outside was told about an attack: who, when,
@@ -132,8 +133,8 @@ func (s *Store) RecordTold(ctx context.Context, subject access.Subject, recordID
 			"say what they were told. A notice is read later by somebody answering for it, " +
 				"and what was said is the part they cannot find anywhere else")
 	}
-	if len(said) > triage.GroundsLimit {
-		return nil, refusal.Errorf("what they were told is longer than %d bytes", triage.GroundsLimit)
+	if len(said) > markdown.MaxBytes {
+		return nil, refusal.Errorf("what they were told is longer than %d bytes", markdown.MaxBytes)
 	}
 	if err := markdown.Check(said); err != nil {
 		return nil, err
@@ -153,7 +154,7 @@ func (s *Store) RecordTold(ctx context.Context, subject access.Subject, recordID
 	err = s.writing(ctx, func(ctx context.Context, tx bun.IDB) error {
 		*told = Told{}
 		record := new(triage.ExploitedHere)
-		if err := tx.NewSelect().Model(record).Where("eh.id = ?", recordID).
+		if err := tx.NewSelect().Model(record).Where(`"eh"."id" = ?`, recordID).
 			Scan(ctx); err != nil {
 			if database.IsNoRows(err) {
 				return ErrNoSuchRecord
@@ -254,50 +255,75 @@ func detailsSaid(details Details) (reference, malicious *string, places []string
 		if utf8.RuneCountInString(place) > database.NameWidth {
 			return nil, nil, nil, refusal.Errorf("a place's name is at most %d characters", database.NameWidth)
 		}
-		if seen[strings.ToLower(place)] {
+		if seen[typedname.Matching(place)] {
 			continue
 		}
-		seen[strings.ToLower(place)] = true
+		seen[typedname.Matching(place)] = true
 		places = append(places, place)
 	}
 	return reference, malicious, places, nil
 }
 
-// ToldAbout is every notice recorded about these records that this subject
-// may be told of, earliest told first.
+// tellable is the records these identifiers name that this subject may be
+// told of.
 //
-// Narrowed by the record each notice is about, with the question that
-// authorizes one issue in one product: a notice names an attack, and an
-// attack on an undisclosed issue is undisclosed with it.
-func (s *Store) ToldAbout(ctx context.Context, subject access.Subject,
-	recordIDs []int64) (map[int64][]Told, error) {
+// Narrowed record by record, with the question that authorizes one issue in
+// one product. A notice names an attack and a fix release names what answers
+// it, and both are undisclosed with an undisclosed issue, so the notices and
+// the fixes of a record are read through this one narrowing.
+func tellable(ctx context.Context, db bun.IDB, subject access.Subject,
+	recordIDs []int64) ([]triage.ExploitedHere, error) {
 
-	out := map[int64][]Told{}
 	if len(recordIDs) == 0 {
-		return out, nil
+		return nil, nil
 	}
 	var records []triage.ExploitedHere
-	if err := s.db.NewSelect().Model(&records).
-		Where("eh.id IN (?)", bun.List(recordIDs)).Scan(ctx); err != nil {
+	if err := db.NewSelect().Model(&records).
+		Where(`"eh"."id" IN (?)`, bun.List(recordIDs)).Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read the records of being exploited: %w", err)
 	}
-	allowed := make([]int64, 0, len(records))
+	out := records[:0]
 	for _, record := range records {
-		ok, err := finding.MayBeToldOfWithin(ctx, s.db, subject,
+		ok, err := finding.MayBeToldOfWithin(ctx, db, subject,
 			record.ProductID, record.VulnerabilityID)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
-			allowed = append(allowed, record.ID)
+			out = append(out, record)
 		}
 	}
-	if len(allowed) == 0 {
+	return out, nil
+}
+
+// ToldAbout is every notice recorded about these records that this subject
+// may be told of, earliest told first.
+func (s *Store) ToldAbout(ctx context.Context, subject access.Subject,
+	recordIDs []int64) (map[int64][]Told, error) {
+
+	records, err := tellable(ctx, s.db, subject, recordIDs)
+	if err != nil {
+		return nil, err
+	}
+	return s.toldAbout(ctx, records)
+}
+
+// toldAbout is every notice recorded about records already narrowed to what
+// the reader may be told of, earliest told first.
+func (s *Store) toldAbout(ctx context.Context,
+	records []triage.ExploitedHere) (map[int64][]Told, error) {
+
+	out := map[int64][]Told{}
+	if len(records) == 0 {
 		return out, nil
+	}
+	allowed := make([]int64, 0, len(records))
+	for _, record := range records {
+		allowed = append(allowed, record.ID)
 	}
 	var rows []Told
 	err := s.db.NewSelect().Model(&rows).
-		Where("tod.exploited_here_id IN (?)", bun.List(allowed)).
+		Where(`"tod"."exploited_here_id" IN (?)`, bun.List(allowed)).
 		Order("tod.told_at ASC", "tod.id ASC").
 		Scan(ctx)
 	if err != nil {
@@ -326,7 +352,7 @@ func withPlaces(ctx context.Context, db bun.IDB, told []Told) error {
 	}
 	var places []ToldPlace
 	if err := db.NewSelect().Model(&places).
-		Where("tpl.told_id IN (?)", bun.List(ids)).
+		Where(`"tpl"."told_id" IN (?)`, bun.List(ids)).
 		Order("tpl.told_id ASC", "tpl.position ASC").
 		Scan(ctx); err != nil {
 		return fmt.Errorf("read the places notices named: %w", err)
@@ -366,7 +392,7 @@ func (s *Store) WindowsNamed(ctx context.Context, subject access.Subject,
 	}
 	var windows []Window
 	if err := s.db.NewSelect().Model(&windows).
-		Where("ow.id IN (?)", bun.List(ids)).Scan(ctx); err != nil {
+		Where(`"ow"."id" IN (?)`, bun.List(ids)).Scan(ctx); err != nil {
 		return nil, fmt.Errorf("read which windows were answered: %w", err)
 	}
 	windows, err := withLimits(ctx, s.db, windows)

@@ -9,13 +9,11 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/uptrace/bun"
 
 	"github.com/nexthop-ai/openpsirt/internal/access"
-	"github.com/nexthop-ai/openpsirt/internal/catalog"
 	"github.com/nexthop-ai/openpsirt/internal/httpapi/core"
 	"github.com/nexthop-ai/openpsirt/internal/supplier"
 	"github.com/nexthop-ai/openpsirt/internal/trail"
@@ -28,10 +26,10 @@ type AdvisorySourceBody struct {
 	// Tried, Read, CaughtUpTo and Because say whether it is working, which is
 	// the question an operator has about a source and one nothing else
 	// answers.
-	Tried      *time.Time `json:"tried,omitempty" doc:"When this supplier was last tried"`
-	Read       *time.Time `json:"read,omitempty" doc:"When a read of this supplier last succeeded"`
-	CaughtUpTo *time.Time `json:"caught_up_to,omitempty" doc:"The newest moment in what they list that has been read"`
-	Because    string     `json:"because,omitempty" doc:"The reason the last attempt stopped, where one did"`
+	Tried      string `json:"tried,omitempty" doc:"When this supplier was last tried"`
+	Read       string `json:"read,omitempty" doc:"When a read of this supplier last succeeded"`
+	CaughtUpTo string `json:"caught_up_to,omitempty" doc:"The newest moment in what they list that has been read"`
+	Because    string `json:"because,omitempty" doc:"The reason the last attempt stopped, where one did"`
 }
 
 // registerAdvisorySources configures which suppliers this deployment reads
@@ -52,19 +50,9 @@ func registerAdvisorySources(api huma.API, in core.Deps) {
 	}, core.DeploymentWide, ""), func(ctx context.Context, input *struct {
 		Product string `path:"product"`
 	}) (*core.ListOutput[AdvisorySourceBody], error) {
-		if err := core.Administrating(ctx); err != nil {
-			return nil, err
-		}
-		by, err := core.Reading(ctx)
+		by, product, err := core.AdministeredProduct(ctx, in, in.Handle(), input.Product)
 		if err != nil {
 			return nil, err
-		}
-		if in.DB == nil {
-			return nil, core.NoDatabase(in.Logger)
-		}
-		product, err := catalog.NewStore(in.DB.DB).ProductByName(ctx, input.Product)
-		if err != nil {
-			return nil, core.Absent(in.Logger, err, "that product could not be looked up", core.NoSuchProduct)
 		}
 		rows, err := supplier.NewStore(in.DB.DB).For(ctx, by, product.ID)
 		if err != nil {
@@ -77,8 +65,8 @@ func registerAdvisorySources(api huma.API, in core.Deps) {
 		out.Body.Items = make([]AdvisorySourceBody, 0, len(rows))
 		for _, row := range rows {
 			out.Body.Items = append(out.Body.Items, AdvisorySourceBody{
-				Name: row.Display, URL: row.URL, Tried: core.InUTC(row.FetchedAt),
-				Read: core.InUTC(row.ReachedAt), CaughtUpTo: core.InUTC(row.CaughtUpTo), Because: row.Failed,
+				Name: row.Display, URL: row.URL, Tried: core.StampAt(row.FetchedAt),
+				Read: core.StampAt(row.ReachedAt), CaughtUpTo: core.StampAt(row.CaughtUpTo), Because: row.Failed,
 			})
 		}
 		return out, nil
@@ -123,16 +111,6 @@ func registerAdvisorySources(api huma.API, in core.Deps) {
 		Status int
 		Body   AdvisorySourceBody
 	}, error) {
-		if err := core.Administrating(ctx); err != nil {
-			return nil, err
-		}
-		by, err := core.Reading(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if in.DB == nil {
-			return nil, core.NoDatabase(in.Logger)
-		}
 		// Normalized here so the stored value is the address as it parses. The
 		// rule for what may be stored is the store's, where the rest of this
 		// table's rules live.
@@ -145,9 +123,9 @@ func registerAdvisorySources(api huma.API, in core.Deps) {
 		if err := core.Changing(ctx, in.DB, in.Log(), func(ctx context.Context, tx bun.Tx) error {
 			// Resolved inside the act it names, so a rename or a retirement
 			// committing between the two is what a retry reads.
-			product, err := catalog.NewStore(tx).ProductByName(ctx, input.Product)
+			by, product, err := core.AdministeredProduct(ctx, in, tx, input.Product)
 			if err != nil {
-				return core.Absent(in.Logger, err, "that product could not be looked up", core.NoSuchProduct)
+				return err
 			}
 			row, err = supplier.NewStore(tx).Add(ctx, by, product.ID, input.Body.Name, address)
 			switch {
@@ -191,22 +169,12 @@ func registerAdvisorySources(api huma.API, in core.Deps) {
 		Product string `path:"product"`
 		Name    string `path:"name"`
 	}) (*struct{}, error) {
-		if err := core.Administrating(ctx); err != nil {
-			return nil, err
-		}
-		by, err := core.Reading(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if in.DB == nil {
-			return nil, core.NoDatabase(in.Logger)
-		}
 		if err := core.Changing(ctx, in.DB, in.Log(), func(ctx context.Context, tx bun.Tx) error {
 			// Resolved inside the act it names, so a rename committing
 			// between the two is what a retry reads.
-			product, err := catalog.NewStore(tx).ProductByName(ctx, input.Product)
+			by, product, err := core.AdministeredProduct(ctx, in, tx, input.Product)
 			if err != nil {
-				return core.Absent(in.Logger, err, "that product could not be looked up", core.NoSuchProduct)
+				return err
 			}
 			// Mapped before the trail row, which would otherwise record a
 			// withdrawal that did not happen — and the pass goes on reaching

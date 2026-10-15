@@ -4,15 +4,11 @@
 package weakness_test
 
 import (
-	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/nexthop-ai/openpsirt/internal/weakness"
 )
-
-// identifier is the shape the standard states a weakness under.
-var identifier = regexp.MustCompile(`^CWE-[1-9][0-9]{0,5}$`)
 
 func TestTheCatalogWasReadAndEveryNameItGaveIsUsable(t *testing.T) {
 	// A generated file nothing looks at is a file that can be empty, or half
@@ -34,7 +30,7 @@ func TestEveryNameIsStatedUnderAnIdentifierTheStandardAccepts(t *testing.T) {
 	checked := 0
 	for id, name := range weakness.All() {
 		checked++
-		if !identifier.MatchString(id) {
+		if !weakness.Shape.MatchString(id) {
 			t.Errorf("%q is not an identifier the standard accepts", id)
 		}
 		if name == "" {
@@ -85,17 +81,26 @@ func TestEveryWeaknessAScreenNamesIsOneTheCatalogNamesToo(t *testing.T) {
 	// The screen's name is drawn with the catalog's on hover, and a short
 	// name for an identifier the catalog does not assign is a name that was
 	// made up.
-	offered := weakness.Find("", 1000)
-	if len(offered) == 0 {
+	// Read from the list itself rather than from what a search offers: a
+	// search walks the catalog's identifiers, so one the catalog does not
+	// name would be left out of the answer rather than reported.
+	listed := weakness.Common()
+	if len(listed) == 0 {
 		t.Fatal("the common list is empty, so this checked nothing")
 	}
-	for _, one := range offered {
+	for _, id := range listed {
+		one := weakness.Of(id)
 		if one.Short == "" {
-			t.Errorf("%s is offered before anything is typed and has no short name", one.ID)
+			t.Errorf("%s is on the common list and has no short name", id)
 		}
 		if one.Name == "" {
-			t.Errorf("%s has a short name %q and no name in the catalog", one.ID, one.Short)
+			t.Errorf("%s has a short name %q and no name in the catalog", id, one.Short)
 		}
+	}
+	offered := weakness.Find("", 1000)
+	if len(offered) != len(listed) {
+		t.Errorf("%d weaknesses are offered before anything is typed, want the %d listed",
+			len(offered), len(listed))
 	}
 }
 

@@ -91,9 +91,6 @@ func registerIssue(api huma.API, in core.Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if in.DB == nil {
-			return nil, core.NoDatabase(in.Logger)
-		}
 		out := &IssueOutput{}
 		out.Body.Vulnerability = input.Vulnerability
 		out.Body.Items = []SightingBody{}
@@ -158,7 +155,7 @@ func registerIssue(api huma.API, in core.Deps) {
 		for _, one := range merged {
 			out.Body.Merged = append(out.Body.Merged, MergedBody{
 				Vulnerability: filedUnder[one.AbsorbedID],
-				MergedAt:      one.MergedAt.UTC().Format(time.RFC3339), Named: strings.Fields(one.Named),
+				MergedAt:      core.Stamp(one.MergedAt), Named: strings.Fields(one.Named),
 			})
 		}
 		out.Body.Items = make([]SightingBody, 0, len(rows))

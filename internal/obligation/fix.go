@@ -18,6 +18,7 @@ import (
 	"github.com/nexthop-ai/openpsirt/internal/refusal"
 	"github.com/nexthop-ai/openpsirt/internal/trail"
 	"github.com/nexthop-ai/openpsirt/internal/triage"
+	"github.com/nexthop-ai/openpsirt/internal/typedname"
 )
 
 // Fix is a person's statement that a release of the record's product carries
@@ -117,8 +118,8 @@ func (s *Store) NameFix(ctx context.Context, subject access.Subject, recordID in
 		}
 		stream := new(catalog.Stream)
 		if err := tx.NewSelect().Model(stream).
-			Where("s.product_id = ?", record.ProductID).
-			Where("s.name = ?", catalog.Matching(release)).
+			Where(`"s"."product_id" = ?`, record.ProductID).
+			Where(`"s"."name" = ?`, typedname.Matching(release)).
 			Scan(ctx); err != nil {
 			if database.IsNoRows(err) {
 				return ErrNoSuchRelease
@@ -170,8 +171,8 @@ func (s *Store) WithdrawFix(ctx context.Context, subject access.Subject, recordI
 		}
 		fix := new(Fix)
 		if err := tx.NewSelect().Model(fix).
-			Where("ef.id = ?", fixID).Where("ef.exploited_here_id = ?", record.ID).
-			Where("ef.withdrawn_at IS NULL").
+			Where(`"ef"."id" = ?`, fixID).Where(`"ef"."exploited_here_id" = ?`, record.ID).
+			Where(`"ef"."withdrawn_at" IS NULL`).
 			Scan(ctx); err != nil {
 			if database.IsNoRows(err) {
 				return ErrNoSuchFix
@@ -179,14 +180,14 @@ func (s *Store) WithdrawFix(ctx context.Context, subject access.Subject, recordI
 			return fmt.Errorf("read the release named as carrying the fix: %w", err)
 		}
 		res, err := tx.NewUpdate().Model((*Fix)(nil)).
-			Set("withdrawn_at = ?", s.now().Truncate(time.Microsecond)).
-			Set("withdrawn_by = ?", subject.ID).
+			Set(`"withdrawn_at" = ?`, s.now().Truncate(time.Microsecond)).
+			Set(`"withdrawn_by" = ?`, subject.ID).
 			// Released, so the release may be named again.
-			Set("live_stream_id = ?", nil).
-			Where("id = ?", fix.ID).
+			Set(`"live_stream_id" = ?`, nil).
+			Where(`"id" = ?`, fix.ID).
 			// Still standing when this lands. Two people withdrawing at once
 			// would otherwise both write, and the trail would say it twice.
-			Where("withdrawn_at IS NULL").
+			Where(`"withdrawn_at" IS NULL`).
 			Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("withdraw the release named as carrying the fix: %w", err)
@@ -199,8 +200,8 @@ func (s *Store) WithdrawFix(ctx context.Context, subject access.Subject, recordI
 			return ErrNoSuchFix
 		}
 		var name string
-		if err := tx.NewSelect().Model((*catalog.Stream)(nil)).ColumnExpr("s.name").
-			Where("s.id = ?", fix.StreamID).Scan(ctx, &name); err != nil {
+		if err := tx.NewSelect().Model((*catalog.Stream)(nil)).ColumnExpr(`"s"."name"`).
+			Where(`"s"."id" = ?`, fix.StreamID).Scan(ctx, &name); err != nil {
 			return fmt.Errorf("read the release named as carrying the fix: %w", err)
 		}
 		return noteFix(ctx, tx, subject, record, trail.Said(name, true), nil)
@@ -220,13 +221,13 @@ func standingFor(ctx context.Context, tx bun.IDB, subject access.Subject,
 	recordID int64) (*triage.ExploitedHere, error) {
 
 	if _, err := tx.NewUpdate().Model((*triage.ExploitedHere)(nil)).
-		Set("cleared_at = cleared_at").
-		Where("id = ?", recordID).Where("cleared_at IS NULL").
+		Set(`"cleared_at" = "cleared_at"`).
+		Where(`"id" = ?`, recordID).Where(`"cleared_at" IS NULL`).
 		Exec(ctx); err != nil {
 		return nil, fmt.Errorf("hold the record of being exploited: %w", err)
 	}
 	record := new(triage.ExploitedHere)
-	if err := tx.NewSelect().Model(record).Where("eh.id = ?", recordID).
+	if err := tx.NewSelect().Model(record).Where(`"eh"."id" = ?`, recordID).
 		Scan(ctx); err != nil {
 		if database.IsNoRows(err) {
 			return nil, ErrNoSuchRecord
@@ -256,57 +257,42 @@ func standingFor(ctx context.Context, tx bun.IDB, subject access.Subject,
 func noteFix(ctx context.Context, tx bun.IDB, subject access.Subject,
 	record *triage.ExploitedHere, was, became *string) error {
 
-	var named struct {
-		Issue   string `bun:"issue"`
-		Product string `bun:"product"`
-	}
-	err := tx.NewSelect().
-		TableExpr(`"vulnerability" AS "v"`).
-		ColumnExpr(`v.identifier AS "issue"`).
-		ColumnExpr(`(SELECT p.name FROM "product" AS "p" WHERE p.id = ?) AS "product"`,
-			record.ProductID).
-		Where("v.id = ?", record.VulnerabilityID).
-		Scan(ctx, &named)
+	about, err := triage.TrailAbout(ctx, tx, record.ProductID, record.VulnerabilityID)
 	if err != nil {
-		return fmt.Errorf("read what this record is about: %w", err)
+		return err
 	}
 	return trail.NewStore(tx).Record(ctx, subject, trail.ExploitedHere,
-		named.Issue+" on "+named.Product+", fix release", was, became)
+		about+", fix release", was, became)
 }
 
 // FixesOf is every release named on these records as carrying the fix that
 // this subject may be told of, withdrawn ones among them, earliest named
 // first, each with its release date and what its latest scans say.
-//
-// Narrowed by the record each naming is about, with the question that
-// authorizes one issue in one product, as the notices are.
 func (s *Store) FixesOf(ctx context.Context, subject access.Subject,
 	recordIDs []int64) (map[int64][]Fix, error) {
 
-	out := map[int64][]Fix{}
-	if len(recordIDs) == 0 {
-		return out, nil
+	records, err := tellable(ctx, s.db, subject, recordIDs)
+	if err != nil {
+		return nil, err
 	}
-	var records []triage.ExploitedHere
-	if err := s.db.NewSelect().Model(&records).
-		Where("eh.id IN (?)", bun.List(recordIDs)).Scan(ctx); err != nil {
-		return nil, fmt.Errorf("read the records of being exploited: %w", err)
+	return s.fixesOf(ctx, subject, records)
+}
+
+// fixesOf is every release named on records already narrowed to what the
+// reader may be told of. The subject still narrows what each release's scans
+// are said to hold.
+func (s *Store) fixesOf(ctx context.Context, subject access.Subject,
+	records []triage.ExploitedHere) (map[int64][]Fix, error) {
+
+	out := map[int64][]Fix{}
+	if len(records) == 0 {
+		return out, nil
 	}
 	allowed := make(map[int64]triage.ExploitedHere, len(records))
 	ids := make([]int64, 0, len(records))
 	for _, record := range records {
-		ok, err := finding.MayBeToldOfWithin(ctx, s.db, subject,
-			record.ProductID, record.VulnerabilityID)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			allowed[record.ID] = record
-			ids = append(ids, record.ID)
-		}
-	}
-	if len(ids) == 0 {
-		return out, nil
+		allowed[record.ID] = record
+		ids = append(ids, record.ID)
 	}
 	var rows []struct {
 		Fix `bun:"extend"`
@@ -318,11 +304,11 @@ func (s *Store) FixesOf(ctx context.Context, subject access.Subject,
 	if err := s.db.NewSelect().
 		Model((*Fix)(nil)).
 		ColumnExpr("ef.*").
-		ColumnExpr(`st.name AS "release"`).
-		ColumnExpr(`st.display_name AS "release_display"`).
-		ColumnExpr(`st.released_on AS "released_on"`).
-		Join(`JOIN "stream" AS "st" ON st.id = ef.stream_id`).
-		Where("ef.exploited_here_id IN (?)", bun.List(ids)).
+		ColumnExpr(`"st"."name" AS "release"`).
+		ColumnExpr(`"st"."display_name" AS "release_display"`).
+		ColumnExpr(`"st"."released_on" AS "released_on"`).
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "ef"."stream_id"`).
+		Where(`"ef"."exploited_here_id" IN (?)`, bun.List(ids)).
 		Order("ef.named_at ASC", "ef.id ASC").
 		Scan(ctx, &rows); err != nil {
 		return nil, fmt.Errorf("read the releases named as carrying the fix: %w", err)

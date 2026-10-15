@@ -15,6 +15,7 @@ import (
 
 	"github.com/nexthop-ai/openpsirt/internal/access"
 	"github.com/nexthop-ai/openpsirt/internal/catalog"
+	"github.com/nexthop-ai/openpsirt/internal/dbtest/fixture"
 	"github.com/nexthop-ai/openpsirt/internal/finding"
 	"github.com/nexthop-ai/openpsirt/internal/graph"
 	"github.com/nexthop-ai/openpsirt/internal/httpapi/httpapitest"
@@ -362,7 +363,7 @@ func TestCountsAreReportedOnceAndAZeroIsStillAnAnswer(t *testing.T) {
 				t.Fatalf("record upload %d: %v %v", sent, outcome, err)
 			}
 			if _, err := r.DB.DB.NewUpdate().Model((*ingest.Scan)(nil)).
-				Set("received_at = ?", at).Where("id = ?", scan.ID).
+				Set(`"received_at" = ?`, at).Where(`"id" = ?`, scan.ID).
 				Exec(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -388,7 +389,7 @@ func TestCountsAreReportedOnceAndAZeroIsStillAnAnswer(t *testing.T) {
 		findings := finding.NewStore(r.DB.DB)
 		scan := func(t *testing.T, from int64, at time.Time) {
 			t.Helper()
-			if _, err := graph.NewStore(r.DB.DB).Apply(ctx, target.ID, from, graph.Snapshot{
+			if _, err := fixture.ApplyGraph(ctx, r.DB.DB, target.ID, from, graph.Snapshot{
 				Root:         product,
 				Components:   []graph.Described{library},
 				Dependencies: []graph.Dependency{{Parent: product, Child: library}},
@@ -413,8 +414,8 @@ func TestCountsAreReportedOnceAndAZeroIsStillAnAnswer(t *testing.T) {
 			// The moment it ran, which decides the upload it answers and
 			// the one its numbers are reported against.
 			if _, err := r.DB.DB.NewUpdate().Model((*finding.Run)(nil)).
-				Set("started_at = ?", at.Add(-time.Minute)).Set("finished_at = ?", at).
-				Where("id = ?", run.ID).Exec(ctx); err != nil {
+				Set(`"started_at" = ?`, at.Add(-time.Minute)).Set(`"finished_at" = ?`, at).
+				Where(`"id" = ?`, run.ID).Exec(ctx); err != nil {
 				t.Fatal(err)
 			}
 		}

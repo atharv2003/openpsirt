@@ -34,7 +34,7 @@ func TestADocumentRecordedAfterSomebodyElsesStatesTheLaterVersion(t *testing.T) 
 		ctx := t.Context()
 		product := w.Product
 		who, err := access.NewStore(db.DB).Ensure(ctx, "ana@example.com", "Ana",
-			access.Stated(false), nil)
+			new(false), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -100,7 +100,7 @@ func TestTwoIssuancesAtOnceTakeTheNextNumberRatherThanFail(t *testing.T) {
 		ctx := t.Context()
 		product := w.Product
 		who, err := access.NewStore(db.DB).Ensure(ctx, "ana@example.com", "Ana",
-			access.Stated(false), nil)
+			new(false), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -149,7 +149,7 @@ func TestADocumentIsNotRecordedUnderANameTheBuildLost(t *testing.T) {
 		product := w.Product
 		variant := w.Customer
 		who, err := access.NewStore(db.DB).Ensure(ctx, "ana@example.com", "Ana",
-			access.Stated(false), nil)
+			new(false), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -160,7 +160,7 @@ func TestADocumentIsNotRecordedUnderANameTheBuildLost(t *testing.T) {
 		store := vex.NewStore(db.DB)
 		vex.Between(store, func() {
 			if _, err := db.DB.NewUpdate().Model((*catalog.Variant)(nil)).
-				Set("name = ?", "bcm").Where("id = ?", variant.ID).Exec(ctx); err != nil {
+				Set(`"name" = ?`, "bcm").Where(`"id" = ?`, variant.ID).Exec(ctx); err != nil {
 				t.Fatal(err)
 			}
 		})

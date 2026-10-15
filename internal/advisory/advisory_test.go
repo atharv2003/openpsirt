@@ -33,7 +33,6 @@ type fixture struct {
 	db      *database.DB
 	store   *advisory.Store
 	finds   *finding.Store
-	graph   *graph.Store
 	scans   *ingest.Store
 	product int64
 	// master is the branch and v2.4.1 the tagged release, so an advisory has
@@ -136,7 +135,7 @@ func each(t *testing.T, fn func(t *testing.T, f *fixture)) {
 		mellanox := w.TargetFor(w.Branch, w.DeclareVariant(w.Product, "mellanox", true))
 		f := &fixture{
 			db: w.DB, store: advisory.NewStore(w.DB.DB), finds: finding.NewStore(w.DB.DB),
-			graph: graph.NewStore(w.DB.DB), scans: ingest.NewStore(w.DB.DB),
+			scans:   ingest.NewStore(w.DB.DB),
 			product: w.Product.ID, master: w.Target.ID, tagged: tagged.ID,
 			older:        older.ID,
 			otherProduct: second.ID, other: secondTarget.ID, second: another,
@@ -181,7 +180,7 @@ func (f *fixture) shippedAs(t *testing.T, target int64, declared string) {
 	if err != nil || outcome != ingest.Accept {
 		t.Fatalf("record scan: %v %v", outcome, err)
 	}
-	if _, err := f.graph.Apply(ctx, target, scan.ID, graph.Snapshot{
+	if _, err := fixtures.ApplyGraph(ctx, f.db, target, scan.ID, graph.Snapshot{
 		Root: root, Components: []graph.Described{carrier},
 		Dependencies: []graph.Dependency{{Parent: root, Child: carrier}},
 	}); err != nil {
@@ -377,10 +376,10 @@ func (f *fixture) alsoIn(t *testing.T, identifier string, target int64) {
 	var componentID int64
 	if err := f.db.DB.NewSelect().
 		TableExpr("\"graph_node\" AS \"n\"").
-		Join("JOIN \"component\" AS \"c\" ON c.id = n.component_id").
-		ColumnExpr("c.id").
-		Where("n.target_id = ?", target).
-		Where("c.name = ?", carrier.Name).
+		Join(`JOIN "component" AS "c" ON "c"."id" = "n"."component_id"`).
+		ColumnExpr(`"c"."id"`).
+		Where(`"n"."target_id" = ?`, target).
+		Where(`"c"."name" = ?`, carrier.Name).
 		Limit(1).Scan(ctx, &componentID); err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +388,7 @@ func (f *fixture) alsoIn(t *testing.T, identifier string, target int64) {
 		TargetID: target, Kind: finding.Entered, Visibility: access.Private,
 		VulnerabilityID: issueID, ComponentID: componentID,
 		PlaceIdentity: finding.PlaceIdentity(carrier.Name, ""),
-		LastChangedAt: now, OpenedAt: now,
+		OpenedAt:      now,
 	}
 	if _, err := f.db.DB.NewInsert().Model(row).Exec(ctx); err != nil {
 		t.Fatal(err)
@@ -1167,9 +1166,9 @@ func TestAReleaseTheRecordSaysWasNeverAffectedIsNotNamed(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := f.db.DB.NewUpdate().Model((*finding.Finding)(nil)).
-			Set("closed_at = ?", time.Now().UTC()).
-			Set("closed_because = ?", finding.Unaffected).
-			Where("target_id = ?", f.tagged).Where("vulnerability_id = ?", issueID).
+			Set(`"closed_at" = ?`, time.Now().UTC()).
+			Set(`"closed_because" = ?`, finding.Unaffected).
+			Where(`"target_id" = ?`, f.tagged).Where(`"vulnerability_id" = ?`, issueID).
 			Exec(ctx); err != nil {
 			t.Fatal(err)
 		}

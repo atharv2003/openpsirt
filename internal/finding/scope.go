@@ -44,13 +44,13 @@ type Scope struct {
 // through a join that exists to produce a label.
 func (s Scope) Narrow(q *bun.SelectQuery) *bun.SelectQuery {
 	if s.ProductID != nil {
-		q = q.Where("st.product_id = ?", *s.ProductID)
+		q = q.Where(`"st"."product_id" = ?`, *s.ProductID)
 	}
 	if s.StreamID != nil {
-		q = q.Where("tg.stream_id = ?", *s.StreamID)
+		q = q.Where(`"tg"."stream_id" = ?`, *s.StreamID)
 	}
 	if s.VariantID != nil {
-		q = q.Where("tg.variant_id = ?", *s.VariantID)
+		q = q.Where(`"tg"."variant_id" = ?`, *s.VariantID)
 	}
 	return q
 }
@@ -68,13 +68,7 @@ func (s Scope) Narrow(q *bun.SelectQuery) *bun.SelectQuery {
 // about, is an empty list rather than a failure — the answer is that nothing
 // is open there.
 func (s *Store) Builds(ctx context.Context, scope Scope) ([]int64, error) {
-	return s.BuildsWithin(ctx, s.db, scope)
-}
-
-// BuildsWithin is Builds against a handle the caller chooses, so that a
-// transaction reads what it decides from inside itself.
-func (s *Store) BuildsWithin(ctx context.Context, db bun.IDB, scope Scope) ([]int64, error) {
-	return s.buildsIn(ctx, db, scope, Workable{})
+	return s.buildsIn(ctx, s.db, scope, Workable{})
 }
 
 // buildsWorking is Builds narrowed to the releases work can land in.
@@ -108,9 +102,9 @@ func (s *Store) buildsIn(ctx context.Context, db bun.IDB, scope Scope,
 	var ids []int64
 	q := db.NewSelect().
 		TableExpr(`"target" AS "tg"`).
-		Join(`JOIN "stream" AS "st" ON st.id = tg.stream_id`).
-		ColumnExpr("tg.id").
-		OrderExpr("tg.id")
+		Join(`JOIN "stream" AS "st" ON "st"."id" = "tg"."stream_id"`).
+		ColumnExpr(`"tg"."id"`).
+		OrderExpr(`"tg"."id"`)
 	q = scope.Narrow(q)
 	if only.asks() {
 		var err error

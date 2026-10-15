@@ -149,7 +149,7 @@ without the archaeology.
 |---|---|
 | "Read as the first sighting of whichever version ran last, an air-gapped deployment was told the data had not moved in seven months" | "A version that recurs is not a change. A restored bundle reproduces a version string exactly" |
 | "Maintained as a complement, every other unaskable ecosystem passed this filter, reached the asker, found none and was recorded empty" | "Candidates are built from the list of ecosystems with an index, never from its complement" |
-| "This panicked into the recovery middleware and answered 500, where the route already has words for it" | "A handler reached without a database refuses in words" |
+| "This panicked into the recovery middleware and answered 500, where the route already has words for it" | "A process with no database is answered by the router, in words, before any handler runs" |
 
 A section that has drifted reads a particular way: a heading that asks a
 question, paragraphs opening with a bolded claim, a reason three sentences past
@@ -199,7 +199,7 @@ unpick later.
 | **Every transaction is retryable as a whole**, through the one helper. A cluster certifies at `COMMIT`, so a write whose statements all succeeded can still be rolled back under it | REQ-71 |
 | **Nothing a transaction depends on is read outside it.** A retry re-runs the closure against a moved database, so a value fetched before it began describes a world that is gone. Anything the closure uses but does not fetch is a defect | REQ-71 |
 | **SQL values are parameterized and SQL identifiers come from an allowlist.** A placeholder cannot bind a column name, so a sort column from a query parameter is the real risk | REQ-66 |
-| **Every identifier is quoted: the ones the schema declares, the tables a query names, and the ones a query invents.** A reserved word is only reserved when it is bare, and the four engines reserve different ones — `make reserved` reads every one of the three rather than trusting a list somebody remembered, and reports a name for being bare rather than for being reserved, because the list of reserved words is what goes stale | REQ-71 |
+| **Every identifier is quoted: the ones the schema declares, the tables a query names, and the ones a query invents.** A reserved word is only reserved when it is bare, and the four engines reserve different ones — `make reserved` reports an invented alias, a named table and a declared column written bare, a qualified declared column or invented name in the literals of the code that runs that `DESIGN-database.md` § Identifier quoting lists, and a declared name that collides with a reserved word; a plain string constant holding one qualified name and a column built from an alias at run time are invisible to it, and are quoted where they are written; it reports a name for being bare rather than for being reserved, because the list of reserved words is what goes stale | REQ-71 |
 | **An affected-row count means rows matched, not rows changed.** A conditional update reads it as "the row was still there", so a write whose values were already correct must not report zero — the connection settings make that true on all four engines | REQ-71 |
 | **Exported code with no caller is a defect, not spare capacity.** A store method nothing routes to, a renderer nothing renders with. The separate check does look at exported symbols, but **it counts a test as a caller** — its own source says so — so a symbol only its own tests reach passes it, which is where most of them are | — |
 | **A decision no design document names is a defect too.** Built or not, every decision in force is described somewhere permanent; the gate fails on one that is not. It found 71 the first time it ran, five of them cited by running code. **It counts a mention, not a description** — its own source says so — so an identifier appearing in a `Satisfies` line is all it asks for, and the rule above that naming means describing is a person's to enforce | — |
@@ -551,9 +551,9 @@ gets ticked without being read.
 - Regression tests are named for the invariant they pin.
 
 A gate that iterates a collection counts what it examined and fails on
-zero. The form is `internal/config/documented_test.go:44-45` — `if len(reads)
-== 0 { t.Fatal("no settings were found in the source, so this checked
-nothing") }` — and its two-direction join is the standard: it reports both a
+zero. The form is the one in `internal/config/documented_test.go` — `if
+len(reads) == 0 { t.Fatal("no settings were found in the source, so this
+checked nothing") }` — and its two-direction join is the standard: it reports both a
 setting documented and not read, and one read and not documented. Sixteen gates
 were scoped so that they could not go red for the failure they name, and the
 shapes are worth knowing because they recur: a loop over a collection that may

@@ -6,7 +6,6 @@ package finding
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -14,9 +13,7 @@ import (
 	"github.com/nexthop-ai/openpsirt/internal/access"
 	"github.com/nexthop-ai/openpsirt/internal/database"
 	"github.com/nexthop-ai/openpsirt/internal/filed"
-	"github.com/nexthop-ai/openpsirt/internal/markdown"
 	"github.com/nexthop-ai/openpsirt/internal/refusal"
-	"github.com/nexthop-ai/openpsirt/internal/setting"
 )
 
 // ErrDisclosed says the issue is already public in this product.
@@ -45,18 +42,9 @@ var ErrDisclosureWaiting = refusal.New("a disclosure of that issue is already wa
 func (s *Store) Disclose(ctx context.Context, subject access.Subject,
 	productID, vulnerabilityID int64, reason string) (*Movement, error) {
 
-	if !subject.Triages(access.Private, productID) {
-		return nil, access.Denied(fmt.Sprintf("disclose an issue in product %d", productID))
-	}
-	if subject.ID == 0 {
-		return nil, access.Denied("disclose an issue without being anybody")
-	}
-	if strings.TrimSpace(reason) == "" {
-		return nil, Unreasoned{Said: "say why the issue is being disclosed"}
-	}
-	// The submission policy, run before the text is stored. The row is
-	// append-only and becomes public with the rest of the record.
-	if err := markdown.Check(reason); err != nil {
+	// The row is append-only and becomes public with the rest of the record.
+	if err := mayMoveEmbargo(subject, productID, reason, "disclose an issue",
+		"say why the issue is being disclosed"); err != nil {
 		return nil, err
 	}
 
@@ -81,27 +69,21 @@ func (s *Store) Disclose(ctx context.Context, subject access.Subject,
 			asked.Was = ends
 		default:
 			asked.Was = ends
-			threshold, err := setting.NewStore(tx).Duration(ctx,
-				setting.MovementThreshold, setting.DefaultMovementThreshold)
-			if err != nil {
+			if asked.NeedsApproval, err = needsSecondPerson(ctx, tx, productID, vulnerabilityID,
+				asked.Distance()); err != nil {
 				return err
 			}
-			already, err := movedBy(ctx, tx, productID, vulnerabilityID)
-			if err != nil {
-				return err
-			}
-			asked.NeedsApproval = threshold <= 0 || already+asked.Distance() >= threshold
 		}
 		if asked.NeedsApproval {
 			// Refused only where this one would wait too. One that takes
 			// effect at once ends the embargo whatever is waiting, and what
 			// was waiting leaves the queue with nothing left to disclose.
 			waiting, err := tx.NewSelect().Model((*Movement)(nil)).
-				Where("product_id = ?", productID).
+				Where(`"product_id" = ?`, productID).
 				Where(FiledUnder(filed.Issue), vulnerabilityID).
-				Where("act = ?", Disclosure).
-				Where("needs_approval = ?", true).
-				Where("approved_at IS NULL").
+				Where(`"act" = ?`, Disclosure).
+				Where(`"needs_approval" = ?`, true).
+				Where(`"approved_at" IS NULL`).
 				Exists(ctx)
 			if err != nil {
 				return fmt.Errorf("read whether a disclosure is waiting: %w", err)
@@ -117,7 +99,7 @@ func (s *Store) Disclose(ctx context.Context, subject access.Subject,
 		if out.NeedsApproval {
 			return nil
 		}
-		return makePublic(ctx, tx, productID, vulnerabilityID, now)
+		return makePublic(ctx, tx, productID, vulnerabilityID)
 	})
 	if err != nil {
 		return nil, err
@@ -134,9 +116,9 @@ func (s *Store) Disclose(ctx context.Context, subject access.Subject,
 func AnyUndisclosed(ctx context.Context, db bun.IDB, productID, vulnerabilityID int64) (bool, error) {
 	held, err := db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		Where(HeldAs("f.vulnerability_id"), vulnerabilityID).
-		Where(inThisProductAs("f.target_id"), productID).
-		Where("f.visibility = ?", access.Private).
+		Where(HeldAs(`"f"."vulnerability_id"`), vulnerabilityID).
+		Where(inThisProductAs(`"f"."target_id"`), productID).
+		Where(`"f"."visibility" = ?`, access.Private).
 		Exists(ctx)
 	if err != nil {
 		return false, fmt.Errorf("read whether this issue is undisclosed: %w", err)
@@ -160,13 +142,13 @@ func undisclosedHere(ctx context.Context, db bun.IDB, productID, vulnerabilityID
 	}
 	err := db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		ColumnExpr(access.PrivateCountAs("f.visibility", "places")).
-		ColumnExpr(`COUNT(CASE WHEN f.visibility = ? THEN 1 END) AS "public"`, access.Public).
-		ColumnExpr(`COALESCE(MAX(CASE WHEN f.visibility = ? AND f.closed_at IS NULL THEN f.disclose_at END), `+
-			`MAX(CASE WHEN f.visibility = ? THEN f.disclose_at END)) AS "ends"`,
+		ColumnExpr(access.PrivateCountAs(`"f"."visibility"`, "places")).
+		ColumnExpr(`COUNT(CASE WHEN "f"."visibility" = ? THEN 1 END) AS "public"`, access.Public).
+		ColumnExpr(`COALESCE(MAX(CASE WHEN "f"."visibility" = ? AND "f"."closed_at" IS NULL THEN "f"."disclose_at" END), `+
+			`MAX(CASE WHEN "f"."visibility" = ? THEN "f"."disclose_at" END)) AS "ends"`,
 			access.Private, access.Private).
-		Where(HeldAs("f.vulnerability_id"), vulnerabilityID).
-		Where(inThisProductAs("f.target_id"), productID).
+		Where(HeldAs(`"f"."vulnerability_id"`), vulnerabilityID).
+		Where(inThisProductAs(`"f"."target_id"`), productID).
 		Scan(ctx, &held)
 	if err != nil {
 		return nil, fmt.Errorf("read whether this issue is undisclosed: %w", err)
@@ -192,15 +174,12 @@ func undisclosedHere(ctx context.Context, db bun.IDB, productID, vulnerabilityID
 // The disclosure date goes with it. A public finding carries none, and one
 // left behind is read back as the date an embargo ends that has already
 // ended. The movement just recorded keeps where it stood.
-func makePublic(ctx context.Context, db bun.IDB, productID, vulnerabilityID int64,
-	now time.Time) error {
-
+func makePublic(ctx context.Context, db bun.IDB, productID, vulnerabilityID int64) error {
 	if _, err := db.NewUpdate().Model((*Finding)(nil)).
-		Set("visibility = ?", access.Public).
-		Set("disclose_at = NULL").
-		Set("last_changed_at = ?", now).
+		Set(`"visibility" = ?`, access.Public).
+		Set(`"disclose_at" = NULL`).
 		Where(HeldAs("vulnerability_id"), vulnerabilityID).
-		Where("visibility = ?", access.Private).
+		Where(`"visibility" = ?`, access.Private).
 		Where(inThisProduct, productID).
 		Exec(ctx); err != nil {
 		return fmt.Errorf("disclose the findings: %w", err)
@@ -240,21 +219,21 @@ func (s *Store) ToTell(ctx context.Context, subject access.Subject,
 	out := &Audience{}
 	err := s.db.NewSelect().
 		TableExpr(`"product" AS "p"`).
-		Join(`JOIN "vulnerability" AS "v" ON v.id = ?`, vulnerabilityID).
-		ColumnExpr("p.name").
-		ColumnExpr("v.identifier").
-		Where("p.id = ?", productID).
+		Join(`JOIN "vulnerability" AS "v" ON "v"."id" = ?`, vulnerabilityID).
+		ColumnExpr(`"p"."name"`).
+		ColumnExpr(`"v"."identifier"`).
+		Where(`"p"."id" = ?`, productID).
 		Scan(ctx, &out.Product, &out.Vulnerability)
 	if err != nil {
 		return nil, fmt.Errorf("read what was disclosed: %w", err)
 	}
 	err = s.db.NewSelect().
 		TableExpr(`"finding" AS "f"`).
-		Join(`JOIN "person" AS "ps" ON ps.party_id = f.assigned_to`).
-		ColumnExpr("DISTINCT ps.id").
-		Where(HeldAs("f.vulnerability_id"), vulnerabilityID).
-		Where(inThisProductAs("f.target_id"), productID).
-		OrderExpr("ps.id").
+		Join(`JOIN "person" AS "ps" ON "ps"."party_id" = "f"."assigned_to"`).
+		ColumnExpr(`DISTINCT "ps"."id"`).
+		Where(HeldAs(`"f"."vulnerability_id"`), vulnerabilityID).
+		Where(inThisProductAs(`"f"."target_id"`), productID).
+		OrderExpr(`"ps"."id"`).
 		Scan(ctx, &out.People)
 	if err != nil {
 		return nil, fmt.Errorf("read who holds this issue: %w", err)

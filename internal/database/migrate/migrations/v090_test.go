@@ -279,7 +279,7 @@ func TestAV080DatabaseUpgradesItsImagesToTheirNames(t *testing.T) {
 			libnl := graph.Described{Purl: "pkg:deb/debian/libnl-3-200@3.7.0", Name: "libnl-3-200", Version: "3.7.0"}
 			layerA := graph.Described{Purl: "pkg:oci/layer@sha256:aaa", Name: "layer", Version: "sha256:aaa"}
 			layerB := graph.Described{Purl: "pkg:oci/layer@sha256:bbb", Name: "layer", Version: "sha256:bbb"}
-			applied, err := graph.NewStore(db.DB).Apply(ctx, w.target, rec.ID, graph.Snapshot{
+			applied, err := world.ApplyGraph(ctx, db.DB, w.target, rec.ID, graph.Snapshot{
 				Root: root, Components: []graph.Described{image, gap, libnl, layerA, layerB},
 				Dependencies: []graph.Dependency{
 					{Parent: root, Child: image}, {Parent: image, Child: libnl}, {Parent: root, Child: gap},
@@ -407,7 +407,7 @@ func imagesAreMergedV090(t *testing.T, ctx context.Context, db *database.DB, w v
 	named := func(name string) graph.Component {
 		t.Helper()
 		var images []graph.Component
-		if err := db.DB.NewSelect().Model(&images).Where("name = ?", name).Scan(ctx); err != nil {
+		if err := db.DB.NewSelect().Model(&images).Where(`"name" = ?`, name).Scan(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if len(images) != 1 {
@@ -418,7 +418,7 @@ func imagesAreMergedV090(t *testing.T, ctx context.Context, db *database.DB, w v
 	nodesOf := func(componentID int64) []graph.Node {
 		t.Helper()
 		var nodes []graph.Node
-		if err := db.DB.NewSelect().Model(&nodes).Where("component_id = ?", componentID).
+		if err := db.DB.NewSelect().Model(&nodes).Where(`"component_id" = ?`, componentID).
 			Order("opened_scan_id").Scan(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -427,7 +427,7 @@ func imagesAreMergedV090(t *testing.T, ctx context.Context, db *database.DB, w v
 	versionsOf := func(nodeID int64) []graph.ImageVersion {
 		t.Helper()
 		var stated []graph.ImageVersion
-		if err := db.DB.NewSelect().Model(&stated).Where("iv.node_id = ?", nodeID).
+		if err := db.DB.NewSelect().Model(&stated).Where(`"iv"."node_id" = ?`, nodeID).
 			Order("iv.opened_scan_id").Scan(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -448,7 +448,7 @@ func imagesAreMergedV090(t *testing.T, ctx context.Context, db *database.DB, w v
 	}
 	var edges []graph.Edge
 	if err := db.DB.NewSelect().Model(&edges).
-		Where("parent_id = ? OR child_id = ?", nodes[0].ID, nodes[0].ID).Scan(ctx); err != nil {
+		Where(`"parent_id" = ? OR "child_id" = ?`, nodes[0].ID, nodes[0].ID).Scan(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if len(edges) != 2 {
