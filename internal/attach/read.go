@@ -211,10 +211,10 @@ func (s *Store) Redact(ctx context.Context, subject access.Subject, token, reaso
 		return s.removeRedacted(ctx, row.ObjectKey)
 	}
 
-	now := s.now().Truncate(time.Microsecond)
 	// The row is marked before the bytes go. The other order leaves a file
 	// removed with nothing saying so, which reads as a store that lost it.
 	err = database.InTransaction(ctx, s.db, func(ctx context.Context, tx bun.Tx) error {
+		now := s.now().Truncate(time.Microsecond)
 		res, err := tx.NewUpdate().Model((*Attachment)(nil)).
 			Set("redacted_at = ?", now).
 			Set("redacted_by = ?", subject.ID).
@@ -305,9 +305,13 @@ func (s *Store) Sweep(ctx context.Context, olderThan time.Duration) (int, error)
 		// It inverts which side can be orphaned. Bytes surviving a deleted
 		// row are recoverable, because the key is logged; a row surviving its
 		// bytes is not.
+		// Repeats both conditions the page was read under. A row redacted
+		// since the page was read carries who redacted it and why, and the
+		// record of that is what a redaction leaves.
 		res, err := s.db.NewDelete().Model((*Attachment)(nil)).
 			Where("id = ?", row.ID).
 			Where("attached_at IS NULL").
+			Where("redacted_at IS NULL").
 			Exec(ctx)
 		if err != nil {
 			failed++

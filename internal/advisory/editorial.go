@@ -109,8 +109,8 @@ func (s *Store) Retitle(ctx context.Context, subject access.Subject,
 		return nil, nil, err
 	}
 
-	now := s.now().UTC().Truncate(time.Microsecond)
 	err = database.InTransaction(ctx, s.db, func(ctx context.Context, tx bun.Tx) error {
+		now := s.now().UTC().Truncate(time.Microsecond)
 		_, err := openEdition(ctx, tx, row.ID, subject.ID, title, now)
 		return err
 	})
@@ -152,6 +152,13 @@ func openEdition(ctx context.Context, tx bun.Tx, advisoryID, who int64,
 		Title: title, WrittenBy: who, WrittenAt: now,
 	}
 	if _, err := tx.NewInsert().Model(edition).Exec(ctx); err != nil {
+		// Two people editing at once both read the same highest number on
+		// the engines that read only what is committed, and the unique
+		// ordinal refuses the second. Taken again whole, it reads the first
+		// person's edition and numbers its own after it.
+		if database.IsDuplicate(err) {
+			return nil, fmt.Errorf("open an edition: %w", database.ErrGoAgain)
+		}
 		return nil, err
 	}
 	if _, err := tx.NewUpdate().Model((*Advisory)(nil)).
@@ -246,9 +253,9 @@ func (s *Store) Approve(ctx context.Context, subject access.Subject,
 		return nil, ErrSamePerson
 	}
 
-	now := s.now().UTC().Truncate(time.Microsecond)
 	var given *Agreement
 	err = database.InTransaction(ctx, s.db, func(ctx context.Context, tx bun.Tx) error {
+		now := s.now().UTC().Truncate(time.Microsecond)
 		// Read inside the transaction, because the edition the advisory
 		// points at is what is being agreed to and it moves under an edit.
 		// Read outside, the agreement would name an edition that had already
@@ -344,9 +351,9 @@ func (s *Store) Withdraw(ctx context.Context, subject access.Subject,
 	if err := s.mayWrite(ctx, subject, row, "take back an agreement"); err != nil {
 		return err
 	}
-	now := s.now().UTC().Truncate(time.Microsecond)
 	var taken int64
 	err = database.InTransaction(ctx, s.db, func(ctx context.Context, tx bun.Tx) error {
+		now := s.now().UTC().Truncate(time.Microsecond)
 		result, err := tx.NewUpdate().Model((*Approval)(nil)).
 			Set("withdrawn_at = ?", now).
 			Set("withdrawn_by = ?", subject.ID).

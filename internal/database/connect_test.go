@@ -240,6 +240,61 @@ func TestAQuotedSQLModeIsAcceptedByTheServer(t *testing.T) {
 	}
 }
 
+// A backslash is stored as one backslash under a mode that asks the server
+// to read backslashes as written. The driver writes values into the statement
+// itself and escapes each backslash as two, so the mode is taken out of the
+// session whoever asked for it, and every other name the mode carries is kept.
+func TestABackslashIsStoredOnceWhateverTheModeAsks(t *testing.T) {
+	for engine, env := range map[database.Engine]string{
+		database.MySQL:   dbtest.MySQLURLEnv,
+		database.MariaDB: dbtest.MariaDBURLEnv,
+	} {
+		t.Run(string(engine), func(t *testing.T) {
+			engines.SkipUnless(t, engine)
+			address := os.Getenv(env)
+			if address == "" {
+				t.Skipf("%s is not set", env)
+			}
+			// A mode's name is read without regard to capitals, so the
+			// lower-case spelling asks for the same mode.
+			for _, asked := range []string{
+				"NO_BACKSLASH_ESCAPES,NO_ZERO_DATE,NO_BACKSLASH_ESCAPES",
+				"no_backslash_escapes,no_zero_date,No_Backslash_Escapes",
+			} {
+				target, err := database.ParseURL(address + "?sql_mode=" + asked)
+				if err != nil {
+					t.Fatal(err)
+				}
+				db, err := database.Open(t.Context(), target)
+				if err != nil {
+					t.Fatalf("the mode %s was refused: %v", asked, err)
+				}
+				var held string
+				if err := db.QueryRowContext(t.Context(), "SELECT @@SESSION.sql_mode").Scan(&held); err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(held, "NO_BACKSLASH_ESCAPES") {
+					t.Errorf("asked for %s, the session mode %q reads backslashes as written", asked, held)
+				}
+				for _, want := range []string{"NO_ZERO_DATE", "ANSI_QUOTES", "STRICT_TRANS_TABLES"} {
+					if !strings.Contains(held, want) {
+						t.Errorf("asked for %s, the session mode %q lacks %s", asked, held, want)
+					}
+				}
+				const sent = `C:\path\to \* "quoted\"`
+				var back string
+				if err := db.NewSelect().ColumnExpr("?", sent).Scan(t.Context(), &back); err != nil {
+					t.Fatal(err)
+				}
+				if back != sent {
+					t.Errorf("asked for %s, %q came back as %q", asked, sent, back)
+				}
+				_ = db.Close()
+			}
+		})
+	}
+}
+
 // Where encryption is required, every connection the pool opens carries a
 // transport that cannot fall back to cleartext, not only the one asked at
 // startup. A transport that may fall back is made one that may not, one that

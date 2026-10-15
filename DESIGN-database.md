@@ -93,6 +93,7 @@ Engine-specific code is confined to these places:
 | Typing a composed expression as a moment | A `CASE` over bound values is untyped, and PostgreSQL refuses to write it into a timestamp column. The cast target differs: PostgreSQL takes a zoned timestamp, MySQL and MariaDB a six-digit datetime, and SQLite stores text and takes none |
 | The test harness | It names every engine to choose a connection and to say which one ran, rather than to write a query — and the check that each engine ran is what keeps that naming honest |
 | Leasing the harness's slots | A test binary holds a lock the server keeps for its connection, and the two families spell it differently: a named lock on MySQL and MariaDB, an advisory lock on PostgreSQL, whose key is a number |
+| Numbering the rows of one insert on MySQL | MySQL reports only the first identifier a statement assigns, and the other three hand every identifier back. The rest are counted from the first in the server's step between identifiers, read from the session the insert ran on. The branch asks which statements the dialect can write rather than which engine it is |
 | Writing a batch whose identifiers nobody reads | PostgreSQL takes one array a column and unpacks it into rows. The other three have no array type and take a list of rows. § Bulk inserts has the measurement |
 | Counting the statements a server holds prepared | A test of connection setup asks it. PostgreSQL lists them in a catalog of its own, and MySQL and MariaDB count them in session status, kept in two different schemas |
 | Listing the harness's own databases | PostgreSQL keeps databases in a catalog of its own, where the standard information schema describes only the one connected to, and there is no portable third spelling |
@@ -103,7 +104,7 @@ Engine-specific code is confined to these places:
 | Reading a table's layout beside a measurement | PostgreSQL keeps a table's pages and each column's correlation in catalogs of its own. MySQL and MariaDB report a table's size through the information schema, in bytes of a page size each server sets |
 | Refreshing planner statistics in a deployment | SQLite gathers none unless asked, and the servers keep their own. § SQLite settings has the measurement |
 | A test choosing which engine it runs on | The same act as the row above, written at the call site: `dbtest.Only(t, database.SQLite, …)` says a question has the same answer everywhere and is asked once. Allowed anywhere, because it selects an engine rather than branching a query on one — which is the distinction the whole rule is about |
-| A release's upgrade | Changing an existing table is spelled per engine: PostgreSQL drops or restores a column's refusal of a null where the other two servers restate the column, MySQL and MariaDB drop a foreign key by a word of their own, SQLite rebuilds the table with its foreign keys suspended, and PostgreSQL alone is told to move its identity past rows carried across. The catalog is asked which indexes and which columns a table already has |
+| A release's upgrade | Changing an existing table is spelled per engine: PostgreSQL drops a uniqueness rule as a constraint where MySQL and MariaDB drop the index of that name, MySQL and MariaDB name the table an index is dropped from, SQLite rebuilds the table with its foreign keys suspended, and PostgreSQL alone is told to move its identity past rows carried across. The catalog is asked which indexes and which columns a table already has |
 | When PostgreSQL vacuums the finding table | A storage setting of PostgreSQL's alone, and an index-only scan there reads the table for every page changed since the last vacuum. § Indexes has the measurement |
 | Asking each engine what words it reserves | One statement per engine, because each publishes its keywords somewhere of its own and two publish nothing a query can read. It is not a query the application runs: it regenerates the word list the quoting gate reads, and the gate exists because the four engines do not reserve the same words |
 
@@ -232,6 +233,16 @@ again. `pg_class` is readable by any role. MySQL and MariaDB offer no
 unfiltered catalog, so on those two the two cases stay indistinguishable —
 bounded by what runs next, which is the version query or a migration, both of
 which fail with the engine's own permission message rather than silently.
+
+On PostgreSQL the name is resolved through the session's search path, the way
+the migration library's own unqualified reference to the table resolves.
+A runtime role with a schema of its own has the default search path put that
+schema first, and the migrations' table sits in `public` further along. A probe
+matching the current schema alone answers version zero there for a database the
+library reads as migrated, and a database ahead of the binary passes the
+refusal above. Resolving a name needs the
+right to use its schema and nothing on the table, so the answer still tells an
+absent table from an unreadable one.
 
 Migrations are written in Go rather than SQL files, because they branch on the
 engine. A timestamp column has no portable spelling: PostgreSQL has no
@@ -447,7 +458,10 @@ Migration 43. It adds the image version table, moves what v0.8.0 stored for
 a container image to an image identified by its name
 (`DESIGN-data-model.md` § Container images), and folds each destination's
 name into the key it is matched under. It stores a claim's reasoning once,
-keys a build's claim on it, and keys a reference on its address as given.
+keys a build's claim on it, and keys a reference on its address as given. A
+delivery to a destination gains when its latest attempt began
+(`DESIGN-notifications.md` § Delivery); a delivery v0.8.0 recorded holds none,
+which reads as no attempt in flight.
 
 | Step | What it does |
 |---|---|
@@ -467,6 +481,7 @@ keys a build's claim on it, and keys a reference on its address as given.
 | The findings are read and moved once for every image | Read for the places decisions are keyed on before anything moves, and moved after every image is merged, a batch of components at a time. The finding table is the largest there is and nothing indexes it by component alone, so a pass per image is a scan of it per image |
 | The other components are removed | Nothing points at them any more |
 | Each destination's name is folded | The name becomes its lower-case key and the spelling typed is kept beside it (`DESIGN-notifications.md` § Outbound HTTP). Two names one kind held that fold to one key stay two. One still in use keeps the key before a retired one, then the one already spelled as the key, then the earliest. The other takes the key followed by its own number, and that numbered key is also the name it is listed under, so retiring it by the name shown reaches it. On MySQL and MariaDB in a transaction of its own between the image version table and the merge, which asks whether the column is there before adding it, so a start after one stopped part way folds rather than failing on the column |
+| A delivery gains when its latest attempt began | A column that takes a null, added where the table stands on every engine, after the destinations are folded. On MySQL and MariaDB in a transaction of its own between the fold and the merge, which asks whether the column is there first, so a start after one stopped part way steps over it |
 | A patch repository records when its last visit ended | No visit v0.8.0 recorded has an end, so each counts as having held the pass for no time until it is visited again (`DESIGN-findings.md` § Host share) |
 
 The rules an identity, a fold key and a live key are worked out by are copied
@@ -605,7 +620,11 @@ A migration that changes a table's shape on SQLite turns foreign keys off on a
 connection and then opens its transaction. On a wider pool the transaction can
 land on a connection where they are still on, and the connection they were
 turned off on goes back into the pool that way. So the pool is narrowed to one
-connection for the migration and put back as it was afterwards.
+connection for the migration and put back as it was afterwards. A pool of one
+still closes a connection past its lifetime as it comes back, so a release's
+upgrade holds one connection for the setting, the transaction and the restore.
+Every reference is checked before that transaction commits, and a row pointing
+at nothing refuses the upgrade.
 
 Assuming one process instead is enforced by one chart template, while the
 binary accepts a SQLite URL with a warning. Four processes against one file
@@ -628,6 +647,14 @@ than assumed, because both engines report "you did not hold this" as a value.
 The wait is bounded on both engines. An unbounded wait means an instance wedged
 mid-migration blocks every replacement silently, and the startup probe kills each
 in turn.
+
+Any account that can connect may take the lock. A named lock on MySQL and
+MariaDB needs no privilege and is shared by every database on the server, and a
+PostgreSQL advisory lock has no permissions. A refusal after the wait names the
+session holding it: the connection number on MySQL and MariaDB, and on
+PostgreSQL the server process with its user and application where the role may
+see them. An operator told only that another instance holds it looks for a
+replica that may not exist.
 
 | Rule | |
 |---|---|
@@ -679,6 +706,14 @@ that way for older applications. Naming it makes the mode a property of this
 application rather than of the server it was pointed at, and the set is
 deduplicated, so naming one a server already holds changes nothing.
 
+One name is taken out of the mode whoever set it: `NO_BACKSLASH_ESCAPES`. The
+driver writes values into the statement text and escapes a backslash as two,
+and under that name the server reads both as written. A markdown escape, a
+quoted string inside a VEX document and a Windows path in an inventory would
+each be stored with every backslash doubled, and doubled again on every edit.
+Taking the name out keeps the rest of an operator's mode, and a server that
+sets it still starts.
+
 The gate reads three places. `AS <word>` is the syntax for inventing a name,
 and matching that alone leaves a table renamed in a migration, which names no
 alias, and a table alias declared in a model's own struct tag both invisible.
@@ -702,6 +737,13 @@ reserved yet passes — and MySQL 8.0 reserved `rank`, `groups`, `lead` and
 property than the rule it is meant to enforce. A quoted name does not match the
 pattern at all, so every hit is by construction an unquoted one and the fix is
 one pair of quotes.
+
+The schema sweep reads a table's and an index's declaration: a name after a
+keyword that always precedes one, and a name where a column belongs in the
+outermost parentheses. A statement of any other kind, a condition, and a clause
+after an index's column list are refused as unreadable rather than reported
+clean, so the first migration to write a sequence, a view, a trigger, a check or a partial
+index extends the sweep with it.
 
 The list of reserved words stays, for the other half. A name a migration
 declares is not invented — every engine accepted it when the migration ran —
@@ -771,6 +813,7 @@ A search box is not a pattern language. Typing "50%" means a name containing
 | The escape character is `#`, and never a backslash | MySQL and MariaDB treat a backslash as an escape inside a string literal, so `ESCAPE '\'` is an unterminated string: a syntax error on two engines and parsed happily by the other two |
 | The escaping lives here, with the other engine differences | Written out per package it is unexported in one and copied into the next, and the predicates in the package after that have none |
 | A pattern the code wrote is not escaped; a value somebody supplied is | A trailing `/%` matching an ecosystem prefix is the pattern. The ecosystem inside it is not |
+| A prefix that has to match exactly is also compared exactly | SQLite's `LIKE` ignores the case of ASCII letters. The trail's history of one identity, matched as the identity followed by " on ", would otherwise report the roles of another identity differing only in case |
 
 What its absence costs: the picker deciding who may be named on an embargoed
 case answers a term of "%" with every person the deployment can offer, in one
@@ -909,6 +952,10 @@ defect.
 | Whether the writer may write a note about an issue | Whether the note is written |
 | Where each added build holds a recorded flaw's component | Which rows the flaw opens. A build that stopped shipping it is refused |
 | What each part of a build is called, on recording that its VEX document went out | Whether the document names the build as it is now called; a rename in between is refused and asked again |
+| The VEX document being recorded as gone out | What the record says went out. Generated from the transaction recording it, on every attempt, so a retry describes the database it commits to |
+| The product a supplier, an uploaded VEX document or an uploaded advisory names | Which product the source or the statements are recorded against |
+| The claims a document makes, folded and paired | Which standing claims it repeats and which it sets aside. Copied from the caller's on every attempt, so a retry starts from what the document said |
+| The moment a write is dated | When an edition, a mint, a decision, a closure or any other recorded act happened. Read from the clock on every attempt, so the attempt that loses a race and is taken again is not dated before the write it lost to |
 
 A read made before the transaction as an early refusal is repeated inside it;
 the one inside decides.
@@ -1007,6 +1054,21 @@ critical, and from what" is the question being asked of it.
 | Holding rows of a claim back, and setting them aside | Still waiting, and still the claim they were read from |
 | Filling in what a tag was cut from | An empty parent; a lost race reads back what won and refuses a different branch |
 | Changing a setting | The value read |
+| Bringing a retired product, release or variant back | Still retired. A match of none is another declaration that got there first, and this one records no return to use |
+| Collecting an upload nothing refers to | Still unattached, and not redacted since the page was read |
+
+An insert that can lose a race on a unique key hands the race back rather than
+reporting the duplicate: recording a person, authorizing a name to sign in with,
+numbering an advisory or its next edition. The act is taken again whole, and its
+look then finds the row the other writer made or numbers after it. A bound
+counted before an insert takes turns on a row of the owner's first, written as
+an ordinary update every engine locks the row for: a person's saved filters
+count one under the limit in two transactions at once otherwise, and both add.
+The update writes a new value every time. MySQL and MariaDB match a row an
+update leaves as it was without writing it, and a cluster certifies only rows
+that were written, so an update to the value already held lets two nodes both
+pass. The row is one per person in the lease table, made before the
+transaction opens, and nothing takes it as a lease.
 
 A locking read — `SELECT ... FOR UPDATE` — is the other answer, and is not used
 for this: it is spelled per engine, and the condition works the same on all
@@ -1074,6 +1136,7 @@ style naming the month first.
 | Rule | |
 |---|---|
 | Rows are written 500 to a statement | Two of the four engines cap a statement's size in server configuration, and the lowest default in circulation is sixteen megabytes |
+| A writer that needs identifiers gets the ones the database stored | MySQL reports the first and the step between them. A cluster sets the step to its number of nodes, so counting up by one names a neighbor's row (REQ-71) |
 | A writer that needs no identifier reads none back | Reading them back returns a row for every row written, carrying the identifier and each column left to its default |
 | On PostgreSQL, such a batch is one array a column | The server parses a list of rows a value at a time and an array whole, and unpacks the arrays into rows |
 | A row type with a column that names its own default keeps the list of rows | A column with a default, or one storing a zero value as null, is left to its default one row at a time, which an array cannot say |
@@ -1094,7 +1157,10 @@ checks are the rest of the cost. MySQL and MariaDB check a foreign key inside
 the storage engine.
 
 A test writes the same rows through both kinds of statement, every column kind
-and text that looks like syntax among them, and compares what is stored.
+and text that looks like syntax among them, and compares what is stored. A
+second compares each identifier a keyed insert hands back with the one stored,
+across batches, and on MySQL and MariaDB in a session numbering rows in steps
+of three.
 
 ## SQLite settings
 
@@ -1129,6 +1195,13 @@ operator ends up with. It runs on SQLite alone — the one place in this suite
 where that is deliberate rather than a compromise, since the engines do not
 disagree about which columns an index is on, and reading index metadata is
 spelled four different ways.
+
+| Pair | Reported |
+|---|---|
+| A narrower index leading a wider one | Yes |
+| A narrower unique index leading a wider one that is not unique | No: dropping it loses the rule it enforces |
+| Either index partial | No: it holds only the rows a condition admits |
+| A column that is an expression | Read as a column no other index's column equals |
 
 The indexes on the finding, decision and notification tables that serve the hottest reads:
 
@@ -1259,6 +1332,16 @@ The harness also offers a handle whose `COMMIT` can be made to fail.
 | What a test asserts with it | Both directions. That a value from the attempt which was rolled back does not survive into the next one, and that the work still happens — and that the path under test committed something the handle could refuse, because a write outside a transaction passes every other assertion by never running the code they are about |
 | Why it is SQLite underneath | What is pinned does not vary by engine: the retry is driven by the error, and the error is synthesized. Opened with the pragmas every other SQLite connection gets, so foreign keys are enforced on it |
 
+The harness owns the other seams a test uses to put a writer or a failure at
+one point, so that every test schedules them the same way.
+
+| Seam | What it does |
+|---|---|
+| A rival after a read | Arms once a statement reads one table, and starts another writer before the next statement writing a second, waiting a bounded time for it. A rival blocked on a lock the transaction holds lands once it commits. A rival that never ran fails the test. Skipped on SQLite, which has one writer |
+| A failing statement | The armed statement runs on a context that has already ended, so its failure carries the cancellation a test can tell from any other |
+| A hidden table | Renamed away and put back when the test ends, whatever ends it: a server database is shared by a package's tests |
+| A closed database | Opened and closed, so every call fails. A missing database is refused by a different arm |
+
 The rule has to be applied. Routing rules, VEX statements, teams, saved filters
 and the administration trail have handler tests on the two-engine form, and
 between them they hold a `LIKE` with an explicit escape, a case-folded `IN`, and
@@ -1278,7 +1361,9 @@ What the suite pins:
   than against arithmetic
 - Migrations apply and are idempotent on every engine, and a database ahead of the binary is refused
 - The advisory lock excludes a second connection while held and admits it once
-  released, driven directly from two pools
+  released, driven directly from two pools, and a refusal names the session
+  holding it
+- A migration whose lock is lost part way fails, by ending the holder's session
 - Reading the schema version performs no schema changes
 
 ## Not built

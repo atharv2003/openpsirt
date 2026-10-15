@@ -150,9 +150,9 @@ func (s *Store) Mint(ctx context.Context, subject access.Subject, who publisher.
 		return nil, err
 	}
 
-	minted := s.now().UTC().Truncate(time.Microsecond)
 	var made *Advisory
 	err := database.InTransaction(ctx, s.db, func(ctx context.Context, tx bun.Tx) error {
+		minted := s.now().UTC().Truncate(time.Microsecond)
 		// Built inside, because the insert writes the generated identifier
 		// back into the model and the number below is read from the database.
 		// A retry would otherwise re-insert a model carrying the rolled-back
@@ -172,6 +172,12 @@ func (s *Store) Mint(ctx context.Context, subject access.Subject, who publisher.
 		}
 		made.Folded = fold(made.Identifier)
 		if _, err := tx.NewInsert().Model(made).Exec(ctx); err != nil {
+			// Two advisories minted at once in one year both read the same
+			// highest number, and the unique number refuses the second.
+			// Taken again whole, it numbers its own after the first.
+			if database.IsDuplicate(err) {
+				return fmt.Errorf("mint an advisory: %w", database.ErrGoAgain)
+			}
 			return err
 		}
 		// The first edition, so that an advisory always has words somebody
@@ -330,8 +336,9 @@ func (s *Store) Add(ctx context.Context, subject access.Subject,
 		return nil, err
 	}
 
-	added := s.now().UTC().Truncate(time.Microsecond)
+	var added time.Time
 	err = database.InTransaction(ctx, s.db, func(ctx context.Context, tx bun.Tx) error {
+		added = s.now().UTC().Truncate(time.Microsecond)
 		// Asked inside the transaction, because the unique constraint is what
 		// actually decides it and a count read outside describes a database
 		// that has moved. The count is what turns the constraint into a
@@ -426,8 +433,8 @@ func (s *Store) Drop(ctx context.Context, subject access.Subject,
 	if err != nil {
 		return err
 	}
-	removed := s.now().UTC().Truncate(time.Microsecond)
 	err = database.InTransaction(ctx, s.db, func(ctx context.Context, tx bun.Tx) error {
+		removed := s.now().UTC().Truncate(time.Microsecond)
 		res, err := tx.NewUpdate().Model((*Cover)(nil)).
 			Set("removed_at = ?", removed).
 			Set("removed_by = ?", subject.ID).

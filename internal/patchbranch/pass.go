@@ -126,6 +126,10 @@ func NewPass(db *bun.DB, logger *slog.Logger, replica string, options Options) *
 // all the time: on the demonstration images, a five-minute wait puts the 48
 // copies already on disk four hours ahead of the kernel.
 func (p *Pass) Run(ctx context.Context, interval time.Duration) {
+	// Handed back once the last cycle has ended, between visits as well as
+	// during one, so the next replica carries on without waiting out the
+	// lease.
+	defer p.leases.Handback(ctx, Lease, p.replica, p.logger)
 	background.Every(ctx, interval, betweenCycles, func(ctx context.Context) {
 		if !p.on {
 			return
@@ -164,11 +168,7 @@ func (p *Pass) cycle(ctx context.Context) int {
 			// Shutting down mid-visit. The lease is handed back so the
 			// replica that starts next carries on at once rather than
 			// waiting for it to lapse.
-			releasing, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-			defer cancel()
-			if err := p.leases.Release(releasing, Lease, p.replica); err != nil {
-				p.logger.Warn("handing back the lease on looking up patch branches", "error", err)
-			}
+			p.leases.Handback(ctx, Lease, p.replica, p.logger)
 			return visits
 		}
 		if err != nil {
@@ -612,12 +612,12 @@ func (p *Pass) record(ctx context.Context, id int64, found bool, branches []stri
 	for _, name := range branches {
 		kept = append(kept, branchRow{CommitID: id, Branch: name})
 	}
-	now := p.Now().UTC()
 	handle, ok := database.Handle(p.db)
 	if !ok {
 		return errors.New("recording a lookup needs a database handle")
 	}
 	return database.InTransaction(ctx, handle, func(ctx context.Context, tx bun.Tx) error {
+		now := p.Now().UTC()
 		if _, err := tx.NewDelete().Model((*branchRow)(nil)).
 			Where("commit_id = ?", id).Exec(ctx); err != nil {
 			return fmt.Errorf("clear the branches a commit was on: %w", err)

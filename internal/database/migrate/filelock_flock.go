@@ -15,6 +15,10 @@ import (
 	"time"
 )
 
+// flock is the system call that takes the lock, a variable so a test can make it
+// fail the way a broken file system does.
+var flock = syscall.Flock
+
 // lockFile takes an exclusive advisory lock on path, waiting up to wait.
 //
 // Tried rather than blocked on, in a loop, for the same reason the other two
@@ -34,7 +38,7 @@ func lockFile(ctx context.Context, path string, wait time.Duration) (unlock, err
 
 	deadline := time.Now().Add(wait)
 	for {
-		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		err := flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
 			return func(context.Context) error {
 				// Closing the descriptor releases the lock; doing both says so.
