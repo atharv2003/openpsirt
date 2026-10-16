@@ -4,9 +4,12 @@
 package database_test
 
 import (
+	"context"
 	"database/sql"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nexthop-ai/openpsirt/internal/database"
 	"github.com/nexthop-ai/openpsirt/internal/dbtest"
@@ -190,6 +193,48 @@ func TestRefreshingStatisticsSucceedsOnEveryEngine(t *testing.T) {
 	dbtest.Each(t, func(t *testing.T, db *database.DB) {
 		if err := database.RefreshStatistics(t.Context(), db); err != nil {
 			t.Error(err)
+		}
+	})
+}
+
+// A table something else holds is stepped over rather than waited for, so a
+// schema change or a vacuum on another replica never holds a start. MySQL and
+// MariaDB otherwise wait for the server's default of a year, and PostgreSQL
+// until the holder lets go.
+func TestAnalyzingStepsOverATableSomethingHolds(t *testing.T) {
+	dbtest.Servers(t, func(t *testing.T, db *database.DB) {
+		ctx := t.Context()
+		scratchTable(t, db, "held", `"n" INTEGER`)
+
+		holder, err := db.Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = holder.Close() }()
+		hold, release := `LOCK TABLES "held" WRITE`, `UNLOCK TABLES`
+		if db.Server.Engine == database.Postgres {
+			if _, err := holder.ExecContext(ctx, `BEGIN`); err != nil {
+				t.Fatal(err)
+			}
+			hold, release = `LOCK TABLE "held" IN ACCESS EXCLUSIVE MODE`, `ROLLBACK`
+		}
+		if _, err := holder.ExecContext(ctx, hold); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _, _ = holder.ExecContext(context.WithoutCancel(ctx), release) }()
+
+		bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		started := time.Now()
+		done, err := database.AnalyzeEveryTable(bounded, db)
+		if err != nil {
+			t.Fatalf("analyzing beside a held table failed after %s: %v", time.Since(started), err)
+		}
+		if done.Tables == 0 {
+			t.Fatal("no table was analyzed, so this checked nothing")
+		}
+		if db.Server.Engine != database.Postgres && !slices.Contains(done.Skipped, "held") {
+			t.Errorf("the held table was not reported as stepped over: %v", done.Skipped)
 		}
 	})
 }
