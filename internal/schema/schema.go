@@ -63,27 +63,47 @@ func NotAhead(ctx context.Context, db *database.DB) error {
 	return nil
 }
 
-// NotBeforeTheBaseline refuses a database a release before v0.5.0 built.
+// through is the release that upgrades a database v0.5.0 or a later release
+// built into one this build upgrades in turn.
+const through = "v0.8.0"
+
+// throughEarlier is the release that upgrades a database a release before
+// v0.5.0 built into one v0.8.0 upgrades. v0.8.0 refuses such a database in
+// its turn, because its own baseline makes v0.5.0's schema at once.
+const throughEarlier = "v0.6.0"
+
+// throughBaseline is v0.8.0's baseline migration, the first version v0.8.0
+// upgrades.
+const throughBaseline = 39
+
+// NotBeforeTheBaseline refuses a database a release before v0.7.0 built.
 //
-// This build makes v0.5.0's schema in one migration and carries none of the
-// ones before it, so it has no way to upgrade an earlier schema. v0.6.0
-// carries every one of them, and a database it has upgraded is one this build
-// upgrades in turn.
+// This build makes v0.7.0's schema in one migration and carries none of the
+// ones before it, so it has no way to upgrade an earlier schema.
 func NotBeforeTheBaseline(ctx context.Context, db *database.DB) error {
 	applied, err := Version(ctx, db)
 	if err != nil {
 		return err
 	}
 	if BeforeTheBaseline(applied) {
-		return fmt.Errorf("the database is at schema version %d, which a release before v0.5.0 "+
-			"built, and this build upgrades a database v0.5.0 or a later release built: take a "+
-			"backup, run openpsirt migrate up with v0.6.0, and then deploy this build", applied)
+		return fmt.Errorf("the database is at schema version %d, which a release before v0.7.0 "+
+			"built, and this build upgrades a database v0.7.0 or a later release built: take a "+
+			"backup, run openpsirt migrate up with %s, and deploy this build", applied, UpgradeWith(applied))
 	}
 	return nil
 }
 
+// UpgradeWith names the releases that bring a database below the baseline to
+// one this build upgrades, in the order they run.
+func UpgradeWith(applied int64) string {
+	if applied < throughBaseline {
+		return throughEarlier + " and then " + through
+	}
+	return through
+}
+
 // BeforeTheBaseline reports whether a schema version is one a release before
-// v0.5.0 built. Zero is an empty database, which the baseline makes from
+// v0.7.0 built. Zero is an empty database, which the baseline makes from
 // nothing.
 func BeforeTheBaseline(applied int64) bool {
 	return applied > 0 && applied < migrations.Baseline
