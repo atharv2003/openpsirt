@@ -235,6 +235,7 @@ would depend on which scan ran last.
 | The day the known-exploited catalog listed it | Keeps the earliest any report states | Exploitation was known from the first listing, and an earliest is the same whatever the order. Moving it re-clocks the issue's exploited findings (`DESIGN-remediation.md` § Deadlines) |
 | Score | Keeps the worst anybody claimed | A maximum is the only answer that comes out the same whatever the order. A report saying something is worse is news; one saying it is milder is a gap |
 | Likelihood | Keeps the newest, by the day the estimate is about | It is a thirty-day forecast recomputed every day and it legitimately falls, so a maximum makes the order answer "was ever risky" rather than "is risky" — a spike read as the issue's value for ever. What makes it order-independent is the day rather than which scan wrote last: a dated estimate beats an undated one and an older dated one, and two undated reports are last-seen |
+| Severity word | Filled in where the issue holds none, or holds a scanner's "unknown", by a word the fold recognizes | A flaw recorded here mints its issue with no word (§ The rating in force), so the first report of it under a published name gives the issue the world's. "Unknown" ranks as no word, so it is a gap and never a filling. A word filled in moves the order of every finding of the issue and works out again the deadline of each, in every product holding it (`DESIGN-remediation.md` § Deadlines) |
 | Likelihood, where a report carries none | Left alone | Silence is a gap in that report. A feed omitting the estimate is not a feed saying it is zero |
 
 A test puts the same two reports through in both orders and asserts they agree.
@@ -468,9 +469,13 @@ that answers slowly holds the one pass for as long as a fetch is allowed.
 | Among hosts past their share, the one that has had least goes first | Two slow hosts share what is left between them |
 | Within those, the order above is unchanged | Urgency still decides between repositories on one host |
 | No host is exempt by name | A host serving many linked repositories, github.com among them, is held to the same share and visited as often as the pass has nothing else due |
+| A host waits out a day where a repository on it failed within the day and none on it was reached within the day | A host whose every visit fails costs the pass one failed visit a day, however many repositories its links name. One repository reached says the host answers, so a repository that is gone does not hold back every other on a host that serves many |
+| Within one wake, a host has one repository never fetched before visited before any host has a second | A first fetch is the longest a visit takes, and the links a scan file carries choose the hosts. Repositories already fetched keep the order above |
 
 The report's positions are worked out by the same rule, from the same rows,
-so any replica answers them.
+so any replica answers them. A repository on a host waiting out has no
+position. The one-first-fetch rule belongs to a wake under way and is not in
+the report's positions.
 
 A visit fetches the repository's branches, writes git's commit-graph index,
 and looks up every due commit in it, most urgent first.
@@ -865,16 +870,20 @@ one issue, and a product's claims are not.
 ### Recorded words on a shared issue
 
 A flaw recorded here writes its summary as the issue's description, its minted
-identifier among the issue's names, and its addresses on the issue. The issue
-row is the one every product holding the issue reads, so those three follow the
-record rather than the row (REQ-42).
+identifier among the issue's names, its addresses and its kinds of flaw on the
+issue. Its rating is the recording product's own (§ The rating in force). The issue row is the one every product
+holding the issue reads, so those follow the record rather than the row
+(REQ-42).
 
 | Rule | Reason |
 |---|---|
 | The description, the other names and the addresses are left out where a flaw recorded here about the issue sits where the reader may not read it | The summary of an undisclosed flaw in another product is the embargo |
-| Every reader asks the one rule: the issue page and document, a finding's evidence, the component's issue list, the approaching-disclosure list, a decision's issue and an approver's outliers | One rule in one place keeps a new reader from being the one that forgets it |
+| A finding's evidence leaves out the kinds of flaw too | A recorded flaw's classification is part of what its recorder wrote |
+| Every reader asks the one rule: the issue page and document, the merges the issue page names, a finding's evidence, the findings lists and the assignment lists, the component's issue list, the approaching-disclosure list, a decision's issue and an approver's outliers, and an advisory's covered issues and its document | One rule in one place keeps a new reader from being the one that forgets it |
 | A text match over descriptions matches nothing in a withheld description | A filter that matched it would say what the summary holds, one guess at a time |
-| An advisory's covered issues read the description unwithheld | The advisory is held to a reader of every place of its issues in its own product, and a recorded flaw in another product holding the same issue is not asked about |
+| A search of the findings lists matches no withheld name | A search that matched a minted name would say which published issue an undisclosed record was filed under |
+| An advisory's document leaves out the summary, the other names and the addresses wherever another product holds a record of the issue, whoever generates it | A document is published to everybody, so a record another product holds is out of its readers' reach however much the person generating it may read |
+| The working severity of a finding is read from the issue row and the reader's own product's rating: lists, sorting, filtering, deadlines and urgency, and the baseline a decision records | A recorded flaw's rating is never on the issue row (§ The rating in force), so the row carries only what a feed published |
 
 ### Dispositions
 
@@ -1203,10 +1212,10 @@ excludes as unaffected.
 | NVD's CPE configuration | The fix on each stable branch: the kernel's ranges run to the next mainline release's fix | A release already carrying the backport |
 | A distribution's tracker | Where the bug arrived: it records where a release is fixed | A release older than the bug |
 
-| Measured against the CVE List on 2026-10-07 | Kernel issues open | Excluded | Findings closed |
-|---|---|---|---|
-| ONIE, upstream 6.18.55 | 183 | 37, 36 of them fixed on 6.18.y at or before 6.18.55 | 37 |
-| SONiC, Debian 6.12.41-1 and its `linux-perf` at 6.12.107-1 | 6,785 | 173 at one place or more, 121 of them at every place | 7,745 |
+| Build | CVE List of | Kernel issues open | Excluded | Findings closed |
+|---|---|---|---|---|
+| ONIE, upstream 6.18.55 | 2026-10-07 | 183 | 37, 36 of them fixed on 6.18.y at or before 6.18.55 | 37 |
+| SONiC, Debian 6.12.41-1 and its `linux-perf` at 6.12.107-1 | 2026-10-15 | 6,833 | 174 at one place or more, 121 of them at every place | 7,790 |
 
 ### Entries
 
@@ -1870,6 +1879,8 @@ person is asked for. What moved is the spelling a query needs.
 |---|---|
 | A query presenting a severity joins the rating | The expression reads a column of the joined rating, so a statement that reads it without the join does not compile on any of the four engines. That is the failure being chosen; the alternative is a query that silently answers for the wrong product |
 | It says which product it is asking about | Bound where the scope names one product, read off the row's own stream where the list spans products, read off the decision where the row is a decision. Three named spellings rather than a string parameter, because a placeholder cannot bind a column name |
+| A flaw recorded here is rated by the product that recorded it, and its rating is that product's rating in force | Its word, score, vector and scheme are held per product, never on the issue row every product holding the issue reads. A rating on that row sorts, filters, counts and clocks every product's findings of the issue, which tells readers who may not see an undisclosed flaw how bad it is. The word is in force in the recording product, a rating claim there replaces it, and withdrawing the claim returns to it |
+| The recording product's lists, documents and exports carry the score it recorded | Read beside the issue's own on a recorded flaw's rows alone, so the lookup is made for few rows. The issue page and a finding's evidence carry it where every record of the issue is in the reader's reach. Sorting by score reads the issue's own: a recorded flaw with no published score sorts with the unscored, as a product's own word never decided that order |
 | A query reading the published word says so | Five do, deliberately: what needs a second person is a rating milder than what the *world* called it, and a product that had already rated it milder would otherwise let the next step down through unwatched. Those alias the column `published`. Aliased `severity` they read as the rating in force, which is the one thing they must not be taken for |
 
 ## File organization

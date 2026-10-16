@@ -52,12 +52,9 @@ func TestAGroupsStateIsAskedOfEveryPackageInItsFold(t *testing.T) {
 		ctx := t.Context()
 		lib, tool := f.curlFold(t)
 		who := f.holding(t, access.PublicTriage)
-		somebody, err := access.NewStore(f.db.DB).Ensure(ctx, "somebody@example.com", "Them", nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		somebody := f.somebodyElse(t)
 		issue := f.issue(t, "CVE-2026-CURL")
-		f.decided(t, somebody.ID, issue, finding.PlaceIdentity(lib.Name, ""), "approved", lib.Version, "lib")
+		f.decided(t, somebody, issue, finding.PlaceIdentity(lib.Name, ""), "approved", lib.Version, "lib")
 
 		count := func(states ...finding.ClaimStanding) int {
 			t.Helper()
@@ -85,7 +82,7 @@ func TestAGroupsStateIsAskedOfEveryPackageInItsFold(t *testing.T) {
 			t.Errorf("a fold with one package decided reads as agreed in %d rows", n)
 		}
 
-		f.decided(t, somebody.ID, issue, finding.PlaceIdentity(tool.Name, ""), "approved", tool.Version, "tool")
+		f.decided(t, somebody, issue, finding.PlaceIdentity(tool.Name, ""), "approved", tool.Version, "tool")
 		if n := count(finding.StandingAgreed); n != 1 {
 			t.Errorf("a fold with every package decided reads as agreed in %d rows, want one", n)
 		}
@@ -261,11 +258,7 @@ func TestBundlesTiedOnEveryOtherKeyAreOrderedByTheirFold(t *testing.T) {
 			return finding.Reported{Issue: finding.Named{Identifier: id, Severity: "high"}, Component: on,
 				FixState: finding.FixedUpstream, FixedIn: "8.5.0-9"}
 		}
-		if _, err := f.store.Apply(ctx, f.target, f.run(t), []finding.Reported{
-			fixed("CVE-2026-91", older), fixed("CVE-2026-91", newer),
-		}); err != nil {
-			t.Fatal(err)
-		}
+		f.applied(t, fixed("CVE-2026-91", older), fixed("CVE-2026-91", newer))
 		who := f.holding(t, access.PublicTriage)
 		var folds []string
 		for offset := 0; offset < 2; offset++ {

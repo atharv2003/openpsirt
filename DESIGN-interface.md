@@ -1239,6 +1239,7 @@ is what the screen is about.
 | A product, a release and a variant are each corrected and retired from the list that declares them | An administrator edits a name, or takes the thing out of use, from the row. The release list of variants is what a release was built as rather than what the product declares, so it carries no control: correcting one thing in two places is how the two come to disagree |
 | A product's edit offers both of its names and says which one is fixed by publication | The name scans and documents use, and the name screens show. They move independently and only the first can be refused, so offering them together with one sentence beside them is what makes the difference visible at the moment somebody types |
 | A retired product says so on its own page | Nothing lists it, so the page is reached by a link somebody kept. Unmarked it reads as a product in use whose scans have quietly stopped. It is not the out-of-support date shown beside it: that is a date support ended on, and this is not tracked here at all |
+| A retired tag opens on its own release page and says it is retired | Its address is reached by a link somebody kept, so the page reads retired lines to resolve it. Nothing offers a retired tag as the release before another |
 | A retired variant is marked on the release that was built as it | It is gone from what the product declares and still named by the releases it was built as, because the findings filed against it are still open. Unmarked, a release names a build nothing will ever scan again and says nothing about why |
 | The edit says when a name can no longer be corrected | A published document is held by readers under the name it carried. The drawer says so where somebody is about to type a new one, rather than leaving the refusal to explain it afterwards |
 | An inventory can be uploaded from the interface (REQ-05) | From the bar and from the inventories screen. The drawer takes the target — prefilled from the scope, refused by the server if undeclared — one inventory — CycloneDX or SPDX, as the file itself says — and any number of OpenVEX suppression documents, which is what the endpoint takes. It posts the same multipart request a pipeline sends, then opens the inventories screen, where the receipt shows "queued" until the run says what it changed |
@@ -2108,28 +2109,17 @@ with the library.
 
 ## Test coverage
 
-`make check` type-checks every screen against a client generated from the API
-document, so a screen cannot disagree with the shape the server sends and a
-drifted endpoint is a compile error rather than a blank panel. That is real
-coverage and it is most of what the frontend needs.
+| Layer | What pins it |
+|---|---|
+| Shape | `make check` type-checks every screen against a client generated from the API document, so a drifted endpoint is a compile error rather than a blank panel |
+| Computation | What a screen computes rather than draws sits in a function beside the screen and is tested on its own. The sign-out sequence is one: what makes it correct is which parts run before the request and outside the part that can fail |
+| Writes and gates | A screen that sends a write, or decides what a write carries, is drawn in a test inside a router and a query client of its own, and the test reads the request it sent |
+| Invalidation | Each mutation hook is drawn through a real query client, and the test reads the query keys it invalidates once its request lands |
+| Look | What is drawn over what, and how it reads, is checked by a person |
 
-What it is not is a test of what a screen *says*. Five pieces are pulled out and
-tested on their own — what a notification is called, the count on the control
-that opens it, where an unsent draft is kept, where a sign-in comes back to, and
-how a session that ended is noticed — because each is a defect rather than a
-matter of taste if it is wrong. Everything else is checked by a person looking
-at it.
-
-The draft rules are tested and so is the sign-out that calls them: the sequence
-sits in a function of its own rather than in the click handler, because what
-makes it correct is which parts run before the request and outside the part that
-can fail. The panel that offers a way back in is still checked by reading — no
-component is rendered in any test here, so what is drawn over what, and what a
-click does to it, is a person looking at it.
-
-Where a screen computes something rather than draws it, that computation comes
-out into a function beside the screen, which is what makes it testable at all.
-Coverage of the interface is measured and reported by the gate.
+The gate measures statement coverage per file and fails any file no test
+reaches, so a screen added without a test fails it. The entry point and the test
+harness are outside the measure, because neither is a behavior of the interface.
 
 ## Not built
 

@@ -19,26 +19,21 @@ func TestAnAgingBucketSaysWhatIsUndecidedAndHowItSplitsBySeverity(t *testing.T) 
 	each(t, func(t *testing.T, f *fixture) {
 		ctx := t.Context()
 		f.shipped(t, twoConsumers())
-		if _, err := f.store.Apply(ctx, f.target, f.run(t), []finding.Reported{
-			{Issue: finding.Named{Identifier: "CVE-2026-1", Severity: "critical"}, Component: swss},
-			{Issue: finding.Named{Identifier: "CVE-2026-2", Severity: "low"}, Component: libnl},
-		}); err != nil {
-			t.Fatal(err)
-		}
+		f.applied(t,
+			finding.Reported{Issue: finding.Named{Identifier: "CVE-2026-1", Severity: "critical"}, Component: swss},
+			finding.Reported{Issue: finding.Named{Identifier: "CVE-2026-2", Severity: "low"}, Component: libnl},
+		)
 		old := time.Now().UTC().Add(-120 * 24 * time.Hour)
 		f.aged(t, "CVE-2026-1", old)
 		f.aged(t, "CVE-2026-2", old)
 
-		somebody, err := access.NewStore(f.db.DB).Ensure(ctx, "somebody@example.com", "Them", nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		f.decided(t, somebody.ID, f.issueID(t, "CVE-2026-1"),
+		somebody := f.somebodyElse(t)
+		f.decided(t, somebody, f.issueID(t, "CVE-2026-1"),
 			finding.PlaceIdentity(swss.Name, ""), "approved", swss.Version, "agreed")
 		// Waiting at every place the low issue sits, so that nothing but the
 		// waiting is what leaves it undecided.
 		for i, consumer := range []string{swss.Name, teamd.Name} {
-			f.decided(t, somebody.ID, f.issueID(t, "CVE-2026-2"),
+			f.decided(t, somebody, f.issueID(t, "CVE-2026-2"),
 				finding.PlaceIdentity(libnl.Name, consumer), "proposed", libnl.Version,
 				[]string{"waiting-one", "waiting-two"}[i])
 		}

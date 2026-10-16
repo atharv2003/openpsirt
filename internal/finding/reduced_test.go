@@ -47,31 +47,10 @@ func (f *fixture) placesOf(t *testing.T, identifier string) map[string]finding.F
 // versions given, live where key is not empty.
 func (f *fixture) decidedAt(t *testing.T, by int64, at finding.Finding, state, component, consumer, key string) {
 	t.Helper()
-	row := map[string]any{
-		"claim_id":   claimBy(t, f.db, by),
-		"product_id": f.productID, "vulnerability_id": at.VulnerabilityID,
-		"place_identity": at.PlaceIdentity, "visibility": "public",
-		"state": state, "needs_approval": true, "proposed_by": by,
-		"proposed_at":                time.Now().UTC(),
-		"component_upstream_version": component,
-		"consumer_upstream_version":  consumer,
-	}
-	if key != "" {
-		row["live_key"] = key
-	}
-	if _, err := f.db.DB.NewInsert().Model(&row).TableExpr(`"decision"`).Exec(t.Context()); err != nil {
-		t.Fatalf("record a %s claim: %v", state, err)
-	}
-}
-
-// somebodyElse is a person to have proposed what a test records.
-func (f *fixture) somebodyElse(t *testing.T) int64 {
-	t.Helper()
-	person, err := access.NewStore(f.db.DB).Ensure(t.Context(), "somebody@example.com", "Them", nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return person.ID
+	f.decision(t, decisionRow{
+		By: by, Issue: at.VulnerabilityID, Place: at.PlaceIdentity, State: state,
+		Component: &component, Consumer: &consumer, Key: key,
+	})
 }
 
 func TestAnIssueAgingInTwoBucketsIsUndecidedOnlyInTheBucketWhosePlacesNobodyAnswered(t *testing.T) {
@@ -82,11 +61,7 @@ func TestAnIssueAgingInTwoBucketsIsUndecidedOnlyInTheBucketWhosePlacesNobodyAnsw
 	each(t, func(t *testing.T, f *fixture) {
 		ctx := t.Context()
 		f.shipped(t, twoConsumers())
-		if _, err := f.store.Apply(ctx, f.target, f.run(t), []finding.Reported{
-			found("CVE-2026-1", libnl),
-		}); err != nil {
-			t.Fatal(err)
-		}
+		f.foundOnLibnl(t)
 		places := f.placesOf(t, "CVE-2026-1")
 		now := time.Now().UTC()
 		for name, opened := range map[string]time.Time{
@@ -133,11 +108,7 @@ func TestATrendReadsTheProductsOwnRatingOfAnIssueOpenAtManyPlaces(t *testing.T) 
 	each(t, func(t *testing.T, f *fixture) {
 		ctx := t.Context()
 		f.shipped(t, twoConsumers())
-		if _, err := f.store.Apply(ctx, f.target, f.run(t), []finding.Reported{
-			found("CVE-2026-1", libnl), found("CVE-2026-2", libnl),
-		}); err != nil {
-			t.Fatal(err)
-		}
+		f.applied(t, found("CVE-2026-1", libnl), found("CVE-2026-2", libnl))
 		f.rate(t, f.productID, "CVE-2026-1", "critical")
 		points, err := f.store.Trend(ctx, f.holding(t, access.PublicRead), f.wholeProduct(),
 			time.Time{}, 24*time.Hour, 2, finding.Within{})
@@ -158,11 +129,7 @@ func TestAReleaseCountsAnIssueAtAComponentOnceAtTheProductsRating(t *testing.T) 
 	each(t, func(t *testing.T, f *fixture) {
 		ctx := t.Context()
 		f.shipped(t, twoConsumers())
-		if _, err := f.store.Apply(ctx, f.target, f.run(t), []finding.Reported{
-			found("CVE-2026-1", libnl),
-		}); err != nil {
-			t.Fatal(err)
-		}
+		f.foundOnLibnl(t)
 		f.rate(t, f.productID, "CVE-2026-1", "low")
 		releases, err := f.store.Releases(ctx, f.holding(t, access.PublicRead), f.productID)
 		if err != nil {

@@ -678,14 +678,28 @@ func (s *Store) Detail(ctx context.Context, subject access.Subject, targetID, vu
 		return nil, fmt.Errorf("read what kind of flaw this is: %w", err)
 	}
 
-	// The summary, other names and addresses a flaw recorded here wrote onto
-	// the shared issue row, where that record sits out of this reader's reach.
+	// The summary, other names, addresses and kinds a flaw recorded here
+	// wrote onto the shared issue row, where that record sits out of this
+	// reader's reach.
 	withheld, err := recordedOutOfReach(ctx, s.db, subject, vulnerabilityID)
 	if err != nil {
 		return nil, err
 	}
 	if withheld {
-		issue.Description, aliases, references = "", nil, nil
+		issue.WithholdRecorded()
+		aliases, references, weaknesses = nil, nil, nil
+	} else if issue.ScoreCenti == nil {
+		// This product's own record of the flaw, where it worked out a
+		// vector: the score and its scheme are this product's, held off the
+		// issue row.
+		recorded, err := recordedIn(ctx, s.db, productID, vulnerabilityID)
+		if err != nil {
+			return nil, err
+		}
+		if recorded != nil && recorded.ScoreCenti != nil {
+			issue.ScoreCenti = recorded.ScoreCenti
+			issue.Vector, issue.ScoreVersion = deref(recorded.Vector), deref(recorded.ScoreVersion)
+		}
 	}
 
 	evidence := evidenceFrom(rows, issue, component, aliases, references, weaknesses)

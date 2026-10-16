@@ -75,6 +75,7 @@ func (s *Store) Anywhere(ctx context.Context, subject access.Subject,
 	filter.Across = true
 	filter.ProductID = 0
 	filter.HeldBy = subject.Mine()
+	filter.reader = subject
 	// All three are statements about a selection of builds, which this is not.
 	filter.Builds = 0
 	filter.DiffersBetweenBuilds = false
@@ -310,12 +311,12 @@ func (s *Store) Anywhere(ctx context.Context, subject access.Subject,
 		ColumnExpr(exploitedAcross+` AS "exploited"`).
 		ColumnExpr(exploitedHereAcross+` AS "exploited_here"`).
 		ColumnExpr(`MAX(COALESCE("v"."likelihood_ppm", 0)) AS "likelihood_ppm"`).
-		ColumnExpr(`MAX(COALESCE("v"."score_centi", 0)) AS "score_centi"`).
+		ColumnExpr(`MAX(COALESCE(`+ScoreHere+`, 0)) AS "score_centi"`).
 		// Whether anything here carries a score at all, and the scheme it is
 		// on. This list spans products, so it is the one place a version 3
 		// number and a version 4 number sit in the same column.
-		ColumnExpr(`MAX(CASE WHEN "v"."score_centi" IS NULL THEN 0 ELSE 1 END) AS "scored"`).
-		ColumnExpr(`MAX(COALESCE("v"."score_version", '')) AS "score_version"`).
+		ColumnExpr(`MAX(CASE WHEN `+ScoreHere+` IS NULL THEN 0 ELSE 1 END) AS "scored"`).
+		ColumnExpr(`MAX(COALESCE(`+ScoreVersionHere+`, '')) AS "score_version"`).
 		ColumnExpr(`SUM(CASE WHEN `+NotArguedAway+` THEN 0 ELSE 1 END) AS "answered"`).
 		ColumnExpr(`MIN("f"."opened_at") AS "opened_at"`).
 		ColumnExpr(`MIN("f"."due_at") AS "due_at"`).
@@ -359,7 +360,7 @@ func (s *Store) Anywhere(ctx context.Context, subject access.Subject,
 	for i, row := range rows {
 		known[anyKey{row.ProductID, row.VulnerabilityID, row.Fold}] = i
 	}
-	named, err := issuesNamed(ctx, s.db, issues)
+	named, err := issuesNamed(ctx, s.db, subject, issues)
 	if err != nil {
 		return nil, 0, err
 	}

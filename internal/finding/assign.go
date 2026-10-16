@@ -179,6 +179,12 @@ func (s *Store) HandOverWithin(ctx context.Context, tx bun.IDB, subject access.S
 	if err != nil {
 		return 0, err
 	}
+	// Refused before any work is read, as Assign and AssignMatching refuse,
+	// so a hand-over of nothing to somebody else is refused rather than
+	// answered as zero moved.
+	if err := mayMove(subject, productID, to, dispatches); err != nil {
+		return 0, err
+	}
 	var moved int64
 	for _, each := range work {
 		n, err := s.moveWork(ctx, tx, subject, productID, each[0], each[1], to,
@@ -977,7 +983,7 @@ func (s *Store) workSince(ctx context.Context, subject access.Subject, scope Sco
 		components = append(components, head.ComponentID)
 		targets = append(targets, head.TargetID)
 	}
-	named, err := issuesNamed(ctx, s.db, issues)
+	named, err := issuesNamed(ctx, s.db, subject, issues)
 	if err != nil {
 		return nil, 0, err
 	}

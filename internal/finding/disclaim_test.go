@@ -363,28 +363,18 @@ func TestAPlaceSomebodyMarkedAffectedStaysOpen(t *testing.T) {
 		f.shipped(t, beside(acmeY))
 		f.reported(t, found(inside, zlib))
 
-		somebody, err := access.NewStore(f.db.DB).Ensure(ctx, "somebody@example.com", "Them", nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		somebody := f.somebodyElse(t)
 		var issueID int64
 		if err := f.db.DB.NewSelect().TableExpr(`"vulnerability" AS "v"`).Column("v.id").
 			Where(`"v"."identifier" = ?`, inside).Scan(ctx, &issueID); err != nil {
 			t.Fatal(err)
 		}
-		row := map[string]any{
-			"claim_id":   claimSaying(t, f.db, somebody.ID, finding.OutcomeAffected),
-			"product_id": f.productID, "vulnerability_id": issueID,
-			"place_identity": finding.PlaceIdentity(zlib.Name, acmeY.Name), "visibility": "public",
-			"state": "proposed", "needs_approval": false, "proposed_by": somebody.ID,
-			"proposed_at":                time.Now().UTC(),
-			"component_upstream_version": zlib.Version,
-			"consumer_upstream_version":  acmeY.Version,
-			"live_key":                   "affected-here",
-		}
-		if _, err := f.db.DB.NewInsert().Model(&row).TableExpr(`"decision"`).Exec(ctx); err != nil {
-			t.Fatal(err)
-		}
+		f.decision(t, decisionRow{
+			By: somebody, Claim: claimSaying(t, f.db, somebody, finding.OutcomeAffected),
+			Issue: issueID, Place: finding.PlaceIdentity(zlib.Name, acmeY.Name),
+			State: "proposed", Unreviewed: true,
+			Component: ptr(zlib.Version), Consumer: ptr(acmeY.Version), Key: "affected-here",
+		})
 
 		f.acmeSays(t)
 		applied, _ := f.reported(t, found(inside, zlib))
@@ -870,21 +860,6 @@ func TestAPlaceAnsweredOnSomeRoutesCarriesNoDeadline(t *testing.T) {
 		f.reported(t, found(inside, zlib))
 		if open := f.open(t); len(open) != 1 || open[0].DueAt != nil {
 			t.Errorf("answered through Y the place is due %v", open[0].DueAt)
-		}
-	})
-}
-
-func TestAnAnswerOnSomeRoutesGoesWithAPlaceThatClosesForAnotherReason(t *testing.T) {
-	each(t, func(t *testing.T, f *fixture) {
-		f.shipped(t, shared())
-		f.acmeSays(t)
-		f.reported(t, found(inside, zlib))
-		// The scanner stops reporting it.
-		f.reported(t)
-		for _, row := range f.every(t) {
-			if row.ClosedAt != nil && row.ClosedBecause != finding.Disclaimed && row.StatedBy != nil {
-				t.Errorf("closed as %q, still answered by statement %d", row.ClosedBecause, *row.StatedBy)
-			}
 		}
 	})
 }

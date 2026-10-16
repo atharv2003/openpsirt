@@ -47,13 +47,11 @@ func TestAChurnedVersionIsNotCountedAsAFix(t *testing.T) {
 	each(t, func(t *testing.T, f *fixture) {
 		ctx := t.Context()
 		f.shipped(t, through(libnl))
-		if _, err := f.store.Apply(ctx, f.target, f.run(t), []finding.Reported{
+		f.applied(t,
 			found("CVE-2026-1", libnl),
 			found("CVE-2026-2", libnl),
 			found("CVE-2026-3", libnl),
-		}); err != nil {
-			t.Fatal(err)
-		}
+		)
 		now := time.Now().UTC()
 		for _, issue := range []string{"CVE-2026-1", "CVE-2026-2", "CVE-2026-3"} {
 			f.aged(t, issue, now.Add(-10*24*time.Hour))
@@ -91,11 +89,7 @@ func TestHowLongAFixTookIsCountedPerIssueAndNotPerPlace(t *testing.T) {
 				{Parent: swss, Child: libnl}, {Parent: teamd, Child: libnl},
 			},
 		})
-		if _, err := f.store.Apply(ctx, f.target, f.run(t), []finding.Reported{
-			found("CVE-2026-1", libnl),
-		}); err != nil {
-			t.Fatal(err)
-		}
+		f.foundOnLibnl(t)
 		var places int
 		if err := f.db.DB.NewSelect().Model((*finding.Finding)(nil)).
 			ColumnExpr("COUNT(*)").Where(`"closed_at" IS NULL`).Scan(ctx, &places); err != nil {
@@ -130,11 +124,7 @@ func TestWhatIsAgingIsCountedInTheBucketsPeopleAskIn(t *testing.T) {
 	each(t, func(t *testing.T, f *fixture) {
 		ctx := t.Context()
 		f.shipped(t, through(libnl))
-		if _, err := f.store.Apply(ctx, f.target, f.run(t), []finding.Reported{
-			found("CVE-2026-1", libnl), found("CVE-2026-2", libnl),
-		}); err != nil {
-			t.Fatal(err)
-		}
+		f.applied(t, found("CVE-2026-1", libnl), found("CVE-2026-2", libnl))
 		now := time.Now().UTC()
 		f.aged(t, "CVE-2026-1", now.Add(-2*24*time.Hour))
 		f.aged(t, "CVE-2026-2", now.Add(-120*24*time.Hour))
@@ -190,11 +180,7 @@ func TestSomebodyWhoReadsNothingMeasuresNothing(t *testing.T) {
 	each(t, func(t *testing.T, f *fixture) {
 		ctx := t.Context()
 		f.shipped(t, through(libnl))
-		if _, err := f.store.Apply(ctx, f.target, f.run(t), []finding.Reported{
-			found("CVE-2026-1", libnl),
-		}); err != nil {
-			t.Fatal(err)
-		}
+		f.foundOnLibnl(t)
 		f.aged(t, "CVE-2026-1", time.Now().UTC().Add(-5*24*time.Hour))
 		f.closeIt(t, "CVE-2026-1", finding.Upgraded, time.Now().UTC())
 
@@ -206,6 +192,80 @@ func TestSomebodyWhoReadsNothingMeasuresNothing(t *testing.T) {
 		}
 		if got != nil && got.Fixed != 0 {
 			t.Errorf("somebody holding nothing here was told about %d fixes", got.Fixed)
+		}
+	})
+}
+
+func TestAnIssueIsFixedInThePeriodItsLastPlaceClosed(t *testing.T) {
+	// An issue at two places: one fixed in the window with the other still
+	// open is not fixed, one whose second place closes after the window is
+	// not fixed in it, and one whose second place closes in the window is
+	// fixed there, timed from its first place opening. One whose place in
+	// the window is out of the reader's reach is timed by what the reader
+	// reads, and its last readable place closed before the window.
+	each(t, func(t *testing.T, f *fixture) {
+		ctx := t.Context()
+		f.shipped(t, graph.Snapshot{
+			Root:       root,
+			Components: []graph.Described{swss, teamd, libnl},
+			Dependencies: []graph.Dependency{
+				{Parent: root, Child: swss}, {Parent: root, Child: teamd},
+				{Parent: swss, Child: libnl}, {Parent: teamd, Child: libnl},
+			},
+		})
+		f.applied(t, found("CVE-2026-1", libnl), found("CVE-2026-2", libnl),
+			found("CVE-2026-3", libnl), found("CVE-2026-4", libnl))
+		now := time.Now().UTC()
+		since, until := now.Add(-7*24*time.Hour), now.Add(-12*time.Hour)
+		closeOne := func(t *testing.T, issue string, at time.Time) {
+			t.Helper()
+			var id int64
+			if err := f.db.DB.NewSelect().Model((*finding.Finding)(nil)).Column("id").
+				Where(`"vulnerability_id" = ?`, f.issueID(t, issue)).
+				Where(`"closed_at" IS NULL`).OrderExpr(`"id"`).Limit(1).Scan(ctx, &id); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.db.DB.NewUpdate().Model((*finding.Finding)(nil)).
+				Set(`"closed_at" = ?`, at).Set(`"closed_because" = ?`, finding.Upgraded).
+				Where(`"id" = ?`, id).Exec(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, issue := range []string{"CVE-2026-1", "CVE-2026-2", "CVE-2026-3", "CVE-2026-4"} {
+			f.aged(t, issue, now.Add(-30*24*time.Hour))
+		}
+		// The first: one place fixed in the window, the other open.
+		closeOne(t, "CVE-2026-1", now.Add(-24*time.Hour))
+		// The second: one place fixed before the window, the other in it.
+		closeOne(t, "CVE-2026-2", now.Add(-20*24*time.Hour))
+		closeOne(t, "CVE-2026-2", now.Add(-24*time.Hour))
+		// The third: one place fixed in the window, the other after it ends.
+		closeOne(t, "CVE-2026-3", now.Add(-24*time.Hour))
+		closeOne(t, "CVE-2026-3", now.Add(-time.Hour))
+		// The fourth: one place fixed before the window, the other in it and
+		// undisclosed, so a reader of disclosed findings saw its last fix
+		// before the window.
+		closeOne(t, "CVE-2026-4", now.Add(-20*24*time.Hour))
+		closeOne(t, "CVE-2026-4", now.Add(-24*time.Hour))
+		if _, err := f.db.DB.NewUpdate().Model((*finding.Finding)(nil)).
+			Set(`"visibility" = ?`, access.Private).
+			Where(`"vulnerability_id" = ?`, f.issueID(t, "CVE-2026-4")).
+			Where(`"closed_at" >= ?`, since).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := f.store.Remediation(ctx, f.holding(t, access.PublicRead),
+			f.wholeProduct(), since, until)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Fixed != 1 {
+			t.Errorf("counted %d fixes, want the one issue whose last place closed in the window", got.Fixed)
+		}
+		for band, took := range got.TimeToFix {
+			if took < 28*24*time.Hour || took > 30*24*time.Hour {
+				t.Errorf("%s took %s, want about twenty-nine days", band, took)
+			}
 		}
 	})
 }

@@ -172,7 +172,7 @@ func (s *Store) Describe(ctx context.Context, subject access.Subject, decisions 
 	byIssue := make(map[int64]finding.Vulnerability, len(issues))
 	for _, issue := range issues {
 		if withheld[issue.ID] {
-			issue.Description = ""
+			issue.WithholdRecorded()
 		}
 		byIssue[issue.ID] = issue
 	}

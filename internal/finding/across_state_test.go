@@ -37,11 +37,7 @@ func (f *fixture) acrossProducts(t *testing.T) acrossProducts {
 	t.Helper()
 	ctx := t.Context()
 	f.shipped(t, twoConsumers())
-	if _, err := f.store.Apply(ctx, f.target, f.run(t), []finding.Reported{
-		found("CVE-2026-1", libnl), found("CVE-2026-2", swss), found("CVE-2026-3", libnl),
-	}); err != nil {
-		t.Fatal(err)
-	}
+	f.applied(t, found("CVE-2026-1", libnl), found("CVE-2026-2", swss), found("CVE-2026-3", libnl))
 	elsewhere := f.inAnotherProduct(t, "hedgehog")
 	f.shippedTo(t, elsewhere, twoConsumers())
 	if _, err := f.store.Apply(ctx, elsewhere, f.runOn(t, elsewhere), []finding.Reported{
@@ -61,27 +57,16 @@ func (f *fixture) acrossProducts(t *testing.T) acrossProducts {
 		t.Fatal(err)
 	}
 
-	somebody, err := access.NewStore(f.db.DB).Ensure(ctx, "somebody@example.com", "Them", nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	somebody := f.somebodyElse(t)
 	underSwss := finding.PlaceIdentity(libnl.Name, swss.Name)
 	underTeamd := finding.PlaceIdentity(libnl.Name, teamd.Name)
 	decide := func(product int64, outcome, issue, place, componentVersion, consumerVersion, state, key string) {
 		t.Helper()
-		row := map[string]any{
-			"claim_id":   claimSaying(t, f.db, somebody.ID, outcome),
-			"product_id": product, "vulnerability_id": f.issueID(t, issue),
-			"place_identity": place, "visibility": "public",
-			"state": state, "needs_approval": true, "proposed_by": somebody.ID,
-			"proposed_at":                time.Now().UTC(),
-			"component_upstream_version": componentVersion,
-			"consumer_upstream_version":  consumerVersion,
-			"live_key":                   key,
-		}
-		if _, err := f.db.DB.NewInsert().Model(&row).TableExpr(`"decision"`).Exec(ctx); err != nil {
-			t.Fatalf("record a %s claim: %v", state, err)
-		}
+		f.decision(t, decisionRow{
+			By: somebody, Claim: claimSaying(t, f.db, somebody, outcome),
+			Product: product, Issue: f.issueID(t, issue), Place: place, State: state,
+			Component: &componentVersion, Consumer: &consumerVersion, Key: key,
+		})
 	}
 	// The first product agreed one place of CVE-2026-1 and promised an upgrade
 	// over both places of CVE-2026-3. The second has a proposal waiting at the

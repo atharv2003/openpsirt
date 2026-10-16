@@ -86,10 +86,10 @@ func TestTheRegisterLeavesAsAFileWithTheSameVisibility(t *testing.T) {
 		// it answerable to an auditor — and a header saying things were left
 		// out above a file that left nothing out is worse than saying nothing,
 		// because it reads as complete about what remains.
-		if httpapitest.Contains(got.Body.String(), "# triaged at or above") {
+		if strings.Contains(got.Body.String(), "# triaged at or above") {
 			t.Error("the register export claims a triage line it does not apply")
 		}
-		if !httpapitest.Contains(got.Body.String(), "CVE-2026-9999") {
+		if !strings.Contains(got.Body.String(), "CVE-2026-9999") {
 			t.Error("the register export holds no rows")
 		}
 		// Somebody who holds nothing on the product gets nothing at all.
@@ -161,7 +161,7 @@ func TestARegisterExportPastTheSlotsIsRefusedWithATimeToAskAgain(t *testing.T) {
 		<-finishing[0]
 		held, finishing = held[1:], finishing[1:]
 		got := httpapitest.AsPerson(t, r, "triager", http.MethodGet, at, "")
-		if got.Code != http.StatusOK || !httpapitest.Contains(got.Body.String(), "CVE-2026-9999") {
+		if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "CVE-2026-9999") {
 			t.Errorf("an export after a slot was given back answered %d: %s",
 				got.Code, got.Body.String())
 		}
@@ -224,7 +224,7 @@ func TestTheRegisterPagesWithoutSkippingRows(t *testing.T) {
 		var whole struct {
 			Items []struct {
 				Vulnerability string `json:"vulnerability"`
-				PlaceIdentity string `json:"place_identity"`
+				Place         string `json:"place"`
 			} `json:"items"`
 			Total int `json:"total"`
 		}
@@ -235,7 +235,7 @@ func TestTheRegisterPagesWithoutSkippingRows(t *testing.T) {
 		}
 		seen := map[string]bool{}
 		for _, row := range whole.Items {
-			key := row.Vulnerability + " " + row.PlaceIdentity
+			key := row.Vulnerability + " " + row.Place
 			if seen[key] {
 				t.Errorf("the register lists %q twice", key)
 			}
@@ -409,6 +409,57 @@ func TestTheRegisterNarrows(t *testing.T) {
 		}
 		if !strings.Contains(file.Body.String(), "CVE-2026-1000") {
 			t.Error("the narrowed file does not hold the undecided row")
+		}
+	})
+}
+
+// The register file's "stated by" cell carries the supplier's statement
+// that answers a place: who said it, about which product, on what grounds
+// and in what words, as the register's list reports them.
+func TestTheRegisterFileSaysWhichSupplierAnsweredAPlace(t *testing.T) {
+	httpapitest.TwoReach(t, func(t *testing.T, r *httpapitest.Reach) {
+		if got := r.VexedAs(t, "admin", "acme", "acme-y.openvex.json", httpapitest.AcmeSays(t)); got.Code != http.StatusCreated {
+			t.Fatalf("uploading answered %d: %s", got.Code, got.Body.String())
+		}
+		r.ScannedInsideAcme(t, "inside", false)
+
+		const at = "/v1/products/mine/streams/master/variants/broadcom/register"
+		var listed struct {
+			Items []struct {
+				Stated *struct {
+					Publisher     string `json:"publisher"`
+					Product       string `json:"product"`
+					Justification string `json:"justification"`
+					Statement     string `json:"statement"`
+				} `json:"stated"`
+			} `json:"items"`
+		}
+		httpapitest.Read(t, r, "triager", at+"?closed_because=disclaimed", &listed)
+		if len(listed.Items) != 1 || listed.Items[0].Stated == nil {
+			t.Fatalf("the register lists %+v closed by a supplier", listed.Items)
+		}
+		said := listed.Items[0].Stated
+		if said.Justification == "" || said.Statement == "" {
+			t.Fatalf("the supplier's statement reads %+v, want grounds and words", said)
+		}
+		want := said.Publisher + ", " + said.Product + ": " + said.Justification + ". " + said.Statement
+
+		got := httpapitest.AsPerson(t, r, "triager", http.MethodGet,
+			at+".csv?closed_because=disclaimed", "")
+		if got.Code != http.StatusOK {
+			t.Fatalf("exporting answered %d: %s", got.Code, got.Body.String())
+		}
+		lines, err := csv.NewReader(strings.NewReader(got.Body.String())).ReadAll()
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := httpapitest.RowsUnder(lines)
+		column := httpapitest.IndexOf(body[0], "stated by")
+		if column < 0 || len(body) != 2 {
+			t.Fatalf("the file has %d rows and columns %v", len(body)-1, body[0])
+		}
+		if body[1][column] != want || !strings.HasPrefix(want, "acme, acme-y: ") {
+			t.Errorf("the file's stated by is %q, want %q", body[1][column], want)
 		}
 	})
 }

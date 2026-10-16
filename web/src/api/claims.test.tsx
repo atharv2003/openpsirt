@@ -1,63 +1,23 @@
 // Copyright Nexthop Systems Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useApproveClaim, useRejectClaim, useSplitClaim } from "./claims";
-import {
-  accept,
-  client,
-  mounted,
-  screen,
-  settle,
-  watchInvalidations,
-  type Sent,
-} from "../test/mount";
+import { acted as shared } from "../test/acted";
+import { EVERY_CLAIM_KEY } from "../test/claimKeys";
+import { mounted } from "../test/mount";
 
 const mount = mounted();
 
 afterEach(() => vi.restoreAllMocks());
 
-// Everything a change to a claim moves. Each hook is drawn and pressed through
-// a real query client, so a hook that stops calling the shared set — or calls
-// it before the request lands — fails here, where the set alone is pinned
-// beside the other acts' sets.
-const EVERY_CLAIM_KEY = [
-  "advisory",
-  "advisory-document",
-  "advisory-releases",
-  "claim",
-  "comments",
-  "decided",
-  "decision",
-  "finding",
-  "findings",
-  "home",
-  "my-claims",
-  "queue",
-].sort();
-
+// Each hook is drawn and pressed through a real query client, so a hook that
+// stops calling the shared set of claim keys, or calls it before the request
+// lands, fails here.
+//
 // Draws a hook, and returns what pressing its button sent and invalidated.
-async function acted<T>(
-  useHook: () => { mutate: (vars: T) => void },
-  vars: T,
-  status = 200,
-): Promise<{ sent: Sent[]; invalidated: string[] }> {
-  const sent = accept(() => ({ status, data: {} }));
-  const queries = client();
-  const invalidated = watchInvalidations(queries);
-  function Act() {
-    const hook = useHook();
-    return (
-      <button type="button" onClick={() => hook.mutate(vars)}>
-        act
-      </button>
-    );
-  }
-  mount.render(screen(<Act />, "/", "*", queries));
-  await act(async () => mount.host().querySelector("button")?.click());
-  await settle();
-  return { sent: sent(), invalidated: invalidated() };
+function acted<T>(useHook: () => { mutate: (vars: T) => void }, vars: T, status = 200) {
+  return shared(mount.render, mount.host, "POST", useHook, vars, status);
 }
 
 // Verified by deleting each hook's `onSuccess: done` in turn: its test fails

@@ -146,13 +146,11 @@ func TestAnIssueWhoseBinariesNameDifferentFixesCountsOnceUnderEach(t *testing.T)
 			return finding.Reported{Issue: finding.Named{Identifier: id, Severity: "high"}, Component: on,
 				FixState: finding.FixedUpstream, FixedIn: fixedIn}
 		}
-		if _, err := f.store.Apply(ctx, f.target, f.run(t), []finding.Reported{
+		f.applied(t,
 			fixed("CVE-2026-71", lib, "8.5.0-3"),
 			fixed("CVE-2026-71", gnutls, "8.5.0-4"),
 			fixed("CVE-2026-73", lib, "8.5.0-3"),
-		}); err != nil {
-			t.Fatal(err)
-		}
+		)
 
 		other := f.anotherBranch(t, "next")
 		f.shippedTo(t, other, graph.Snapshot{
@@ -212,11 +210,7 @@ func TestAPromiseInAnotherProductDoesNotStandOverThisProductsBuild(t *testing.T)
 	each(t, func(t *testing.T, f *fixture) {
 		ctx := t.Context()
 		f.shipped(t, through(libnl))
-		if _, err := f.store.Apply(ctx, f.target, f.run(t), []finding.Reported{
-			found("CVE-2026-1", libnl),
-		}); err != nil {
-			t.Fatal(err)
-		}
+		f.foundOnLibnl(t)
 		elsewhere := f.inAnotherProduct(t, "hedgehog")
 		f.shippedTo(t, elsewhere, through(libnl))
 		if _, err := f.store.Apply(ctx, elsewhere, f.runOn(t, elsewhere), []finding.Reported{
@@ -224,30 +218,20 @@ func TestAPromiseInAnotherProductDoesNotStandOverThisProductsBuild(t *testing.T)
 		}); err != nil {
 			t.Fatal(err)
 		}
-		somebody, err := access.NewStore(f.db.DB).Ensure(ctx, "somebody@example.com", "Them", nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		somebody := f.somebodyElse(t)
 		promise := func(product int64, to, key string) {
 			t.Helper()
-			claim := claimSaying(t, f.db, somebody.ID, "upgrade-needed")
+			claim := claimSaying(t, f.db, somebody, "upgrade-needed")
 			if _, err := f.db.DB.NewUpdate().Table("claim").
 				Set(`"committed_to" = ?`, time.Date(2027, 6, 1, 0, 0, 0, 0, time.UTC)).
 				Set(`"upgrade_to" = ?`, to).Where(`"id" = ?`, claim).Exec(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := f.db.DB.NewInsert().Model(&map[string]any{
-				"claim_id": claim, "product_id": product,
-				"vulnerability_id": f.issueID(t, "CVE-2026-1"),
-				"place_identity":   finding.PlaceIdentity(libnl.Name, swss.Name),
-				"visibility":       "public", "state": "approved",
-				"needs_approval": true, "proposed_by": somebody.ID,
-				"proposed_at":                time.Now().UTC(),
-				"component_upstream_version": libnl.Version,
-				"live_key":                   key,
-			}).TableExpr(`"decision"`).Exec(ctx); err != nil {
-				t.Fatal(err)
-			}
+			f.decision(t, decisionRow{
+				By: somebody, Claim: claim, Product: product,
+				Issue: f.issueID(t, "CVE-2026-1"), Place: finding.PlaceIdentity(libnl.Name, swss.Name),
+				State: "approved", Component: ptr(libnl.Version), Key: key,
+			})
 		}
 		read := func() finding.PerBuild {
 			t.Helper()
@@ -436,11 +420,7 @@ func TestTwoVersionsOfASourceInOneBuildAreListedInTheEcosystemsOrder(t *testing.
 				{Parent: root, Child: swss}, {Parent: swss, Child: older}, {Parent: swss, Child: newer},
 			},
 		})
-		if _, err := f.store.Apply(ctx, f.target, f.run(t), []finding.Reported{
-			found("CVE-2026-81", older), found("CVE-2026-82", newer),
-		}); err != nil {
-			t.Fatal(err)
-		}
+		f.applied(t, found("CVE-2026-81", older), found("CVE-2026-82", newer))
 		builds, err := f.store.AcrossBuilds(ctx, f.holding(t, access.PublicTriage), f.wholeProduct(), "curl")
 		if err != nil {
 			t.Fatal(err)
