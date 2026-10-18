@@ -20,6 +20,9 @@ import { sizeSaid } from "../ui/size";
 import { inventoryChangesAt, runAt } from "../app/routes";
 import { linkTo } from "../api/links";
 
+// How often a page holding an unsettled upload is asked for again.
+const UNSETTLED = 15_000;
+
 // Each build's uploads, and what the scan of them found. A scan is what the
 // deployment does to an inventory after it arrives; what a person uploads, and
 // what this list is of, is inventories.
@@ -40,8 +43,15 @@ export function Inventories() {
           params: { path: { product, stream, variant } },
         }),
       ),
-    // Receipts move on their own while an upload is being read.
-    refetchInterval: 15_000,
+    // Asked again only while an upload on the page is still being read or
+    // scanned: a settled page has nothing to move, and a page of receipts is
+    // an expensive answer to ask for on a timer. An upload from here asks
+    // again through the drawer, and one from a pipeline is shown when the
+    // screen is opened or returned to.
+    refetchInterval: (query) =>
+      query.state.data?.items?.some((r) => r.state === "reading" || r.state === "scanning")
+        ? UNSETTLED
+        : false,
   });
   const scanning = useQuery({
     queryKey: ["scanning", product],
