@@ -1103,7 +1103,7 @@ estimate, the scanned build's order and the tag's order.
 | Unexplained | The component is present and unchanged, and the scanner stopped reporting it |
 | Invalid | The record should not have existed: this build never shipped it, the entry named the wrong product, or it duplicates an issue already tracked |
 | Unaffected | The issue's CVE record states the upstream release this place holds is not affected (§ CVE record ranges) |
-| Disclaimed | A supplier states the product this place sits in, at the version the build ships, is not affected, and every route up the tree from the place runs through that product (`DESIGN-triage.md` § Evidence from publishers) |
+| Disclaimed | A supplier states the product this place sits in, at the version the build ships, is not affected, and every route up the tree from the place runs through that product (`DESIGN-triage.md` § Evidence from publishers); or an upstream this product trusts states the component, at the version the build ships, is not affected or is fixed, for anybody shipping it (`DESIGN-upstream.md` § Statements applied) |
 
 Superseded is told apart from Upgraded because they are opposite answers to "was
 this fixed", and conflating them put one issue in a release comparison as both
@@ -1117,13 +1117,19 @@ here — that is a triage decision of `not-applicable` with the justification
 that fits, agreed by a second person and exported as VEX. Letting the closure
 absorb that case would route dismissals around approval.
 
-Disclaimed is on neither axis. Nothing in the build changed, so it is no fix;
-the vulnerable code is in the release, so the release held the issue, and a
-trend counts the place open until it closes. It is the one closure that says the
-finding exists and does not apply here, and it routes no dismissal around
-approval: the judgment is the supplier's, about its own product, applied the way
-a build's own patch is (REQ-31). Somebody who disagrees marks the place
-affected, and the statement does not close it there.
+Disclaimed is on neither axis. Nothing in the build changed, so it is no fix,
+and the release is counted as having held the issue: a trend counts the place
+open until it closes. That holds for an upstream's statement that the
+component is fixed at the version shipped too. The statement is somebody
+else's judgment rather than a change anybody here made or a record anybody can
+check, and counting the release as never having held the issue would let a
+third party's word rewrite what a release note and a trend say about this
+deployment's own releases. It is the one closure that says the finding exists
+and does not apply here, and it routes no dismissal around approval: the
+judgment is the supplier's, about its own product, or the upstream's, about a
+component it ships too, applied the way a build's own patch is (REQ-31,
+REQ-84). Somebody who disagrees decides about the place, and the statement does
+not close it there.
 
 Unexplained is always reported and never suppressed. There is no volume at which
 "we cannot account for this" stops mattering. Several in one scan additionally

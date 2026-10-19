@@ -746,13 +746,19 @@ func registerFindingDetail(api huma.API, in core.Deps) {
 				at = evidence.Version
 			}
 			offers, _ := one.PrefillsFor(at)
+			// A declined statement is offered to nobody.
+			if one.DeclinedAt != nil {
+				offers = ""
+			}
 			body.Said = append(body.Said, core.SaidBody{
 				ID: one.ID, Publisher: one.Publisher,
 				Source: core.EvidenceSource(one.Source), Identifier: one.Identifier,
 				Status: one.Status, About: one.About,
 				Justification: one.Justification, Statement: one.Statement,
 				Document: one.Document, At: one.UploadedAt.UTC().Format(time.DateOnly),
-				Offers: core.OutcomeOffered(offers),
+				Offers:     core.OutcomeOffered(offers),
+				ForAnybody: one.Placement == finding.PlacedAnybody,
+				Declined:   one.DeclinedAt != nil,
 			})
 		}
 		return &struct{ Body EvidenceBody }{Body: body}, nil

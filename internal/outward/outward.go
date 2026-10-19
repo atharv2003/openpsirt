@@ -10,7 +10,8 @@
 // refuses to connect inside this network; the open client, for a host a
 // document chooses, also refuses anywhere an administrator excluded (REQ-69).
 // The configured client, for a webhook or chat server an administrator typed
-// in, reaches that address wherever it is, inside this network included. Mail
+// in, and the pinned client, for an upstream an administrator named, reach
+// that host wherever it is, inside this network included. Mail
 // and the object store do not reach out through here, and each governs its own
 // address.
 //
@@ -149,6 +150,36 @@ func ConfiguredTrusting(within time.Duration, roots *x509.CertPool) *http.Client
 	c := client(within, anywhere, func(to *url.URL) error {
 		if to.User != nil {
 			return fmt.Errorf("%w a request to %s: an address carries no user", ErrRefused, to.Hostname())
+		}
+		return nil
+	})
+	if roots != nil {
+		c.Transport.(*guard).inner.(*http.Transport).TLSClientConfig = &tls.Config{
+			RootCAs: roots, MinVersion: tls.VersionTLS12,
+		}
+	}
+	return c
+}
+
+// Pinned returns an HTTP client for one host an administrator configured,
+// where the documents it fetches name further addresses: an upstream's
+// provider description naming its feeds, and a feed naming its documents.
+//
+// The host is reached wherever it is, inside this network included, because
+// an administrator chose it. Every other host is refused before anything is
+// resolved, so a document naming somewhere else reaches nothing. The same
+// refusals as Configured otherwise: https only, no redirect followed, and no
+// user in an address. host carries its port where it names one. roots are the
+// certificate authorities the host is checked against, nil for the system's.
+func Pinned(within time.Duration, host string, roots *x509.CertPool) *http.Client {
+	pinned := strings.ToLower(host)
+	c := client(within, anywhere, func(to *url.URL) error {
+		switch {
+		case to.User != nil:
+			return fmt.Errorf("%w a request to %s: an address carries no user", ErrRefused, to.Hostname())
+		case strings.ToLower(to.Host) != pinned:
+			return fmt.Errorf("%w a request to %s: only the configured host %s is reached",
+				ErrRefused, to.Host, host)
 		}
 		return nil
 	})
