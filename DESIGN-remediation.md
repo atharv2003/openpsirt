@@ -525,9 +525,11 @@ on them. Saying which releases the work is meant to reach is done to the work.
 
 ## Publication
 
-One destination is built: the documents that have gone out are written as a
+Two destinations are built. The documents that have gone out are written as a
 static directory somebody else's web server serves, which `The provider
-directory` below describes. Nothing is sent anywhere, and no adapter to
+directory` below describes; and where the deployment publishes, it serves them
+itself, beside a VEX document per issue and per branch or tag, which
+`DESIGN-publishing.md` describes. Nothing is sent anywhere, and no adapter to
 anybody's platform exists. The rules below are what those adapters would be,
 kept here because the document they are about exists and the shape it would be
 published in is what makes its content right.
@@ -728,6 +730,7 @@ customer — which is the reason the two-person approval on those claims exists.
 | The build is named by the package identifier its inventory gave its root | A scanner reading the inventory and the document together matches the product against the root, and a deployment loading both reads a statement about the root as the build's own claim. The build's names stand in where the inventory gave its root no package identifier |
 | A component with no package identifier is named by the name the build calls it | Less use to a machine, and better than a silent omission, which in this format reads as "no claim" |
 | Every statement carries the other names its issue answers to (REQ-18) | A customer holds identifiers their own scanner produced, matched under the name *its* database uses. The primary is not repeated among the aliases |
+| An issue that is also a flaw of ours undisclosed anywhere carries no other names in a document of disclosed work | One of them is the name minted for the flaw, and that name is the flaw (REQ-37). A preview including undisclosed work keeps them |
 | Ordered here rather than by the engine | Two documents generated from the same state are byte-for-byte identical |
 | Each kind is a document of its own, with its own identifier and its own revisions | A toggle on one document would have a reader watch statements vanish and return as whoever generated it chose, which reads as a retraction nobody made |
 | Ours is the default | Putting a supplier's word under this deployment's name is a choice somebody makes on purpose, and configuring a supplier is not that choice |
@@ -835,7 +838,10 @@ Every advisory that has gone out, written as the static directory the standard
 defines for a CSAF provider. This deployment writes files into a store an
 operator configured; their web server serves them. Nothing here answers a
 request for one, and nothing in the application can reach the package that
-writes them (REQ-63).
+writes them. The documents this deployment serves itself are a surface of
+their own (`DESIGN-publishing.md`), and a deployment may have both: an advisory
+then states the address this deployment serves it at, and the directory is a
+copy.
 
 | Rule | |
 |---|---|
@@ -920,13 +926,12 @@ it points at. The signed outbound request is built and is described in
 
 Every adapter that would send an advisory to somebody's platform, which is the
 whole of Publication above. What exists is `The provider directory`: files
-written where an operator pointed, for their own web server.
+written where an operator pointed, for their own web server; and the documents
+this deployment serves itself (`DESIGN-publishing.md`).
 
-Signatures, and the public key that verifies them. They are what the
-standard's trusted provider role adds on top of the directory, and key
-material is a class of configuration this deployment does not take. The layout
-leaves room: a signature sits beside the document under the same name, and the
-feed already names the file beside each entry that answers for it.
+Signatures in the static directory. The documents this deployment serves
+itself are signed where an operator configured a key; the directory writer
+writes none, and its provider description claims the provider role alone.
 
 A version 4 score in the document. CSAF 2.1 gains a field for one, and the
 document is written as CSAF 2.0 until 2.1 is an OASIS standard. The note that

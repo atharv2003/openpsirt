@@ -8,17 +8,23 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
+
+	"github.com/uptrace/bun"
 
 	"github.com/nexthop-ai/openpsirt/internal/access"
 	"github.com/nexthop-ai/openpsirt/internal/attach"
 	"github.com/nexthop-ai/openpsirt/internal/config"
 	"github.com/nexthop-ai/openpsirt/internal/directory"
+	"github.com/nexthop-ai/openpsirt/internal/httpapi/published"
 	"github.com/nexthop-ai/openpsirt/internal/notify"
+	"github.com/nexthop-ai/openpsirt/internal/publish"
 	"github.com/nexthop-ai/openpsirt/internal/publisher"
 	"github.com/nexthop-ai/openpsirt/internal/setting"
 	"github.com/nexthop-ai/openpsirt/internal/signin"
+	"github.com/nexthop-ai/openpsirt/internal/signing"
 )
 
 // returnsTo refuses a provider with no address to send people back to.
@@ -43,12 +49,51 @@ func returnsTo(providers map[string]signin.Provider, baseURL string) error {
 // and states its own address, and the directory names the publisher and states
 // every file's, so two constructions of this are two deployments the first
 // time either grows a field.
+//
+// A deployment that serves its own documents does so at its own address, in
+// the folder the standard reserves for them, and an advisory every product of
+// which publishes states that address; any other states the directory's.
 func publishesAs(cfg config.Config) publisher.Named {
-	return publisher.Named{
+	who := publisher.Named{
 		Name: cfg.PublisherName, Namespace: cfg.PublisherNamespace,
 		Category: cfg.PublisherCategory, Prefix: cfg.AdvisoryPrefix,
 		Published: cfg.DirectoryURL,
 	}
+	if cfg.Publish {
+		who.Served = strings.TrimRight(cfg.BaseURL, "/") + publish.DirectoryPath
+	}
+	return who
+}
+
+// publishing is the surface that serves the published documents and the pass
+// that writes them, or neither where the deployment publishes nothing.
+//
+// The key is read again here rather than carried from where the setting was
+// checked, because the check refuses a key that does not read and this is
+// the one place a signer is held.
+func publishing(cfg config.Config, db *bun.DB, name string,
+	logger *slog.Logger) (http.Handler, *publish.Pass, error) {
+
+	if !cfg.Publish {
+		return nil, nil, nil
+	}
+	var signer *signing.Signer
+	if cfg.PublishKey != "" {
+		var err error
+		if signer, err = signing.Read(cfg.PublishKey, cfg.PublishPassphrase); err != nil {
+			return nil, nil, fmt.Errorf("OPENPSIRT_PUBLISH_KEY: %w", err)
+		}
+	}
+	who := publishesAs(cfg)
+	base := strings.TrimRight(cfg.BaseURL, "/")
+	surface := published.Handler(published.Config{
+		DB: db, Who: who, Base: base, Rate: cfg.PublishRate, Signer: signer,
+		Proxies: access.Trust{From: cfg.TrustedSources},
+		List:    cfg.DirectoryList, Mirror: cfg.DirectoryMirror, Logger: logger,
+	})
+	logger.Info("security documents are published to anybody, for the products an "+
+		"administrator chose", "at", base+publish.WellKnown, "signed", signer != nil)
+	return surface, publish.NewPass(db, publish.NewGenerator(db, who, base), name, logger), nil
 }
 
 // onlyTheBoundProvider refuses a provider change that nobody re-granted.

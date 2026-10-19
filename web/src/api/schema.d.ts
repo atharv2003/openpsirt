@@ -2287,7 +2287,7 @@ export interface paths {
          * Amend a product
          * @description Corrects what a product is called. Both names are left alone where the request omits them.
          *
-         *     The name is what scans, paths and published documents use. It is refused once a VEX document has gone out for any build of this product, or a published advisory covers it. Retire the product and declare the intended one instead. It is also refused where a group mapping in configuration names the product or the new name; change the mapping first.
+         *     The name is what scans, paths and published documents use. It is refused once a VEX document has gone out for any build of this product, a published advisory covers it, or a document about it has been served, withdrawn or not. Retire the product and declare the intended one instead. It is also refused where a group mapping in configuration names the product or the new name; change the mapping first. Where the product publishes, a name folding to the same filename as another product that publishes, or has published, is refused.
          *
          *     The displayed name is what screens show and what a document names the product in prose. It may be corrected at any time.
          *
@@ -3440,6 +3440,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/products/{product}/publication": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set whether a product's security documents are published
+         * @description Sets whether this product's security documents are served to anybody who asks, without signing in: its advisories once they have gone out and may travel, a CSAF VEX document per issue, and an OpenVEX document per branch or tag. Nothing is served for any product while the deployment does not publish at all, and nothing about an undisclosed flaw is ever served.
+         *
+         *     Turned off, the product's documents are withdrawn and stop being served at once. Turned on, they are written again by the next pass, a few minutes later. Turning it on is refused where another product that publishes, or has published, has a name that folds to the same filename: a document's filename is built from the product's name, lower-cased with everything but letters, digits, plus and hyphen made an underscore. Recorded in the administrative trail.
+         *
+         *     Requires: administrator
+         */
+        put: operations["set-product-publication"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/products/{product}/releases": {
         parameters: {
             query?: never;
@@ -3867,7 +3891,7 @@ export interface paths {
          * Amend a branch or tag
          * @description Corrects what a release is called.
          *
-         *     Refused once a VEX document has gone out for any build of this release, or a published advisory named it. Declare the intended name as a release of its own: retiring this one and declaring it again returns this same release under this same name.
+         *     Refused once a VEX document has gone out for any build of this release, a published advisory named it, its OpenVEX document has been served, or it has a scanned build and a CSAF VEX document of its product has been served, withdrawn or not. Declare the intended name as a release of its own: retiring this one and declaring it again returns this same release under this same name.
          *
          *     Whether it is a branch or a tag does not move here, and neither does the branch a tag was cut from.
          *
@@ -4987,7 +5011,7 @@ export interface paths {
          * Amend a build variant
          * @description Corrects what a variant is called and whether it reaches customers. Both are left alone where the request omits them.
          *
-         *     A name is refused once an OpenVEX document has been published for any release built as this variant. Retire the variant and declare the intended one instead.
+         *     A name is refused once a VEX document has gone out for a build of this variant, or once the variant has a scanned build and a document of its product has been served, withdrawn or not. Retire the variant and declare the intended one instead.
          *
          *     A name another variant of this product holds is refused, including a retired one. Whether it reaches customers feeds how its findings rank and may be corrected at any time.
          *
@@ -7662,6 +7686,11 @@ export interface components {
              */
             from_statement?: number;
             /**
+             * @description Whom a published statement made from this claim holds for: the scope the claim states, or the one its outcome and reason decide where it states none. Ignored in a request
+             * @enum {string}
+             */
+            holds_for?: "portable" | "build";
+            /**
              * Format: int64
              * @description The name for this decision in a later request
              */
@@ -7687,6 +7716,11 @@ export interface components {
             places?: number;
             /** @description The reasoning, in markdown. Somebody else has to agree with this */
             reasoning: string;
+            /**
+             * @description Whom a published statement made from this claim holds for: portable for anybody shipping the component at that version, build for this product's own build only. Omit to let the outcome and the reason decide. Refused on a deferral
+             * @enum {string}
+             */
+            scope?: "portable" | "build";
             /** @description The narrowing behind a claim recorded as one of many. Never part of the claim itself */
             selected_by?: string;
             /** @description The last time an approver asked for more. Empty means nobody has */
@@ -8477,6 +8511,11 @@ export interface components {
             reasoning: string;
             /** @description Decide only the places nothing currently stands at, and leave the rest as they are. For applying a decision to another build, where some of its places are already reached by lookup */
             remaining?: boolean;
+            /**
+             * @description Whom a published statement made from this claim holds for: portable for anybody shipping the component at that version, build for this product's own build only. Omit to let the outcome and the reason decide. Refused on a deferral. An extension keeps the scope of the claim it carries
+             * @enum {string}
+             */
+            scope?: "portable" | "build";
         };
         FindingRefBody: {
             component: string;
@@ -8959,6 +8998,11 @@ export interface components {
             proposed_by: string;
             /** @description The words the standing agreement was given for. Editing them withdraws the agreement, so this and what was agreed to cannot drift apart. Empty where you may read only some of the places the claim covers */
             reasoning: string;
+            /**
+             * @description Whom a published statement made from the claim holds for, where the claim stated it: portable for anybody shipping the component at that version, build for this product's own build. Absent where the reason decides
+             * @enum {string}
+             */
+            scope?: "portable" | "build";
             /** @description Whether it applies now. A judgment can be approved and no longer standing — the code moved out from under it */
             standing: boolean;
             /** @enum {string} */
@@ -9025,6 +9069,11 @@ export interface components {
             proposed_by: string;
             /** @description The words the claim currently rests on. Editing them withdraws every agreement */
             reasoning: string;
+            /**
+             * @description Whom a published statement made from the claim holds for, where the claim stated it. Absent where the reason decides
+             * @enum {string}
+             */
+            scope?: "portable" | "build";
             /**
              * Format: int64
              * @description How many matching decisions apply now
@@ -10734,6 +10783,8 @@ export interface components {
              * @description The share of this product's agreements, as a percentage, at which one pair agreeing to each other's work is raised with administrators, where the product states its own. Absent means it follows the deployment
              */
             pair_share?: number;
+            /** @description Whether this product's security documents are served to anybody who asks, without signing in, where the deployment publishes at all */
+            publishes?: boolean;
             /**
              * Format: int64
              * @description The number of tags declared
@@ -10752,12 +10803,24 @@ export interface components {
         };
         ProductTree: {
             branches?: components["schemas"]["Branch"][] | null;
+            full_product_names?: components["schemas"]["Named"][] | null;
+            relationships?: components["schemas"]["Relationship"][] | null;
         };
         ProviderBody: {
             /** @description The segment in the sign-in path */
             name: string;
             /** @description The address to send the browser to */
             path: string;
+        };
+        PublicationBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PublicationBody.json
+             */
+            readonly $schema?: string;
+            /** @description Whether this product's security documents are served to anybody who asks, without signing in */
+            publishes: boolean;
         };
         QueueOutputBody: {
             /**
@@ -11153,6 +11216,12 @@ export interface components {
              */
             lookup?: "found" | "absent";
             url: string;
+        };
+        Relationship: {
+            category: string;
+            full_product_name: components["schemas"]["Named"];
+            product_reference: string;
+            relates_to_product_reference: string;
         };
         ReleaseBody: {
             /** @description That total split by the rating in force */
@@ -12204,6 +12273,8 @@ export interface components {
             "@context": string;
             "@id": string;
             author: string;
+            /** Format: date-time */
+            last_updated?: string;
             statements: components["schemas"]["Statement"][] | null;
             /** Format: date-time */
             timestamp: string;
@@ -18507,6 +18578,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PairThresholdsBody"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "set-product-publication": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                product: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublicationBody"];
             };
         };
         responses: {

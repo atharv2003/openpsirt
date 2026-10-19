@@ -76,6 +76,10 @@ type Statements struct {
 	// variable something has to remember to set.
 	Tooling   string    `json:"tooling"`
 	Timestamp time.Time `json:"timestamp"`
+	// LastUpdated is when this revision was released, where the document has
+	// had more than the one moment it was assembled at: a published document
+	// first went out at its timestamp and was last revised at this.
+	LastUpdated *time.Time `json:"last_updated,omitempty"`
 	// Version is which revision of this document this is, counting from one.
 	// It is one past what has gone out: a document nobody has published is
 	// the first, and the next one generated after an issuance is the second.
@@ -461,6 +465,22 @@ func (s *Store) document(ctx context.Context, who publisher.Named, named *catalo
 	alsoCalled, err := s.namesOf(ctx, issues)
 	if err != nil {
 		return nil, err
+	}
+	// A document of disclosed work publishes no other name of an issue that a
+	// flaw of ours recorded out of a reader's reach wrote onto it: one of them
+	// is the name minted for it. The reader is whoever the document reaches,
+	// who may read disclosed work in this product and nothing else. A preview
+	// including undisclosed work is for somebody who may read that work, and
+	// keeps them.
+	if len(visible) == 1 && visible[0] == access.Public {
+		withheld, err := finding.RecordedOutOfReach(ctx, s.idb(),
+			access.Published([]int64{named.ProductID}), issues)
+		if err != nil {
+			return nil, err
+		}
+		for issue := range withheld {
+			delete(alsoCalled, issue)
+		}
 	}
 
 	shipped, err := s.rootOf(ctx, named, target.ID)
