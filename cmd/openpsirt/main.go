@@ -10,9 +10,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/nexthop-ai/openpsirt/internal/access"
@@ -32,6 +35,8 @@ import (
 	"github.com/nexthop-ai/openpsirt/internal/scanner"
 	"github.com/nexthop-ai/openpsirt/internal/schema"
 	"github.com/nexthop-ai/openpsirt/internal/setting"
+	"github.com/nexthop-ai/openpsirt/internal/signin"
+	"github.com/nexthop-ai/openpsirt/internal/signing"
 	"github.com/nexthop-ai/openpsirt/internal/supplier"
 	"github.com/nexthop-ai/openpsirt/internal/trail"
 	"github.com/nexthop-ai/openpsirt/internal/upstream"
@@ -168,13 +173,13 @@ func run(args []string, stdout, stderr *os.File) (err error) {
 		return runRecords(ctx, cfg, logger, stdout, action, operand)
 	}
 
-	// Everything below this line is contacted before the server listens, and
+	// Everything below this line is contacted before the server serves, and
 	// all of it under one deadline, which starts again once an auto-migration
 	// has put the schema in place.
 	//
 	// Unbounded, a hang here is silent and total. An endpoint that accepts the
 	// connection and never answers holds PingContext for ever: the process is
-	// up, no port is listening, and not one log line has been written — from
+	// up, nothing is served, and not one log line has been written — from
 	// outside, the same thing as a slow image pull. A crash
 	// loop that names what it could not reach is the failure a supervisor can
 	// act on. Migrating is outside it — both the subcommand above and the
@@ -183,8 +188,22 @@ func run(args []string, stdout, stderr *os.File) (err error) {
 	//
 	// Each step says what it is about to do, for the same reason: a hang has
 	// to name what it is hanging on.
-	migrating := ctx
-	startup, settled := context.WithTimeout(ctx, cfg.StartupTimeout)
+	//
+	// A stop signal ends the start as well as serving, from here on. The
+	// migration is the step it matters for: an interrupted migration's
+	// transaction is rolled back, and the next start applies it again.
+	stopping, stopped := signal.NotifyContext(startedFrom(), os.Interrupt, syscall.SIGTERM)
+	defer stopped()
+	// A start a stop signal ended is a clean stop, wherever it was. What the
+	// step it ended said about being stopped is logged rather than returned,
+	// so a supervisor stopping a starting process does not read a failure.
+	defer func() {
+		if err != nil && stopping.Err() != nil {
+			logger.Info("stopped before the start completed", "interrupted", err)
+			err = nil
+		}
+	}()
+	startup, settled := context.WithTimeout(stopping, cfg.StartupTimeout)
 	defer settled()
 	ctx = startup
 	logger.Info("starting", "timeout", cfg.StartupTimeout)
@@ -196,38 +215,76 @@ func run(args []string, stdout, stderr *os.File) (err error) {
 	}
 	defer closeQuietly(db, logger)
 
+	// The `migrate` subcommand above returns before any of this; what runs
+	// below is the same work under `auto-migrate`, which the chart defaults
+	// on. With it off, nothing listens until everything else has been
+	// checked, so every refusal comes before the port opens.
+	if !cfg.AutoMigrate {
+		if err := schemaIsCurrent(ctx, db, logger); err != nil {
+			return startupFailed(err, "checking the schema version", cfg)
+		}
+		handler, beside, err := prepare(ctx, cfg, logger, db)
+		if err != nil {
+			return err
+		}
+		server, err := listen(cfg, logger, handler)
+		if err != nil {
+			return err
+		}
+		return serveBeside(stopping, cfg, logger, server, beside.background)
+	}
+
 	// Migrating before serving means a request never arrives against a schema
-	// the code does not expect.
+	// the code does not expect. The port opens first, answering only that
+	// the process is alive and upgrading, so a platform's health check passes
+	// for as long as the migration runs, and a migration nobody ends is one
+	// that finishes.
 	//
 	// Outside the startup deadline, and the deadline is why: a migration
 	// adding an index to a large finding table takes longer than a deployment
 	// starts in, so bounded at 60s it gives up, restarts, and begins the
-	// migration again — for ever. A second replica waits on the advisory lock
-	// and dies under the same bound. What bounds this instead is the chart's
-	// startup probe, which allows ten minutes and says so.
+	// migration again — for ever. A second replica waits on the migration
+	// lock for as long as the first holds it, answering the same way.
 	//
-	// The `migrate` subcommand above returns before any of this; what runs
-	// here is the same work under `auto-migrate`, which the chart defaults on.
-	if cfg.AutoMigrate {
-		logger.Info("applying the schema")
-		if err := schema.Up(migrating, db, logger); err != nil {
-			return fmt.Errorf("applying the schema: %w", err)
-		}
-		// The deadline counts from the schema being in place, so the steps
-		// after a long migration have the whole of it.
-		settled()
-		startup, settled = context.WithTimeout(migrating, cfg.StartupTimeout)
-		defer settled()
-		ctx = startup
-	} else if err := schemaIsCurrent(ctx, db, logger); err != nil {
-		return startupFailed(err, "checking the schema version", cfg)
-	}
-	handler, beside, err := prepare(ctx, cfg, logger, db)
+	// Every refusal that reads no database comes before the port opens and
+	// before the migration, so a bad value is refused in seconds. The ones
+	// that read the schema come after it, and each closes the port and fails
+	// the start.
+	from, err := configure(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}
-	return serve(cfg, logger, handler, beside)
+	server, err := listen(cfg, logger, httpapi.Upgrading())
+	if err != nil {
+		return err
+	}
+	logger.Info("applying the schema")
+	if err := applySchema(stopping, db, logger); err != nil {
+		return server.abandon(cfg, logger, fmt.Errorf("applying the schema: %w", err))
+	}
+	// The deadline counts from the schema being in place, so the steps
+	// after a long migration have the whole of it.
+	settled()
+	startup, settled = context.WithTimeout(stopping, cfg.StartupTimeout)
+	defer settled()
+	handler, beside, err := prepareFrom(startup, cfg, logger, db, from)
+	if err != nil {
+		return server.abandon(cfg, logger, err)
+	}
+	server.answer(handler)
+	logger.Info("serving")
+	return serveBeside(stopping, cfg, logger, server, beside.background)
 }
+
+// applySchema brings the database up to the schema this build expects as a
+// start begins. A variable only so a test can hold a migration open; nothing
+// in the application changes it.
+var applySchema = schema.Up
+
+// startedFrom is the context a start and the server under it descend from. A
+// variable only so a test can stand a canceled context in for a stop signal,
+// which takes the same path; nothing in the application changes it.
+var startedFrom = context.Background
 
 // refreshStatistics asks the engine to analyze every table. A database last
 // opened by a release that kept no statistics, copied in from elsewhere, or
@@ -257,15 +314,127 @@ func refreshStatistics(ctx context.Context, cfg config.Config, logger *slog.Logg
 }
 
 // prepare is everything a start does after the schema is in place and before
-// the server listens: the planner's statistics, the administrators and group
-// mappings named in configuration, the sign-in providers, the stores, the
-// queue and the passes.
+// it serves: what configure works out from the configuration alone, and then
+// the planner's statistics, the administrators and group mappings named in
+// configuration, the queue and the passes.
 //
 // Apart from run so that each refusal it makes is reachable by a test with a
 // database and a configuration in hand, rather than only by starting the
 // program.
 func prepare(ctx context.Context, cfg config.Config, logger *slog.Logger,
 	db *database.DB) (http.Handler, passes, error) {
+
+	from, err := configure(ctx, cfg, logger)
+	if err != nil {
+		return nil, passes{}, err
+	}
+	return prepareFrom(ctx, cfg, logger, db, from)
+}
+
+// configured is what a start works out from the configuration alone, without
+// the database.
+type configured struct {
+	providers map[string]signin.Provider
+	files     attach.Storage
+	published *directory.Store
+	pages     fs.FS
+	queueing  queue.Options
+	// signer signs the published documents. Nil where they go unsigned.
+	signer *signing.Signer
+}
+
+// configure makes every refusal a start makes that reads no database: the
+// sign-in providers and the address they return to, the stores, the
+// interface, the queue's sizes against the scanner's timeout, and the key
+// published documents are signed with.
+//
+// Apart from prepareFrom so that, where the process applies the schema itself,
+// a bad value is refused before the migration rather than after it.
+func configure(ctx context.Context, cfg config.Config, logger *slog.Logger) (configured, error) {
+	// Providers are built at startup so a misconfigured one stops the process
+	// rather than producing a deployment whose sign-in fails later, in a way
+	// only the person trying to sign in ever sees.
+	providers, err := signInProviders(ctx, cfg, logger)
+	if err != nil {
+		return configured{}, err
+	}
+	if err := returnsTo(providers, cfg.BaseURL); err != nil {
+		return configured{}, err
+	}
+
+	// The store for files hanging off an issue. Nothing configured is the
+	// ordinary case: attachments are off and everything else works.
+	logger.Info("checking the attachment store")
+	files, err := attachmentStore(ctx, cfg, logger)
+	if err != nil {
+		return configured{}, err
+	}
+
+	// Where the advisories that have gone out are written for somebody else
+	// to serve. Nothing configured is the ordinary case: documents are
+	// generated and handed over, and no directory is written.
+	logger.Info("checking the published advisory directory store")
+	published, err := directoryStore(ctx, cfg, logger)
+	if err != nil {
+		return configured{}, err
+	}
+
+	// An API-only build serves no page and says so once; a binary whose
+	// embedded interface cannot be read at all is broken and refuses to
+	// start. Two different states, told apart here, because serving nothing
+	// on purpose and serving nothing by accident look identical from a
+	// browser.
+	pages, err := webui.Files()
+	switch {
+	case errors.Is(err, webui.ErrNoInterface):
+		logger.Info("serving the API only", "why", err)
+		pages = nil
+	case err != nil:
+		return configured{}, fmt.Errorf("the interface built into this binary could not be read: %w", err)
+	}
+
+	queueing := queue.DefaultOptions()
+	// The sizes the deployment sets. The queue's depth is not among
+	// these: it is a stored setting, so an operator meeting a refused upload
+	// has a remedy that does not need a restart.
+	queueing.MaxAttempts = cfg.QueueMaxAttempts
+	queueing.ClaimTimeout = cfg.QueueClaimTimeout
+	queueing.Heartbeat = cfg.QueueHeartbeat
+	queueing.MaxHold = cfg.QueueMaxHold
+	queueing.Backoff = cfg.QueueBackoff
+	if err := queueing.Check(); err != nil {
+		return configured{}, err
+	}
+	// The ceiling on one hold is what cuts a long scan off, and it is the only
+	// bound here that can: the claim is renewed for as long as the scan runs,
+	// so the claim timeout never reaches it. A scanner allowed to run past the
+	// ceiling would be killed mid-run on every attempt and the job set aside
+	// with nothing saying why, so the two are compared where both are in hand
+	// rather than left to a documentation row.
+	if queueing.MaxHold > 0 && cfg.ScannerTimeout >= queueing.MaxHold {
+		return configured{}, fmt.Errorf(
+			"OPENPSIRT_SCANNER_TIMEOUT is %s, which is not below the %s a worker may hold "+
+				"one job for — a scan allowed to run that long is killed before it finishes",
+			cfg.ScannerTimeout, queueing.MaxHold)
+	}
+
+	signer, err := publishingKey(cfg)
+	if err != nil {
+		return configured{}, err
+	}
+	return configured{
+		providers: providers, files: files, published: published, pages: pages,
+		queueing: queueing, signer: signer,
+	}, nil
+}
+
+// prepareFrom is the part of a start that needs the schema in place, given
+// what configure worked out.
+func prepareFrom(ctx context.Context, cfg config.Config, logger *slog.Logger,
+	db *database.DB, from configured) (http.Handler, passes, error) {
+
+	providers, files, published, pages, queueing :=
+		from.providers, from.files, from.published, from.pages, from.queueing
 
 	refreshStatistics(ctx, cfg, logger, db)
 
@@ -320,13 +489,6 @@ func prepare(ctx context.Context, cfg config.Config, logger *slog.Logger,
 	rights := access.NewStore(db.DB)
 	logger.Info("roles are assigned", "mode", mode)
 
-	// Providers are built at startup so a misconfigured one stops the process
-	// rather than producing a deployment whose sign-in fails later, in a way
-	// only the person trying to sign in ever sees.
-	providers, err := signInProviders(ctx, cfg, logger)
-	if err != nil {
-		return nil, passes{}, err
-	}
 	// One provider at a time is a rule across time, not only at one instant
 	// (REQ-41). A deployment pointed at a second provider reads identifiers
 	// the first issued as though this one had issued them, and two providers
@@ -337,65 +499,7 @@ func prepare(ctx context.Context, cfg config.Config, logger *slog.Logger,
 	if err := onlyTheBoundProvider(ctx, rights, providers); err != nil {
 		return nil, passes{}, err
 	}
-	if err := returnsTo(providers, cfg.BaseURL); err != nil {
-		return nil, passes{}, err
-	}
 
-	// The store for files hanging off an issue. Nothing configured is the
-	// ordinary case: attachments are off and everything else works.
-	logger.Info("checking the attachment store")
-	files, err := attachmentStore(ctx, cfg, logger)
-	if err != nil {
-		return nil, passes{}, err
-	}
-
-	// Where the advisories that have gone out are written for somebody else
-	// to serve. Nothing configured is the ordinary case: documents are
-	// generated and handed over, and no directory is written.
-	logger.Info("checking the published advisory directory store")
-	published, err := directoryStore(ctx, cfg, logger)
-	if err != nil {
-		return nil, passes{}, err
-	}
-
-	// An API-only build serves no page and says so once; a binary whose
-	// embedded interface cannot be read at all is broken and refuses to
-	// start. Two different states, told apart here, because serving nothing
-	// on purpose and serving nothing by accident look identical from a
-	// browser.
-	pages, err := webui.Files()
-	switch {
-	case errors.Is(err, webui.ErrNoInterface):
-		logger.Info("serving the API only", "why", err)
-		pages = nil
-	case err != nil:
-		return nil, passes{}, fmt.Errorf("the interface built into this binary could not be read: %w", err)
-	}
-
-	queueing := queue.DefaultOptions()
-	// The sizes the deployment sets. The queue's depth is not among
-	// these: it is a stored setting, so an operator meeting a refused upload
-	// has a remedy that does not need a restart.
-	queueing.MaxAttempts = cfg.QueueMaxAttempts
-	queueing.ClaimTimeout = cfg.QueueClaimTimeout
-	queueing.Heartbeat = cfg.QueueHeartbeat
-	queueing.MaxHold = cfg.QueueMaxHold
-	queueing.Backoff = cfg.QueueBackoff
-	if err := queueing.Check(); err != nil {
-		return nil, passes{}, err
-	}
-	// The ceiling on one hold is what cuts a long scan off, and it is the only
-	// bound here that can: the claim is renewed for as long as the scan runs,
-	// so the claim timeout never reaches it. A scanner allowed to run past the
-	// ceiling would be killed mid-run on every attempt and the job set aside
-	// with nothing saying why, so the two are compared where both are in hand
-	// rather than left to a documentation row.
-	if queueing.MaxHold > 0 && cfg.ScannerTimeout >= queueing.MaxHold {
-		return nil, passes{}, fmt.Errorf(
-			"OPENPSIRT_SCANNER_TIMEOUT is %s, which is not below the %s a worker may hold "+
-				"one job for — a scan allowed to run that long is killed before it finishes",
-			cfg.ScannerTimeout, queueing.MaxHold)
-	}
 	work := queue.New(db, queueing)
 	// Named before the handler is built as well as before the workers are:
 	// work that must happen once — rewriting deadlines after a policy
@@ -413,10 +517,7 @@ func prepare(ctx context.Context, cfg config.Config, logger *slog.Logger,
 	// The security documents served to anybody, and the pass that writes
 	// them. Neither where the deployment publishes nothing, which is the
 	// default.
-	surface, documents, err := publishing(cfg, db.DB, name, logger)
-	if err != nil {
-		return nil, passes{}, err
-	}
+	surface, documents := publishing(cfg, db.DB, name, logger, from.signer)
 	handler, _ := httpapi.New(logger, db.Validate, core.Deps{
 		DB: db, Queue: work, Replica: name,
 		Interface: core.Interface{Files: pages},
@@ -601,7 +702,7 @@ func closeQuietly(db *database.DB, logger *slog.Logger) {
 //
 // A deadline reached says only "context deadline exceeded", which names
 // nothing an operator can go and look at. What they need is which of the
-// things contacted before the server listens did not answer.
+// things contacted before the server serves did not answer.
 func startupFailed(err error, doing string, cfg config.Config) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Errorf("gave up %s after %s: %w", doing, cfg.StartupTimeout, err)
