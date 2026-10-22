@@ -62,8 +62,17 @@ func (x *boundedXML) refused(what string, err error) error { return x.src.refuse
 // token reads the next token, refusing a document type declaration.
 func (x *boundedXML) token() (xml.Token, error) {
 	tok, err := x.dec.Token()
-	if err != nil {
+	if errors.Is(err, io.EOF) {
 		return nil, err
+	}
+	if err != nil {
+		// The decoder says what is wrong with a document by quoting it: a
+		// whole element name, an entity's, or the encoding or version the
+		// declaration names. Each is as long as the document lets it be, and
+		// the refusal goes back to whoever sent it. A failure of the reader
+		// beneath is told apart where every walk ends, in refused, from what
+		// the reader recorded rather than from anything said here.
+		return nil, refusal.Errorf("%s", trim(err.Error()))
 	}
 	if _, ok := tok.(xml.Directive); ok {
 		return nil, refusal.New("the document carries a document type declaration, " +
@@ -125,7 +134,7 @@ func (x *boundedXML) end() error {
 			return err
 		}
 		switch t := tok.(type) {
-		case xml.Comment, xml.ProcInst:
+		case xml.Comment:
 		case xml.CharData:
 			if !blank(t) {
 				return refusal.New("the document continues after its top-level element")

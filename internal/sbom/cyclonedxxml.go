@@ -80,8 +80,8 @@ func (c *reader) cyclonedxXMLDeclared(root xml.StartElement) error {
 		return refusal.Errorf("scan file is XML and not %s: its top-level element is %q in the namespace %q, "+
 			"and only %s is read as XML", CycloneDX, trim(root.Name.Local), trim(root.Name.Space), CycloneDX)
 	}
-	if major, _, _ := strings.Cut(revision, "."); major != cyclonedxMajor {
-		return refusal.Errorf("%s version %q is not one this reads", CycloneDX, trim(revision))
+	if err := cyclonedxRevision(revision); err != nil {
+		return err
 	}
 	c.x.space = root.Name.Space
 	c.declared, c.named, c.versioned = CycloneDX, true, true

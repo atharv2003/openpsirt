@@ -270,13 +270,45 @@ func TestAnXMLDocumentIsRefusedForWhatXMLForbids(t *testing.T) {
 	}
 }
 
+func TestWhatTheDecoderSaysIsQuotedBounded(t *testing.T) {
+	// The decoder says what is wrong with a document by quoting it, and the
+	// refusal goes back to whoever sent it: a megabyte of name came back as a
+	// megabyte of refusal.
+	long := strings.Repeat("a", 1<<20)
+	for name, body := range map[string]string{
+		"an element closed by another": strings.Replace(minimalXML,
+			"<components>", "<components><"+long+"></b>", 1),
+		"an entity it never defines": strings.Replace(minimalXML,
+			"<name>libc</name>", "<name>&"+long+";</name>", 1),
+		"the encoding it declares": strings.Replace(minimalXML,
+			`encoding="UTF-8"`, `encoding="`+long+`"`, 1),
+		"the version it declares": strings.Replace(minimalXML,
+			`version="1.0"`, `version="`+long+`"`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := sbom.Read(strings.NewReader(body), sbom.DefaultLimits())
+			if !refusal.In(err) {
+				t.Fatalf("answered %v, want a refusal", err)
+			}
+			if n := len(err.Error()); n > 1024 {
+				t.Errorf("refused in %d bytes for a document of %d", n, len(body))
+			}
+		})
+	}
+}
+
 func TestAnXMLDocumentContinuingAfterItsTopLevelElementIsRefused(t *testing.T) {
 	// The decoder reads a second top-level element as readily as the first.
 	for name, body := range map[string]string{
-		"a second document":   minimalXML + minimalXML,
-		"text":                minimalXML + "\nand then some",
-		"a stray element":     minimalXML + "<component/>",
-		"text before the top": "a" + minimalXML[strings.Index(minimalXML, "<bom"):],
+		"a second document":          minimalXML + minimalXML,
+		"text":                       minimalXML + "\nand then some",
+		"a stray element":            minimalXML + "<component/>",
+		"a processing instruction":   minimalXML + "\n<?producer said more?>",
+		"a declaration after it all": minimalXML + "\n<!DOCTYPE bom>",
+		// After the declaration, so the document still opens with an angle
+		// bracket and is read as XML: opening with the text would send it to
+		// the JSON reader instead.
+		"text before the top": strings.Replace(minimalXML, "?>\n<bom", "?>a<bom", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := sbom.Read(strings.NewReader(body), sbom.Limits{}); !refusal.In(err) {
@@ -302,6 +334,12 @@ func TestOnlyCycloneDXIsReadAsXML(t *testing.T) {
 		},
 		"a second major version": {
 			`<bom xmlns="http://cyclonedx.org/schema/bom/2.0"/>`, `version "2.0" is not one this reads`,
+		},
+		// The namespace is half of what the top-level element says. An element
+		// of the format's own that is not a document is not one.
+		"another of the format's elements at the top": {
+			`<component xmlns="http://cyclonedx.org/schema/bom/1.6"><name>libc</name></component>`,
+			"only CycloneDX is read as XML",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -365,6 +403,11 @@ func TestXMLChargesTheSameBounds(t *testing.T) {
 		`<purl>pkg:deb/debian/libc6@2.41</purl><pedigree><patches><patch type="backport"><resolves>`+
 			`<issue type="security"><id>CVE-2026-0001</id></issue><issue type="security"><id>CVE-2026-0002</id></issue>`+
 			`</resolves></patch></patches></pedigree>`, 1)
+	// Nested in an extension, which is walked past rather than read. The rest
+	// of the document is no deeper than four, so it is the walk past that the
+	// bound has to stop.
+	unread := strings.Replace(minimalXML, "<components>", `<x:e xmlns:x="urn:x">`+
+		strings.Repeat("<x:e>", 5)+strings.Repeat("</x:e>", 5)+"</x:e><components>", 1)
 
 	for _, tc := range []struct {
 		name  string
@@ -376,6 +419,7 @@ func TestXMLChargesTheSameBounds(t *testing.T) {
 		{"edges", twoEdges, sbom.Limits{MaxEdges: 1}, "dependency limit"},
 		{"nested edges", nestedEdges, sbom.Limits{MaxEdges: 1}, "dependency limit"},
 		{"depth", minimalXML, sbom.Limits{MaxDepth: 2}, "level limit"},
+		{"depth in an element nothing reads", unread, sbom.Limits{MaxDepth: 4}, "level limit"},
 		{"size", minimalXML, sbom.Limits{MaxBytes: 64}, "larger than the configured limit"},
 		{"licenses", licenses, sbom.Limits{MaxComponents: 2}, "license entries"},
 		{"claims", claims, sbom.Limits{MaxStatements: 1}, "claim limit"},
@@ -408,12 +452,42 @@ func TestAnXMLHeaderReadHoldsNothingItWalkedPast(t *testing.T) {
 	}
 }
 
+// failingOnce hands over its bytes, fails once with err, and then reports the
+// end of the document. Only whatever read the failure can know of it, so a
+// caller that drops it reads a document that merely ends early.
+type failingOnce struct {
+	r      io.Reader
+	err    error
+	failed bool
+}
+
+func (f *failingOnce) Read(p []byte) (int, error) {
+	n, err := f.r.Read(p)
+	if errors.Is(err, io.EOF) && !f.failed {
+		f.failed = true
+		return n, f.err
+	}
+	return n, err
+}
+
 func TestAnXMLReaderThatFailsPartwayIsAFaultNotARefusal(t *testing.T) {
+	// Short enough that the failure is met while the first character is
+	// looked at, which buffers ahead of the walk.
 	partial := minimalXML[:strings.Index(minimalXML, "<dependencies>")+20]
+	// Long enough that it is met by the walk instead.
+	padded := strings.Replace(partial, "<metadata>",
+		"<!-- "+strings.Repeat("layout ", 1200)+"--><metadata>", 1)
 	cause := errors.New("the document was let go while it was read")
 	for name, r := range map[string]func() io.Reader{
-		"after the first character": func() io.Reader { return &failing{r: strings.NewReader(partial), err: cause} },
-		"before it":                 func() io.Reader { return &failing{r: strings.NewReader(""), err: cause} },
+		"before the first character": func() io.Reader {
+			return &failing{r: strings.NewReader(""), err: cause}
+		},
+		"while the first character is looked at": func() io.Reader {
+			return &failingOnce{r: strings.NewReader(partial), err: cause}
+		},
+		"during the walk": func() io.Reader {
+			return &failingOnce{r: strings.NewReader(padded), err: cause}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := sbom.Read(r(), sbom.Limits{})
@@ -422,7 +496,10 @@ func TestAnXMLReaderThatFailsPartwayIsAFaultNotARefusal(t *testing.T) {
 			}
 		})
 	}
-	if _, err := sbom.Read(strings.NewReader(partial), sbom.Limits{}); !refusal.In(err) {
-		t.Errorf("a document ending partway on its own answered %v, want a refusal", err)
+	for _, body := range []string{partial, padded} {
+		if _, err := sbom.Read(strings.NewReader(body), sbom.Limits{}); !refusal.In(err) {
+			t.Errorf("a document of %d bytes ending partway on its own answered %v, want a refusal",
+				len(body), err)
+		}
 	}
 }

@@ -469,9 +469,9 @@ func cyclonedxXMLInventory(builtAt time.Time, component string) string {
 }
 
 func TestAnUploadEncodedAsXMLIsTaken(t *testing.T) {
-	// It was answered 422, "the upload could not be read", until the reader
-	// read the encoding. The encoding is told from the document as the format
-	// is, so the endpoint names neither.
+	// An inventory encoded as XML is read like one encoded as JSON: the
+	// encoding is told from the document as the format is, so the endpoint
+	// names neither.
 	httpapitest.EachIngest(t, queue.DefaultOptions(), func(t *testing.T, f *httpapitest.IngestFixture) {
 		built := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 		code, result := f.Send(t, httpapitest.Upload(t, f.Path, cyclonedxXMLInventory(built, "libc6")))

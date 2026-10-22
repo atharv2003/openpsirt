@@ -368,6 +368,7 @@ own, each naming one by its `ref` attribute, rather than a list of identifiers.
 | **A dependency nested in a nested dependency is an edge from the one it is nested in** | The schema nests the element in itself without saying where that stops, and that is the only reading the nesting has. How deep it goes is the depth bound's business |
 | **A NUL is refused, where the JSON reader drops one** | XML forbids the character, written or by reference, so a document carrying one is not XML. JSON allows it |
 | **An element's text is trimmed** | A producer laying its document out may put the text on lines of its own, and the layout is not the value |
+| **What the decoder says is bounded like anything else quoted** | Its complaints quote the document: a whole element name, an entity's, the encoding or version a declaration names. Passed on as they were, a 1 MiB element name came back as a refusal of about the same size |
 
 ## Format spellings
 
@@ -1005,6 +1006,7 @@ the build system, which is the copy that may have moved since.
 | The bytes as they arrived, not parsed and not re-serialized | The hash on the receipt covers what was received, so anything rewritten on the way out would fail the check the hash exists for |
 | Named through the scan it belongs to | Whoever may read the receipt may read what it describes. A document identifier resolving on its own would be a second way in that has to remember the same rule |
 | Narrowed in the store, not the handler | A key reads what was filed on a build it may upload to, and the two endpoints cannot come to differ |
+| Named by its encoding, `.xml` or `.json` | Told from its first character by the reader's own rule, before anything is sent. A copy named for the other encoding is misread by any tool that goes by the extension |
 
 ## Administrator-supplied VEX
 

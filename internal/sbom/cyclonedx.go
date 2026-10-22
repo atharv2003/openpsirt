@@ -76,10 +76,20 @@ func (c *reader) cyclonedxFormatVersion() error {
 	if err := c.into(&spec); err != nil {
 		return err
 	}
+	if err := cyclonedxRevision(spec); err != nil {
+		return err
+	}
+	c.declared, c.versioned = CycloneDX, true
+	return nil
+}
+
+// cyclonedxRevision refuses a revision this reader was not written against,
+// however the document stated it: in a key of its own, or in the namespace its
+// elements are in.
+func cyclonedxRevision(spec string) error {
 	if major, _, _ := strings.Cut(spec, "."); major != cyclonedxMajor {
 		return refusal.Errorf("%s version %q is not one this reads", CycloneDX, trim(spec))
 	}
-	c.declared, c.versioned = CycloneDX, true
 	return nil
 }
 
